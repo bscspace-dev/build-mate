@@ -604,7 +604,7 @@ export default function MembersAdmin({
       )}
 
       <div className="mt-3 grid gap-3">
-        {scope === "inhouse" && (group === "all" || group === "office") && (filter === "all" || filter === "super") && (
+        {builtinId && scope === "inhouse" && (group === "all" || group === "office") && (filter === "all" || filter === "super") && (
           <div className="rounded-2xl border border-dashed border-black/20 bg-white p-4 dark:border-white/20 dark:bg-zinc-900">
             <div className="flex flex-wrap items-center gap-2">
               <b className="text-base">내장 최고 관리자</b>

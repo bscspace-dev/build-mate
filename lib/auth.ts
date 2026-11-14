@@ -27,7 +27,8 @@ export function checkPassword(input: string): boolean {
 }
 
 /** 관리자 로그인 아이디 (.env.local 의 ADMIN_ID, 없으면 admin). 대소문자는 구분하지 않는다. */
-export const adminLoginId = () => (process.env.ADMIN_ID || 'admin').trim().toLowerCase();
+// ADMIN_PASSWORD 가 없으면 내장 계정은 꺼진 것이다(빈 문자열) — 'admin' 같은 아이디를 일반 회원이 쓸 수 있다.
+export const adminLoginId = () => (process.env.ADMIN_PASSWORD ? (process.env.ADMIN_ID || 'admin').trim().toLowerCase() : '');
 
 /** 관리자 아이디 + 비밀번호 확인. 아이디가 틀려도 비밀번호 비교까지 항상 수행한다. */
 export function checkAdminLogin(id: string, password: string): boolean {

@@ -20,7 +20,7 @@ export function generateLoginId(taken: Set<string>): string {
   }
 }
 /** 관리자 아이디는 현장관리자가 쓸 수 없다. */
-export const isReservedLoginId = (id: string) => id === (process.env.ADMIN_ID || 'admin').trim().toLowerCase();
+export const isReservedLoginId = (id: string) => !!process.env.ADMIN_PASSWORD && id === (process.env.ADMIN_ID || 'admin').trim().toLowerCase();
 
 export const generatePassword = () => randomString(8);
 
