@@ -5,7 +5,7 @@ import { actorCan, adminLoginId, getActor } from "@/lib/auth";
 import { getCategoryTrades, getMembers, getSubmissions, getTeams, getTrades } from "@/lib/db";
 import { toPublic } from "@/lib/member-utils";
 
-export const metadata = { title: "협력업체 관리 · 빌드메이트" };
+export const metadata = { title: "거래처 관리 · 빌드메이트" };
 
 export default function PartnersPage() {
   return (

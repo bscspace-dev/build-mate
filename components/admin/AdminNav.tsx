@@ -37,7 +37,7 @@ export default function AdminNav() {
   }
 
   const items = [
-    ...MENUS.filter(m => me?.menus.includes(m.key)).flatMap(m => [{ href: m.href, label: m.label }, ...(m.key === "members" ? [{ href: "/admin/partners", label: "협력업체" }] : [])]),
+    ...MENUS.filter(m => me?.menus.includes(m.key)).flatMap(m => [{ href: m.href, label: m.label }, ...(m.key === "members" ? [{ href: "/admin/partners", label: "거래처" }] : [])]),
   ];
 
   return (

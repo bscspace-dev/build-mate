@@ -15,6 +15,7 @@ create table if not exists public.products (
   price_incl_vat integer,
   vat_basis      text,
   soldout        boolean not null default false,
+  stock          integer not null default 0 check (stock >= 0),   -- 회사 재고 수량
   image          text not null default '',
   trades         text[] not null default '{}',
   deleted_at     timestamptz
@@ -68,7 +69,10 @@ create table if not exists public.members (
   role                 text not null references public.teams(key) on delete restrict,
   trades               text[] not null default '{}' check (cardinality(trades) <= 3),
   categories           text[] not null default '{}' check (cardinality(categories) <= 9),  -- 설문에서 맡는 카테고리 (공정 아래, 공정마다 최대 3개 → 최대 9개)
-  menus                text[] not null default '{}' check (menus <@ array['catalog','survey']),
+  handles              text   not null default '',   -- 거래처 취급품목
+  phone                text   not null default '',   -- 연락처
+  address              text   not null default '',   -- 주소
+  menus                text[] not null default '{}' check (menus <@ array['catalog','survey','requests']),
   actions              jsonb  not null default '{}',
   login_id             text,
   pass_hash            text,                  -- 비밀번호 원문은 저장하지 않는다 (scrypt 해시)
@@ -91,6 +95,23 @@ create table if not exists public.responses (
   legacy_file  text unique                    -- 파일 방식에서 옮겨온 응답의 원래 파일명 (중복 이관 방지)
 );
 create index if not exists responses_worker_trade on public.responses (worker_id, trade);
+
+-- ───────── 현장 자재 요청 ─────────
+create table if not exists public.requests (
+  id        bigint generated always as identity primary key,
+  worker_id text,
+  name      text not null,
+  trade     text not null,
+  site      text not null default '',              -- 요청한 현장
+  at        timestamptz not null default now(),
+  items     jsonb not null default '[]',           -- [{ k: 자재번호, n: 이름, i: 이미지, q: 수량 }]
+  done      boolean not null default false,        -- 준비 완료 처리됐는가
+  done_at   timestamptz,
+  done_by   text
+);
+create index if not exists requests_at on public.requests (at desc);
+create index if not exists requests_pending on public.requests (at desc) where done = false;
+alter table public.requests enable row level security;
 
 -- ───────── 설정(공정 목록 등) ─────────
 create table if not exists public.app_settings (

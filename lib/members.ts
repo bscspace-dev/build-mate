@@ -21,6 +21,11 @@ const NAME_TAKEN = '이미 등록된 이름이에요. 구분되게 적어 주세
 const LOGIN_TAKEN = '이미 쓰는 아이디예요.';
 const conflictMessage = (c: 'name' | 'loginId') => (c === 'name' ? NAME_TAKEN : LOGIN_TAKEN);
 const normName = (s: string) => s.trim().replace(/\s+/g, ' ');
+/** 취급품목·연락처·주소: 문자열이 아니면 빈 값, 공백 정리, 길이 제한 */
+const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
+const clipHandles = (v: unknown) => clip(v, 100);
+const clipPhone = (v: unknown) => clip(v, 30);
+const clipAddress = (v: unknown) => clip(v, 200);
 
 const isStaff = (a: Actor) => a.kind === 'root' || isStaffAdmin(a.member.role);
 const isSelf = (a: Actor, id: string) => a.kind === 'member' && a.member.id === id;
@@ -57,7 +62,7 @@ const actionsKey = (a: GrantedActions) => JSON.stringify(MENUS.map(m => [m.key, 
 function checkTrades(survey: boolean, raw: unknown, allowed: string[]): string[] | Err {
   if (!survey) return [];
   const trades = Array.isArray(raw) ? [...new Set(raw.filter((t): t is string => typeof t === 'string'))] : [];
-  if (trades.length < 1 || trades.length > 3) return { error: '설문에 참여하는 회원은 공정을 1~3개 골라 주세요.' };
+  if (trades.length < 1 || trades.length > 3) return { error: '자재 요청을 하는 회원은 공정을 1~3개 골라 주세요.' };
   if (!trades.every(t => allowed.includes(t))) return { error: '목록에 없는 공정이에요.' };
   return trades;
 }
@@ -96,9 +101,9 @@ function checkLoginId(raw: string): string | Err {
 
 /** 회원 생성(관리 권한 필요 — 호출하는 쪽에서 확인). 임시 비밀번호는 이 반환값으로 한 번만 알려준다. */
 export async function addMember(
-  input: { name: string; role: unknown; trades?: unknown; categories?: unknown; menus?: unknown; actions?: unknown; loginId?: string },
+  input: { name: string; role: unknown; trades?: unknown; categories?: unknown; handles?: unknown; phone?: unknown; address?: unknown; menus?: unknown; actions?: unknown; loginId?: string; account?: boolean },
   allowedTrades: string[],
-): Promise<{ member: PublicMember; credentials: Credentials } | Err> {
+): Promise<{ member: PublicMember; credentials: Credentials | null } | Err> {
   const name = checkName(input.name);
   if (typeof name !== 'string') return name;
   const role = input.role;
@@ -109,6 +114,17 @@ export async function addMember(
   if (!Array.isArray(trades)) return trades;
   const categories = canSurvey(role, menus) ? await checkCategories(input.categories, trades, true) : [];
   if (!Array.isArray(categories)) return categories;
+
+  // account=false: 아이디·비밀번호 없이 정보만 등록한다(거래처). 필요할 때 목록에서 '아이디 생성'으로 만든다.
+  if (input.account === false) {
+    const bare: Member = {
+      id: crypto.randomBytes(9).toString('base64url'), name, role, trades, categories, handles: clipHandles(input.handles), phone: clipPhone(input.phone), address: clipAddress(input.address), menus, actions, createdAt: new Date().toISOString(),
+      mustChangePassword: false, idChanged: false,
+    };
+    const r0 = await insertMember(bare);
+    if ('conflict' in r0) return { error: conflictMessage(r0.conflict) };
+    return { member: toPublic(r0.member), credentials: null };
+  }
 
   const taken = new Set((await getMembers()).map(m => m.loginId).filter((x): x is string => !!x));
   let loginId: string;
@@ -121,7 +137,7 @@ export async function addMember(
 
   const password = generatePassword();
   const member: Member = {
-    id: crypto.randomBytes(9).toString('base64url'), name, role, trades, categories, menus, actions, createdAt: new Date().toISOString(),
+    id: crypto.randomBytes(9).toString('base64url'), name, role, trades, categories, handles: clipHandles(input.handles), phone: clipPhone(input.phone), address: clipAddress(input.address), menus, actions, createdAt: new Date().toISOString(),
     loginId, passHash: await hashPassword(password), mustChangePassword: true, idChanged: false,
   };
   const r = await insertMember(member);
@@ -137,7 +153,7 @@ export async function addMember(
 export async function updateMember(
   actor: Actor,
   id: string,
-  patch: { name?: string; role?: unknown; menus?: unknown; actions?: unknown; trades?: unknown; categories?: unknown; loginId?: string },
+  patch: { name?: string; role?: unknown; menus?: unknown; actions?: unknown; trades?: unknown; categories?: unknown; handles?: unknown; phone?: unknown; address?: unknown; loginId?: string },
   allowedTrades: string[],
 ): Promise<PublicMember | Err> {
   const target = await getMember(id);
@@ -153,6 +169,10 @@ export async function updateMember(
     if (typeof n !== 'string') return n;
     if (n !== target.name) next.name = n;
   }
+
+  if (patch.handles !== undefined && clipHandles(patch.handles) !== target.handles) next.handles = clipHandles(patch.handles);
+  if (patch.phone !== undefined && clipPhone(patch.phone) !== target.phone) next.phone = clipPhone(patch.phone);
+  if (patch.address !== undefined && clipAddress(patch.address) !== target.address) next.address = clipAddress(patch.address);
 
   let role = target.role;
   if (patch.role !== undefined && patch.role !== target.role) {

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import type { Product, TrashedProduct } from "@/lib/types";
 import { Modal } from "@/components/Sheet";
+import AddProduct from "@/components/admin/AddProduct";
 
 const PAGE = 120;
 const chipBase = "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors";
@@ -15,9 +16,48 @@ type Mode = "delete" | "restore";
 type Confirm = { mode: Mode | "purge"; keys: string[] } | null;
 type Toast = { id: number; text: string; undo?: { mode: Mode; keys: string[] } } | null;
 
+// 재고 수량 입력: 숫자를 바꾸면 "등록" 버튼이 나타나고, 그 버튼을 눌러야 저장된다 (실수로 바뀌는 것을 막는다). 취소하면 원래 숫자로 돌아간다.
+function StockBox({ value, canEdit, onCommit }: { value: number; canEdit: boolean; onCommit: (n: number) => void }) {
+  const [draft, setDraft] = useState<number | null>(null); // null = 수정 중 아님
+  const shown = draft ?? value;
+  const dirty = draft !== null && draft !== value;
+  const set = (n: number) => setDraft(Math.max(0, Math.min(9_999_999, n)));
+  const register = () => {
+    if (draft !== null && draft !== value) onCommit(draft);
+    setDraft(null);
+  };
+  if (!canEdit) return <div className={"mt-2 text-xs font-bold " + (value === 0 ? "text-red-600 dark:text-red-300" : "text-zinc-600 dark:text-zinc-300")}>재고 {value}</div>;
+  return (
+    <div className="mt-2">
+      <div className="flex items-center gap-1">
+        <span className={"mr-0.5 text-[11px] font-bold " + (value === 0 ? "text-red-600 dark:text-red-300" : "text-zinc-500")}>재고</span>
+        <button type="button" aria-label="수량 줄이기" disabled={shown <= 0} onClick={() => set(shown - 1)} className="h-8 w-8 shrink-0 rounded-lg bg-zinc-100 text-base font-bold disabled:opacity-30 dark:bg-zinc-800">−</button>
+        <input
+          type="text"
+          inputMode="numeric"
+          aria-label="재고 수량"
+          value={String(shown)}
+          onFocus={e => e.target.select()}
+          onChange={e => set(parseInt(e.target.value.replace(/\D/g, "").slice(0, 7), 10) || 0)}
+          onKeyDown={e => { if (e.key === "Enter") register(); if (e.key === "Escape") setDraft(null); }}
+          className={"h-8 min-w-0 flex-1 rounded-lg border bg-transparent text-center text-sm font-bold outline-none focus:border-blue-500 " + (dirty ? "border-blue-500 ring-2 ring-blue-500/20" : value === 0 ? "border-red-300 text-red-600 dark:border-red-500/50 dark:text-red-300" : "border-black/15 dark:border-white/15")}
+        />
+        <button type="button" aria-label="수량 늘리기" onClick={() => set(shown + 1)} className="h-8 w-8 shrink-0 rounded-lg bg-zinc-100 text-base font-bold dark:bg-zinc-800">+</button>
+      </div>
+      {dirty && (
+        <div className="mt-1.5 flex gap-1.5">
+          <button type="button" onClick={register} className="flex-1 rounded-lg bg-blue-600 py-1.5 text-xs font-bold text-white">등록 ({value} → {draft})</button>
+          <button type="button" onClick={() => setDraft(null)} className="rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">취소</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProductCard({
-  p, selected, onSelect, onAction, onMove, onRename, onShift, shiftable, trashMode, canDelete, canEdit,
+  p, selected, onSelect, onAction, onMove, onRename, onShift, onStock, shiftable, trashMode, canDelete, canEdit,
 }: {
+  onStock: (k: string, n: number) => void;
   p: Product | TrashedProduct;
   selected: boolean;
   onSelect: (k: string) => void;
@@ -32,6 +72,7 @@ function ProductCard({
 }) {
   const canSelect = canDelete || canEdit;
   const deletedAt = "deletedAt" in p ? p.deletedAt : null;
+  const empty = !trashMode && (p.stock ?? 0) === 0; // 재고 0: 색을 다르게 보여 준다 (채우면 원래대로)
   return (
     <motion.div
       layout
@@ -39,14 +80,14 @@ function ProductCard({
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.85, transition: { duration: 0.18 } }}
       transition={{ type: "spring", stiffness: 380, damping: 32 }}
-      className={`relative overflow-hidden rounded-2xl border-2 bg-white dark:bg-zinc-900 ${
-        selected ? "border-blue-600 ring-2 ring-blue-600/30" : "border-black/10 dark:border-white/10"
-      }`}
+      className={`relative overflow-hidden rounded-2xl border-2 transition-colors ${
+        empty ? "bg-red-50 dark:bg-red-500/10" : "bg-white dark:bg-zinc-900"
+      } ${selected ? "border-blue-600 ring-2 ring-blue-600/30" : empty ? "border-red-300 dark:border-red-500/40" : "border-black/10 dark:border-white/10"}`}
     >
       <button type="button" onClick={() => canSelect && onSelect(p.key)} aria-label={selected ? "선택 해제" : "선택"} aria-pressed={selected} className="block w-full text-left">
         {p.image ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={p.image} alt="" loading="lazy" className="aspect-square w-full bg-white object-contain" />
+          <img src={p.image} alt="" loading="lazy" className={`aspect-square w-full bg-white object-contain transition ${empty ? "opacity-50 grayscale" : ""}`} />
         ) : (
           <div className="aspect-square w-full bg-zinc-100 dark:bg-zinc-800" />
         )}
@@ -58,9 +99,11 @@ function ProductCard({
       >
         ✓
       </motion.span>
+      {empty && <span className="pointer-events-none absolute right-2 top-2 rounded-md bg-red-600 px-1.5 py-0.5 text-[11px] font-bold text-white">재고 없음</span>}
       {p.soldout && <span className="pointer-events-none absolute left-2 top-10 rounded-md bg-red-600 px-1.5 py-0.5 text-[11px] text-white">품절</span>}
       <div className="p-3">
-        <div className="line-clamp-3 min-h-[3.6em] text-[13px] leading-snug break-keep">{p.name}</div>
+        <div className={`line-clamp-3 min-h-[3.6em] text-[13px] leading-snug break-keep ${empty ? "text-red-800 dark:text-red-200" : ""}`}>{p.name}</div>
+        {!trashMode && <StockBox value={p.stock ?? 0} canEdit={canEdit} onCommit={n => onStock(p.key, n)} />}
         {deletedAt && (
           <div className="mt-1.5 text-[11px] text-zinc-500">
             삭제 <time suppressHydrationWarning dateTime={deletedAt}>{new Date(deletedAt).toLocaleString("ko-KR")}</time>
@@ -120,12 +163,11 @@ function ProductCard({
 }
 
 export default function AdminCatalog({
-  initialProducts, initialTrash, trades: initialTrades, responseCount, categories, categoryTrades, canRegister, canEdit, canDelete,
+  initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
 }: {
   initialProducts: Product[];
   initialTrash: TrashedProduct[];
   trades: string[];
-  responseCount: number;
   categories: string[]; // 카테고리 이름 목록(비어 있는 카테고리 포함)
   categoryTrades: Record<string, string>; // 카테고리 → 묶어 보여 줄 공정 (빈 값 = 미지정)
   canRegister: boolean; // 카테고리 등록
@@ -140,7 +182,7 @@ export default function AdminCatalog({
   const [sub, setSub] = useState("");
   const [trade, setTrade] = useState("전체");
   const [q, setQ] = useState("");
-  const [sort, setSort] = useState("no");
+  const [sort, setSort] = useState("stock"); // 기본: 재고 있는 품목이 위로
   const [shown, setShown] = useState(PAGE);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState<Confirm>(null);
@@ -156,6 +198,7 @@ export default function AdminCatalog({
   const [moveKeys, setMoveKeys] = useState<string[] | null>(null); // 카테고리 이동 창
   const [moveErr, setMoveErr] = useState("");
   const [catOpen, setCatOpen] = useState(false); // 카테고리 관리 창
+  const [addOpen, setAddOpen] = useState(false); // 품목 추가 창
   const [newCat, setNewCat] = useState("");
   const [renaming, setRenaming] = useState<{ name: string; to: string } | null>(null);
   const [catErr, setCatErr] = useState("");
@@ -191,6 +234,7 @@ export default function AdminCatalog({
         (!kw || `${p.name} ${p.brand} ${p.sub}`.toLowerCase().includes(kw)),
     );
     if (sort === "nm") return [...r].sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    if (sort === "stock") return [...r].sort((a, b) => Number((b as Product).stock > 0) - Number((a as Product).stock > 0)); // 재고 있는 품목 먼저, 나머지는 원래 순서 그대로
     return r;
   }, [byCat, activeSub, q, sort]); // 공정 필터는 카테고리 단위(cats)로 이미 적용돼 있다
 
@@ -249,7 +293,7 @@ export default function AdminCatalog({
   }
   async function addTradeName(e: React.FormEvent) {
     e.preventDefault();
-    const name = newTrade.trim().replace(/s+/g, " ");
+    const name = newTrade.trim().replace(/\s+/g, " ");
     if (!name || busy) return;
     setBusy(true); setCatErr("");
     try {
@@ -367,6 +411,20 @@ export default function AdminCatalog({
     } catch (err) { setToast({ id: Date.now(), text: err instanceof Error ? err.message : "순서를 바꾸지 못했어요." }); }
     setBusy(false);
   }
+  // 재고 수량 저장: 화면에 먼저 반영하고, 서버에 저장하지 못하면 되돌린다
+  async function setStockOf(key: string, stock: number) {
+    const before = products.find(p => p.key === key)?.stock ?? 0;
+    setProducts(rows => rows.map(p => (p.key === key ? { ...p, stock } : p)));
+    try {
+      const r = await fetch("/api/admin/products", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "stock", key, stock }) });
+      if (r.status === 401) { router.replace("/"); return; }
+      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "재고를 저장하지 못했어요.");
+    } catch (err) {
+      setProducts(rows => rows.map(p => (p.key === key ? { ...p, stock: before } : p)));
+      setToast({ id: Date.now(), text: err instanceof Error ? err.message : "재고를 저장하지 못했어요." });
+    }
+  }
+
   async function doRenameProduct(e: React.FormEvent) {
     e.preventDefault();
     if (!renameP || busy) return;
@@ -450,7 +508,11 @@ export default function AdminCatalog({
     <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-32">
       <header className="flex flex-wrap items-center gap-3 py-5">
         <h1 className="mr-auto text-xl font-extrabold">소모품</h1>
-        <span className="text-sm text-zinc-500">설문 응답 {responseCount}건</span>
+        {canRegister && (
+          <motion.button whileTap={{ scale: 0.96 }} type="button" onClick={() => setAddOpen(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+            + 품목 추가
+          </motion.button>
+        )}
       </header>
 
       {!canDelete && !canEdit && !canRegister && (
@@ -482,6 +544,7 @@ export default function AdminCatalog({
             <option value="미배정">공정: 미배정</option>
           </select>
           <select value={sort} onChange={e => setSort(e.target.value)} className="rounded-xl border border-black/15 bg-white px-3 py-2 text-sm dark:border-white/15 dark:bg-zinc-900">
+            <option value="stock">재고 있는 순</option>
             <option value="no">기본 순서</option>
             <option value="nm">이름순</option>
           </select>
@@ -520,6 +583,7 @@ export default function AdminCatalog({
               onMove={k => { setMoveErr(""); setMoveKeys([k]); }}
               onRename={x => { setRenameErr(""); setRenameP({ key: x.key, name: x.name }); }}
               onShift={shiftProduct}
+              onStock={setStockOf}
               shiftable={canEdit && !trashMode && sort === "no" ? { prev: list[0]?.key !== p.key, next: list[list.length - 1]?.key !== p.key } : null}
               p={p}
               selected={selected.has(p.key)}
@@ -618,6 +682,18 @@ export default function AdminCatalog({
         )}
       </Modal>
 
+      <AddProduct
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        categories={catList}
+        defaultCategory={cat !== "전체" && catList.includes(cat) ? cat : ""}
+        onAdded={p => {
+          setProducts(prev => [...prev, p]);
+          setView("catalog"); setTrade("전체"); setQ(""); setSub(""); setSort("no"); setCat(p.category); setShown(PAGE);
+          setToast({ id: Date.now(), text: "“" + p.name + "” 품목을 등록했어요" });
+        }}
+      />
+
       {/* 카테고리 관리: 등록 · 이름 수정 · 삭제 */}
       <Modal wide open={catOpen} onClose={() => !busy && setCatOpen(false)}>
         <h2 className="text-lg font-bold">카테고리 관리</h2>
@@ -692,7 +768,7 @@ export default function AdminCatalog({
             {tradeDel !== null && (
               <div className="mt-3 rounded-xl bg-red-50 p-3 text-sm dark:bg-red-500/10" role="alertdialog">
                 <p className="font-semibold text-red-700 dark:text-red-300">“{tradeDel}” 공정을 삭제할까요?</p>
-                <p className="mt-1 text-red-700/80 dark:text-red-200/80">소모품과 회원에 걸린 이 공정, 카테고리의 공정 지정이 모두 빠져요. 소모품은 지워지지 않아요. 이미 낸 설문 응답은 그대로 남아요.</p>
+                <p className="mt-1 text-red-700/80 dark:text-red-200/80">소모품과 회원에 걸린 이 공정, 카테고리의 공정 지정이 모두 빠져요. 소모품은 지워지지 않아요. 이미 들어온 현장요청은 그대로 남아요.</p>
                 <div className="mt-2 flex gap-2">
                   <button type="button" disabled={busy} onClick={() => setTradeDel(null)} className="flex-1 rounded-lg bg-white py-2 font-bold dark:bg-zinc-800">취소</button>
                   <button type="button" disabled={busy} onClick={() => deleteTradeName(tradeDel)} className="flex-1 rounded-lg bg-red-600 py-2 font-bold text-white disabled:opacity-50">{busy ? "처리 중…" : "삭제"}</button>

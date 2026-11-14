@@ -19,13 +19,13 @@ const inputCls = "mt-2 w-full rounded-xl border border-black/15 bg-transparent p
 const tagCls = "rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
 
 type Creds = { loginId: string; password: string };
-type ApiResult = { ok: boolean; member?: PublicMember; credentials?: Creds; error?: string };
+type ApiResult = { ok: boolean; member?: PublicMember; credentials?: Creds | null; error?: string };
 type Issued = { name: string; kind: "new" | "reset"; creds: Creds };
 
 export default function MembersAdmin({
   scope, initialMembers, initialTeams, canManageTeams, trades, categoryTrades, submissions, selfId, builtinId,
 }: {
-  scope: SideKey; // inhouse = 사내 회원 관리, coop = 협력업체(외주) 관리 — 두 화면은 따로 관리한다
+  scope: SideKey; // inhouse = 사내 회원 관리, coop = 거래처 관리 — 두 화면은 따로 관리한다
   initialMembers: PublicMember[];
   initialTeams: Team[];
   canManageTeams: boolean; // 팀명 추가·삭제 권한 (회원 관리의 등록·삭제 권한)
@@ -45,11 +45,15 @@ export default function MembersAdmin({
   const [pickedCats, setPickedCats] = useState<string[]>([]);
   const [menus, setMenus] = useState<MenuKey[]>([]); // 팀 기본 메뉴 외에 더 부여하는 메뉴
   const [actions, setActions] = useState<GrantedActions>({}); // 부여하는 메뉴마다 허용할 동작(등록/수정/삭제)
+  const [handles, setHandles] = useState(""); // 거래처 취급품목
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
   const [loginId, setLoginId] = useState("");
   const [editId, setEditId] = useState<string | null>(null);
-  const [side, setSide] = useState<SideKey | "all">(scope); // 이 화면의 구분(사내 또는 협력)으로 고정
+  const [side, setSide] = useState<SideKey | "all">(scope); // 이 화면의 구분(사내 또는 거래처)으로 고정
   const [group, setGroup] = useState<GroupKey | "all">(scope === "coop" ? "outsource" : "all"); // 사무실 / 현장 / 외주
   const [filter, setFilter] = useState<RoleKey | "all">("all"); // 팀명
+  const [q, setQ] = useState(""); // 이름 검색
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [origin, setOrigin] = useState("");
@@ -84,7 +88,7 @@ export default function MembersAdmin({
     return g !== null && sideOf(g) === scope;
   };
   const scoped = members.filter(inScope);
-  const noun = scope === "coop" ? "협력업체" : "회원";
+  const noun = scope === "coop" ? "거래처" : "회원";
   const sidesShown = SIDES.filter(sd => sd.key === scope);
   const counts = useMemo(() => {
     const m = new Map<RoleKey, number>();
@@ -94,9 +98,11 @@ export default function MembersAdmin({
   const groupOf = (m: PublicMember): GroupKey | null => teamGroup(teams, m.role);
   const groupCount = (g: GroupKey) => scoped.filter(m => groupOf(m) === g).length;
   const sideCount = (s: SideKey) => groupsIn(s).reduce((n, g) => n + groupCount(g.key), 0);
+  const kw = q.trim().replace(/\s+/g, "").toLowerCase();
   const shown = scoped.filter(m => {
     const g = groupOf(m);
     return (
+      (!kw || m.name.replace(/\s+/g, "").toLowerCase().includes(kw)) &&
       (side === "all" || (g !== null && sideOf(g) === side)) &&
       (group === "all" || g === group) &&
       (filter === "all" || m.role === filter)
@@ -143,6 +149,9 @@ export default function MembersAdmin({
   }
   function resetForm() {
     setName("");
+    setHandles("");
+    setPhone("");
+    setAddress("");
     setRole(defaultRole);
     setMenus([]);
     setActions({});
@@ -177,7 +186,7 @@ export default function MembersAdmin({
     e.preventDefault();
     if (busy) return;
     if (!name.trim()) return setErr("이름을 적어 주세요.");
-    if (needTrades && picked.length < 1) return setErr("설문에 참여하는 회원은 공정을 1개 이상 골라 주세요.");
+    if (needTrades && picked.length < 1) return setErr("자재 요청을 하는 회원은 공정을 1개 이상 골라 주세요.");
     setBusy(true);
     setErr("");
     try {
@@ -185,14 +194,14 @@ export default function MembersAdmin({
       const catsToSend = needTrades ? pickedCats.filter(c => picked.includes(categoryTrades[c])) : [];
       const r = await call(
         editId
-          ? { action: "update", id: editId, name, role, menus, actions, trades: tradesToSend, categories: catsToSend, loginId }
-          : { action: "add", name, role, menus, actions, trades: tradesToSend, categories: catsToSend, loginId },
+          ? { action: "update", id: editId, name, role, menus, actions, trades: tradesToSend, categories: catsToSend, handles, phone, address, loginId: loginId || undefined }
+          : { action: "add", name, role, menus, actions, trades: tradesToSend, categories: catsToSend, handles, phone, address, loginId: loginId || undefined, account: scope !== "coop" },
       );
       if (r.ok && r.member) {
         const m = r.member;
         setMembers(prev => (editId ? prev.map(x => (x.id === m.id ? m : x)) : [...prev, m]));
         if (!editId && r.credentials) setIssued({ name: m.name, kind: "new", creds: r.credentials });
-        else say("수정했어요");
+        else say(editId ? "수정했어요" : "등록했어요");
         resetForm();
       } else if (r.error) setErr(r.error);
     } catch {
@@ -209,6 +218,9 @@ export default function MembersAdmin({
     setActions(Object.fromEntries(m.menus.filter(k => MENU_ACTIONS[k].length > 0).map(k => [k, m.actions?.[k] ?? ["view"]])) as GrantedActions); // 예전 부여(동작 미지정)는 보기만으로 보여 준다
     setPicked(m.trades);
     setPickedCats(m.categories ?? []);
+    setHandles(m.handles ?? "");
+    setPhone(m.phone ?? "");
+    setAddress(m.address ?? "");
     setLoginId(m.loginId ?? "");
     setErr("");
   }
@@ -221,7 +233,7 @@ export default function MembersAdmin({
       const r = await call({ action: "reset", id: m0.id });
       if (r.ok && r.member && r.credentials) {
         setMembers(prev => prev.map(x => (x.id === m0.id ? r.member! : x)));
-        setIssued({ name: m0.name, kind: "reset", creds: r.credentials });
+        setIssued({ name: m0.name, kind: m0.loginId ? "reset" : "new", creds: r.credentials });
         setConfirmReset(null);
       } else say(r.error ?? "처리하지 못했어요.");
     } catch {
@@ -307,13 +319,26 @@ export default function MembersAdmin({
       <p className="mt-1 text-sm text-zinc-500">
         {editId
           ? "이름·팀·공정·아이디를 바꿀 수 있어요. 최고 관리자·개발팀은 아이디를 횟수 제한 없이 바꿀 수 있어요."
-          : "만들면 아이디와 임시 비밀번호가 발급돼요. 회원은 처음 로그인할 때 새 비밀번호를 정해야 해요."}
+          : scope === "coop"
+            ? "이름과 팀만 있으면 등록돼요. 아이디는 필요할 때 목록에서 ‘아이디 생성’을 눌러 만들어요."
+            : "만들면 아이디와 임시 비밀번호가 발급돼요. 회원은 처음 로그인할 때 새 비밀번호를 정해야 해요."}
       </p>
 
       <label htmlFor="mname" className="mt-4 block text-sm font-bold">이름</label>
-      <input id="mname" value={name} onChange={e => setName(e.target.value)} maxLength={40} placeholder="예: 홍길동 (같은 이름이 있으면 홍길동A 처럼 구분)" autoComplete="off" className={inputCls} />
+      <input id="mname" value={name} onChange={e => setName(e.target.value)} maxLength={40} placeholder={scope === "coop" ? "예: 가나다 철물 (같은 이름이 있으면 구분)" : "예: 홍길동 (같은 이름이 있으면 홍길동A 처럼 구분)"} autoComplete="off" className={inputCls} />
 
-      <div className="mt-4 text-sm font-bold">팀 <span className="font-normal text-zinc-500">· 사내(사무실·현장) / 협력(외주)</span></div>
+      {scope === "coop" && (
+        <>
+          <label htmlFor="mhandles" className="mt-4 block text-sm font-bold">취급품목 <span className="font-normal text-zinc-500">(선택)</span></label>
+          <input id="mhandles" value={handles} onChange={e => setHandles(e.target.value)} maxLength={100} placeholder="예: 합판, 각재, 방부목" autoComplete="off" className={inputCls} />
+          <label htmlFor="mphone" className="mt-4 block text-sm font-bold">연락처 <span className="font-normal text-zinc-500">(선택)</span></label>
+          <input id="mphone" type="tel" value={phone} onChange={e => setPhone(e.target.value)} maxLength={30} placeholder="예: 010-1234-5678" autoComplete="off" className={inputCls} />
+          <label htmlFor="maddr" className="mt-4 block text-sm font-bold">주소 <span className="font-normal text-zinc-500">(선택)</span></label>
+          <input id="maddr" value={address} onChange={e => setAddress(e.target.value)} maxLength={200} placeholder="예: 경기도 ○○시 ○○로 12" autoComplete="off" className={inputCls} />
+        </>
+      )}
+
+      <div className="mt-4 text-sm font-bold">팀 <span className="font-normal text-zinc-500">{scope === "coop" ? "· 거래처 팀(자유롭게 추가할 수 있어요)" : "· 사내(사무실·현장)"}</span></div>
       <div className="mt-2 space-y-3" role="radiogroup" aria-label="팀">
         {sidesShown.map(sd => (
           <div key={sd.key} className="rounded-xl border border-black/10 p-3 dark:border-white/10">
@@ -350,7 +375,7 @@ export default function MembersAdmin({
       {editingSelf && <p className="mt-2 text-xs text-zinc-500">내 팀은 직접 바꿀 수 없어요.</p>}
 
       <div className="mt-4 text-sm font-bold">
-        메뉴 <span className="font-normal text-zinc-500">· 팀 기본 메뉴는 항상 쓸 수 있어요. 필요하면 아래에서 더 부여하세요</span>
+        메뉴 부여 <span className="font-normal text-zinc-500">(선택) · 안 골라도 등록돼요. 팀 기본 메뉴는 항상 쓸 수 있어요</span>
       </div>
       <div className="mt-2 flex flex-wrap gap-2">
         {MENUS.map(mn => {
@@ -411,7 +436,7 @@ export default function MembersAdmin({
           <motion.div key="trades" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
             <div className="mt-4 flex items-baseline gap-2">
               <span className="text-sm font-bold">공정</span>
-              <span className={`text-xs ${full ? "font-semibold text-blue-600" : "text-zinc-500"}`}>{picked.length}/{MAX_TRADES}개 선택 (설문에 참여하는 회원만)</span>
+              <span className={`text-xs ${full ? "font-semibold text-blue-600" : "text-zinc-500"}`}>{picked.length}/{MAX_TRADES}개 선택 (자재 요청을 하는 회원만)</span>
             </div>
             <div className="mt-2 flex flex-wrap gap-2 pb-1">
               {trades.map(t => {
@@ -464,10 +489,12 @@ export default function MembersAdmin({
         )}
       </AnimatePresence>
 
+      {(scope !== "coop" || (editId && loginId)) && (<>
       <label htmlFor="mid" className="mt-4 block text-sm font-bold">
         아이디 <span className="font-normal text-zinc-500">{editId ? "(영문 소문자·숫자·_- 3~20자)" : "(비우면 자동 생성)"}</span>
       </label>
       <input id="mid" value={loginId} onChange={e => setLoginId(e.target.value)} autoCapitalize="none" spellCheck={false} autoComplete="off" placeholder={editId ? "" : "자동 생성"} className={inputCls} />
+      </>)}
 
       <AnimatePresence>
         {err && (
@@ -489,7 +516,7 @@ export default function MembersAdmin({
   return (
     <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24">
       <header className="flex flex-wrap items-center gap-3 py-5">
-        <h1 className="mr-auto text-xl font-extrabold">{scope === "coop" ? "협력업체 관리" : "회원 관리"}</h1>
+        <h1 className="mr-auto text-xl font-extrabold">{scope === "coop" ? "거래처 관리" : "회원 관리"}</h1>
         <span className="text-sm text-zinc-500">총 {scoped.length}명</span>
       </header>
 
@@ -509,7 +536,7 @@ export default function MembersAdmin({
       </section>
 
 
-      {/* 팀 관리: 구분(사내/협력)·부서(사무실/현장/외주)는 고정, 팀명만 추가·삭제 */}
+      {/* 팀 관리: 구분(사내/거래처)·부서(사무실/현장/거래처)는 고정, 팀명만 추가·삭제 */}
       <section className="mt-4 rounded-2xl border border-black/10 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-zinc-900">
         <button type="button" onClick={() => setTeamsOpen(o => !o)} aria-expanded={teamsOpen} className="flex w-full items-center gap-2 text-left">
           <h2 className="mr-auto text-base font-bold">팀 관리</h2>
@@ -520,7 +547,7 @@ export default function MembersAdmin({
           {teamsOpen && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
               <p className="mt-2 text-sm text-zinc-500">
-                구분(사내·협력)과 부서(사무실·현장·외주)는 고정이에요. {canManageTeams ? "팀명만 추가하거나 삭제할 수 있어요." : "팀명을 추가·삭제할 권한이 없어요."}
+                {scope === "coop" ? "거래처 팀 이름은 자유롭게 정할 수 있어요. " : "구분(사내)과 부서(사무실·현장)는 고정이에요. "}{canManageTeams ? "팀명만 추가하거나 삭제할 수 있어요." : "팀명을 추가·삭제할 권한이 없어요."}
                 기본 동작이 걸린 팀(<b>기본</b> 표시)과 소속 회원이 있는 팀은 지울 수 없어요.
               </p>
               <div className="mt-3 space-y-3">
@@ -582,6 +609,14 @@ export default function MembersAdmin({
       <AnimatePresence initial={false}>
       {listOpen && (
       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+      <input
+        type="search"
+        value={q}
+        onChange={e => setQ(e.target.value)}
+        placeholder={scope === "coop" ? "거래처 이름으로 검색" : "회원 이름으로 검색"}
+        aria-label="이름 검색"
+        className="mt-3 w-full rounded-xl border border-black/15 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900"
+      />
       {scope === "inhouse" && (
         <div className="no-scrollbar mt-3 flex gap-1.5 overflow-x-auto" aria-label={`${sideLabel(scope)} 부서`}>
           <button type="button" onClick={() => pickGroup("all")} className={`${chipBase} text-[13px] ${group === "all" ? chipOn : chipOff}`}>{sideLabel(scope)} 전체<small className="ml-1 opacity-70">{sideCount(scope)}</small></button>
@@ -604,7 +639,7 @@ export default function MembersAdmin({
       )}
 
       <div className="mt-3 grid gap-3">
-        {builtinId && scope === "inhouse" && (group === "all" || group === "office") && (filter === "all" || filter === "super") && (
+        {builtinId && scope === "inhouse" && (!kw || "내장최고관리자".includes(kw) || builtinId.includes(kw)) && (group === "all" || group === "office") && (filter === "all" || filter === "super") && (
           <div className="rounded-2xl border border-dashed border-black/20 bg-white p-4 dark:border-white/20 dark:bg-zinc-900">
             <div className="flex flex-wrap items-center gap-2">
               <b className="text-base">내장 최고 관리자</b>
@@ -615,9 +650,46 @@ export default function MembersAdmin({
             <p className="mt-2 text-xs text-zinc-500">비상용 계정이에요. 아이디·비밀번호는 서버의 <code>.env.local</code> 에서만 바꿀 수 있어요.</p>
           </div>
         )}
-        {shown.length === 0 && (side !== "all" || group !== "all" || filter !== "all") && <p className="py-6 text-center text-sm text-zinc-500">해당하는 회원이 아직 없어요.</p>}
+        {shown.length === 0 && (kw || side !== "all" || group !== "all" || filter !== "all") && <p className="py-6 text-center text-sm text-zinc-500">해당하는 회원이 아직 없어요.</p>}
+        {scope === "coop" && shown.length > 0 && (
+          <div className="no-scrollbar overflow-x-auto rounded-2xl border border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900">
+            <table className="w-full min-w-[40rem] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-black/10 text-xs text-zinc-500 dark:border-white/10">
+                  <th className="whitespace-nowrap px-3 py-2.5 font-bold">팀</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-bold">이름</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-bold">취급품목</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-bold">연락처</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-bold">주소</th>
+                  <th className="px-3 py-2.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map(m => {
+                  const isMe = m.id === selfId;
+                  return (
+                    <tr key={m.id} className="border-b border-black/5 align-top last:border-0 dark:border-white/5">
+                      <td className="whitespace-nowrap px-3 py-3"><span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">{teamLabel(teams, m.role)}</span></td>
+                      <td className="px-3 py-3 font-bold">{m.name}{m.loginId && <span className="mt-0.5 block text-[11px] font-normal text-zinc-500">아이디 {m.loginId}</span>}{m.mustChangePassword && <span className="ml-1.5 rounded-full bg-amber-50 px-1.5 py-0.5 align-middle text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">임시 비밀번호</span>}</td>
+                      <td className="px-3 py-3 text-zinc-700 dark:text-zinc-300">{m.handles || <span className="text-zinc-400">—</span>}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-zinc-700 dark:text-zinc-300">{m.phone || <span className="text-zinc-400">—</span>}</td>
+                      <td className="min-w-[10rem] px-3 py-3 text-zinc-700 dark:text-zinc-300">{m.address || <span className="text-zinc-400">—</span>}</td>
+                      <td className="whitespace-nowrap px-3 py-3">
+                        <div className="flex flex-wrap justify-end gap-1.5">
+                          <button type="button" onClick={() => startEdit(m)} className="rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-bold dark:bg-zinc-800">수정</button>
+                          <button type="button" disabled={isMe} onClick={() => setConfirmReset(m)} title={m.loginId ? "임시 비밀번호 재발급" : "아이디와 임시 비밀번호 만들기"} className="rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs font-bold text-blue-600 disabled:opacity-35 dark:bg-blue-500/15 dark:text-blue-300">{m.loginId ? "비번 재발급" : "아이디 생성"}</button>
+                          <button type="button" disabled={isMe} onClick={() => setConfirmDel(m)} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-bold text-red-600 disabled:opacity-35 dark:bg-red-500/15 dark:text-red-300">삭제</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
         <AnimatePresence initial={false}>
-          {shown.map(m => {
+          {(scope === "coop" ? [] : shown).map(m => {
             const sub = submissions[m.id] ?? {};
             const isMe = m.id === selfId;
             const g = groupOf(m);
@@ -659,7 +731,7 @@ export default function MembersAdmin({
                         key={t}
                         className={`rounded-full px-2.5 py-1 text-xs font-semibold ${sub[t] ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"}`}
                       >
-                        {t} · {sub[t] ? "제출 완료" : "미제출"}
+                        {t}
                       </span>
                     ))}
                     {(m.categories ?? []).length > 0 && <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">카테고리 · {m.categories.join(", ")}</span>}
@@ -720,11 +792,11 @@ export default function MembersAdmin({
       <Modal open={confirmReset !== null} onClose={() => !busy && setConfirmReset(null)}>
         {confirmReset && (
           <>
-            <h2 className="text-lg font-bold">{confirmReset.name}님의 임시 비밀번호를 재발급할까요?</h2>
+            <h2 className="text-lg font-bold">{confirmReset.name}님의 {confirmReset.loginId ? "임시 비밀번호를 재발급" : "아이디와 임시 비밀번호를 생성"}할까요?</h2>
             <p className="mt-2 text-sm leading-relaxed text-zinc-500">이전 비밀번호는 쓸 수 없게 되고, 이미 로그인해 둔 기기는 로그아웃돼요. 다음 로그인 때 새 비밀번호를 정하게 돼요.</p>
             <div className="mt-5 flex gap-2">
               <button type="button" disabled={busy} onClick={() => setConfirmReset(null)} className="flex-1 rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">취소</button>
-              <motion.button whileTap={{ scale: 0.97 }} type="button" disabled={busy} onClick={doReset} className="flex-1 rounded-xl bg-blue-600 py-3 font-bold text-white disabled:opacity-50">{busy ? "처리 중…" : "재발급"}</motion.button>
+              <motion.button whileTap={{ scale: 0.97 }} type="button" disabled={busy} onClick={doReset} className="flex-1 rounded-xl bg-blue-600 py-3 font-bold text-white disabled:opacity-50">{busy ? "처리 중…" : confirmReset.loginId ? "재발급" : "생성"}</motion.button>
             </div>
           </>
         )}
@@ -734,7 +806,7 @@ export default function MembersAdmin({
         {confirmDel && (
           <>
             <h2 className="text-lg font-bold">{confirmDel.name}님을 삭제할까요?</h2>
-            <p className="mt-2 text-sm leading-relaxed text-zinc-500">이 회원은 더 이상 로그인할 수 없게 돼요. 이미 제출된 설문 응답은 그대로 남아요.</p>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-500">이 회원은 더 이상 로그인할 수 없게 돼요. 이미 보낸 자재 요청은 그대로 남아요.</p>
             <div className="mt-5 flex gap-2">
               <button type="button" disabled={busy} onClick={() => setConfirmDel(null)} className="flex-1 rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">취소</button>
               <motion.button whileTap={{ scale: 0.97 }} type="button" disabled={busy} onClick={doDelete} className="flex-1 rounded-xl bg-red-600 py-3 font-bold text-white disabled:opacity-50">{busy ? "처리 중…" : "삭제"}</motion.button>

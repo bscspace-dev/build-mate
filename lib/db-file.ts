@@ -2,7 +2,7 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { Member, MemberPatch, Product, SurveyPayload, TrashedProduct } from './types';
+import type { MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct } from './types';
 import { removeImage } from './images';
 import { DEFAULT_TEAMS, type Team } from './roles';
 
@@ -26,7 +26,7 @@ async function writeJson(file: string, data: unknown) {
   await fs.rename(tmp, target);
 }
 
-export const getProducts = () => readJson<Product[]>('products.json');
+export const getProducts = async () => (await readJson<Product[]>('products.json')).map(p => ({ ...p, stock: p.stock ?? 0 }));
 export const getTrash = () => readJson<TrashedProduct[]>('trash.json');
 export async function getTrades(): Promise<string[]> {
   return (await readJson<{ trades: string[] }>('meta.json')).trades;
@@ -116,12 +116,12 @@ type LegacyWorker = { id: string; name: string; trades: string[]; createdAt: str
 async function loadMembers(): Promise<Member[]> {
   try {
     // 예전에 만들어진 회원에는 menus(부여받은 메뉴)가 없으니 빈 값으로 채운다
-    return (await readJson<Member[]>('members.json')).map(m => ({ ...m, menus: m.menus ?? [], actions: m.actions ?? {}, categories: m.categories ?? [] }));
+    return (await readJson<Member[]>('members.json')).map(m => ({ ...m, menus: m.menus ?? [], actions: m.actions ?? {}, categories: m.categories ?? [], handles: m.handles ?? '', phone: m.phone ?? '', address: m.address ?? '' }));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     const old = await readOr<LegacyWorker[]>('workers.json', []);
     const migrated: Member[] = old.map(w => ({
-      id: w.id, name: w.name, role: 'worker', trades: w.trades, categories: [], menus: [], actions: {}, createdAt: w.createdAt,
+      id: w.id, name: w.name, role: 'worker', trades: w.trades, categories: [], handles: '', phone: '', address: '', menus: [], actions: {}, createdAt: w.createdAt,
       loginId: w.loginId, passHash: w.passHash, mustChangePassword: false, idChanged: false,
     }));
     await writeJson('members.json', migrated);
@@ -372,6 +372,68 @@ export function removeTrade(name: string): Promise<TradeResult> {
   });
 }
 
+// ───────── 현장 자재 요청 (data/requests.json) ─────────
+export function saveRequest(r: Omit<MaterialRequest, 'id' | 'at' | 'done' | 'doneAt' | 'doneBy'>): Promise<MaterialRequest> {
+  return withLock(async () => {
+    let list: MaterialRequest[] = [];
+    try {
+      list = await readJson<MaterialRequest[]>('requests.json');
+    } catch {
+      list = [];
+    }
+    const row: MaterialRequest = { ...r, id: crypto.randomBytes(6).toString('hex'), at: new Date().toISOString(), done: false, doneAt: null, doneBy: null };
+    await writeJson('requests.json', [row, ...list]);
+    return row;
+  });
+}
+
+/**
+ * 요청을 '준비 완료'로 처리한다. 재고가 모자라 아직 못 채운 품목이 남아 있으면 처리하지 않는다.
+ * 'ok' 처리됨 · 'short' 부족한 품목이 남음 · 'none' 없거나 이미 완료된 요청
+ */
+export function completeRequest(id: string, by: string): Promise<'ok' | 'short' | 'none'> {
+  return withLock(async () => {
+    const list = await getRequests();
+    const r = list.find(x => x.id === id);
+    if (!r || r.done) return 'none';
+    if (r.items.some(it => (it.s ?? 0) > 0)) return 'short';
+    await writeJson('requests.json', list.map(x => (x.id === id ? { ...x, done: true, doneAt: new Date().toISOString(), doneBy: by } : x)));
+    return 'ok';
+  });
+}
+
+/**
+ * 재고가 모자랐던 품목을 채운다: 입고 수량(received)만큼 재고에 넣고, 이 요청의 부족분(s)을 바로 가져간다.
+ * 입고 수량은 부족분 이상이어야 하고, 남는 수량은 재고에 그대로 남는다.
+ */
+export function fillRequestItem(id: string, k: string, received: number): Promise<{ request: MaterialRequest } | { error: string }> {
+  return withLock(async () => {
+    const list = await getRequests();
+    const r = list.find(x => x.id === id);
+    if (!r) return { error: '없는 요청이에요.' };
+    if (r.done) return { error: '이미 준비 완료된 요청이에요.' };
+    const it = r.items.find(x => x.k === k);
+    const need = it?.s ?? 0;
+    if (!it || need <= 0) return { error: '채울 부족분이 없는 품목이에요.' };
+    if (!Number.isInteger(received) || received < need) return { error: '부족한 ' + need + '개 이상 입고해야 해요.' };
+    const products = await getProducts();
+    if (!products.some(p => p.key === k)) return { error: '재고 목록에 없는 자재예요.' };
+    await writeJson('products.json', products.map(p => (p.key === k ? { ...p, stock: p.stock + received - need } : p)));
+    const updated: MaterialRequest = { ...r, items: r.items.map(x => (x.k === k ? { ...x, s: undefined, f: (x.f ?? 0) + need } : x)) };
+    await writeJson('requests.json', list.map(x => (x.id === id ? updated : x)));
+    return { request: updated };
+  });
+}
+
+/** 최신순 */
+export async function getRequests(): Promise<MaterialRequest[]> {
+  try {
+    return (await readJson<MaterialRequest[]>('requests.json')).map(r => ({ ...r, site: r.site ?? '', done: r.done ?? true, doneAt: r.doneAt ?? null, doneBy: r.doneBy ?? null }));
+  } catch {
+    return [];
+  }
+}
+
 /** 자재를 다른 카테고리로 옮긴다 (세부분류는 비운다) */
 export function moveProducts(keys: string[], category: string): Promise<CatResult> {
   return withLock(async () => {
@@ -390,6 +452,65 @@ export function moveProducts(keys: string[], category: string): Promise<CatResul
       await writeJson('categories.json', list);
     }
     return { ok: true, count: n } as const;
+  });
+}
+
+/** 다음에 쓸 자재 번호 (p0001 형식, 휴지통 포함해서 가장 큰 번호 다음) */
+export async function nextProductKey(): Promise<string> {
+  const [products, trash] = await Promise.all([getProducts(), getTrash()]);
+  let max = 0;
+  for (const p of [...products, ...trash]) {
+    const m = /^p(\d+)$/.exec(p.key);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return 'p' + String(max + 1).padStart(4, '0');
+}
+
+/** 새 자재 등록. 목록 맨 뒤(seq 가 가장 큰 값 다음)에 들어간다. */
+export function addProduct(p: Omit<Product, 'seq'>): Promise<Product> {
+  return withLock(async () => {
+    const [products, trash] = await Promise.all([getProducts(), getTrash()]);
+    const seq = Math.max(0, ...products.map(x => x.seq), ...trash.map(x => x.seq)) + 1;
+    const row: Product = { ...p, seq };
+    await writeJson('products.json', [...products, row]);
+    return row;
+  });
+}
+
+/**
+ * 현장 요청이 들어오면 재고에서 요청 수량만큼 뺀다. 재고보다 많이 요청해도 받는다 — 재고는 0까지만 줄고,
+ * 실제로 뺀 수량(took)을 돌려준다. (요청 수량 - took = 부족한 수량)
+ */
+export function takeStock(lines: { k: string; q: number }[]): Promise<{ ok: true; took: Record<string, number> } | { short: string }> {
+  return withLock(async () => {
+    const products = await getProducts();
+    const by = new Map(products.map(p => [p.key, p]));
+    const took: Record<string, number> = {};
+    for (const l of lines) {
+      const p = by.get(l.k);
+      if (!p) return { short: '없는 자재가 섞여 있어요. 화면을 새로고침해 주세요.' };
+      took[l.k] = Math.min(p.stock, l.q);
+    }
+    await writeJson('products.json', products.map(p => (p.key in took ? { ...p, stock: p.stock - took[p.key] } : p)));
+    return { ok: true, took } as const;
+  });
+}
+
+/** takeStock 으로 뺀 재고를 되돌린다 (요청 저장에 실패했을 때) */
+export function returnStock(took: Record<string, number>): Promise<void> {
+  return withLock(async () => {
+    const products = await getProducts();
+    await writeJson('products.json', products.map(p => (p.key in took ? { ...p, stock: p.stock + took[p.key] } : p)));
+  });
+}
+
+/** 재고 수량 저장 */
+export function setStock(key: string, stock: number): Promise<number> {
+  return withLock(async () => {
+    const products = await getProducts();
+    let n = 0;
+    await writeJson('products.json', products.map(p => (p.key === key ? (n++, { ...p, stock }) : p)));
+    return n;
   });
 }
 

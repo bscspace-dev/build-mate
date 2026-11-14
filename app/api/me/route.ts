@@ -18,7 +18,7 @@ export async function GET() {
       menus: effectiveMenus(member.role, member.menus, member.actions), // 지금 쓸 수 있는 메뉴
     });
   }
-  if (await hasRootSession()) return json({ kind: 'root', name: '최고 관리자(내장)', roleLabel: '최고 관리자', menus: ['catalog', 'members'] });
+  if (await hasRootSession()) return json({ kind: 'root', name: '최고 관리자(내장)', roleLabel: '최고 관리자', menus: ['catalog', 'requests', 'members'] });
   return json({ error: '로그인이 필요해요.' }, 401);
 }
 

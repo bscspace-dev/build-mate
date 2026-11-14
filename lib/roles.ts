@@ -16,7 +16,7 @@ export type RoleKey = string;
 // 사내 / 협력
 export const SIDES = [
   { key: 'inhouse', label: '사내' },
-  { key: 'coop', label: '협력' },
+  { key: 'coop', label: '거래처' },
 ] as const;
 export type SideKey = (typeof SIDES)[number]['key'];
 
@@ -24,7 +24,7 @@ export type SideKey = (typeof SIDES)[number]['key'];
 export const GROUPS = [
   { key: 'office', label: '사무실', side: 'inhouse' },
   { key: 'field', label: '현장', side: 'inhouse' },
-  { key: 'outsource', label: '외주', side: 'coop' },
+  { key: 'outsource', label: '거래처', side: 'coop' },
 ] as const;
 export type GroupKey = (typeof GROUPS)[number]['key'];
 
@@ -46,7 +46,7 @@ export const DEFAULT_TEAMS: Team[] = [
   { key: 'sales', label: '영업팀', group: 'office', locked: false },
   { key: 'worker', label: '현장작업자', group: 'field', locked: true },
   { key: 'pm', label: '현장관리자(PM)', group: 'field', locked: true },
-  { key: 'partner', label: '협력업체', group: 'outsource', locked: false },
+  { key: 'partner', label: '거래처', group: 'outsource', locked: false },
 ];
 
 export const teamLabel = (teams: readonly Team[], key: RoleKey): string => teams.find(t => t.key === key)?.label ?? key;
@@ -55,8 +55,9 @@ export const teamsIn = (teams: readonly Team[], g: GroupKey): Team[] => teams.fi
 
 export const MENUS = [
   { key: 'catalog', label: '소모품', href: '/admin', grantable: true, desc: '소모품을 보고, 필요 없는 소모품을 삭제·복원해요' },
+  { key: 'requests', label: '현장요청', href: '/admin/requests', grantable: true, desc: '현장에서 들어온 자재 요청(품목과 수량)을 확인해요' },
   { key: 'members', label: '회원 관리', href: '/admin/members', grantable: false, desc: '회원을 만들고 팀·메뉴를 부여하고 비밀번호를 다시 발급해요' },
-  { key: 'survey', label: '설문 참여', href: '/survey', grantable: true, desc: '내 공정에서 실제로 쓰는 자재를 알려 주세요' },
+  { key: 'survey', label: '자재 요청', href: '/survey', grantable: true, desc: '내 공정의 자재를 골라 수량과 함께 요청해요' },
 ] as const;
 
 export type MenuKey = (typeof MENUS)[number]['key'];
@@ -72,8 +73,8 @@ export const GRANTABLE_MENUS: MenuKey[] = MENUS.filter(m => m.grantable).map(m =
 const TEAM_MENUS: Record<string, MenuKey[]> = {
   worker: ['survey'],
   pm: ['survey'],
-  super: ['catalog', 'members'],
-  dev: ['catalog', 'members'],
+  super: ['catalog', 'requests', 'members'],
+  dev: ['catalog', 'requests', 'members'],
 };
 
 export const roleMenus = (role: RoleKey): MenuKey[] => TEAM_MENUS[role] ?? [];
@@ -111,6 +112,7 @@ export const actionLabel = (k: ActionKey): string => ACTIONS.find(a => a.key ===
 /** 그 메뉴에서 권한을 따로 줄 수 있는 동작. 설문 참여에는 등록/수정/삭제 개념이 없다. */
 export const MENU_ACTIONS: Record<MenuKey, ActionKey[]> = {
   catalog: ['view', 'register', 'edit', 'delete'],
+  requests: ['view', 'edit'], // 수정 = 요청을 '준비 완료'로 처리하고, 새 요청 알림을 받는 권한
   members: ['view', 'register', 'edit', 'delete'],
   survey: [],
 };

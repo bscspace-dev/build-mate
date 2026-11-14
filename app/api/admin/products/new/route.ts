@@ -1,0 +1,55 @@
+import { actorCan, getActor } from '@/lib/auth';
+import { addProduct, getCategories, getCategoryTrades, nextProductKey } from '@/lib/db';
+import { json, limited, sameOrigin } from '@/lib/guard';
+import { removeImage, saveImage } from '@/lib/images';
+
+// 새 소모품(품목) 등록: 사진 + 정보. '등록' 권한이 있어야 한다.
+// 사진은 브라우저에서 줄여서(webp) 보낸 파일을 받아 저장한다.
+const MAX_IMAGE = 3 * 1024 * 1024;
+const TYPES = ['image/webp', 'image/jpeg', 'image/png'];
+const text = (v: FormDataEntryValue | null, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
+const whole = (v: FormDataEntryValue | null, max: number) => {
+  const s = typeof v === 'string' ? v.replace(/[,\s]/g, '') : '';
+  if (!s) return 0;
+  const n = Number(s);
+  return Number.isInteger(n) && n >= 0 && n <= max ? n : NaN;
+};
+
+export async function POST(req: Request) {
+  if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
+  const actor = await getActor('catalog');
+  if (!actor) return json({ error: '소모품 메뉴 권한이 필요해요.' }, 401);
+  if (!actorCan(actor, 'catalog', 'register')) return json({ error: '품목을 등록할 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
+  if (limited(req, 'newproduct', 60, 10 * 60 * 1000)) return json({ error: '잠시 후 다시 해 주세요.' }, 429);
+
+  const form = await req.formData().catch(() => null);
+  if (!form) return json({ error: 'bad request' }, 400);
+
+  const name = text(form.get('name'), 100);
+  const category = text(form.get('category'), 20);
+  const sub = text(form.get('sub'), 50);
+  const brand = text(form.get('brand'), 50);
+  const price = whole(form.get('price'), 99_999_999);
+  const stock = whole(form.get('stock'), 9_999_999);
+  if (!name) return json({ error: '품목 이름을 적어 주세요.' }, 400);
+  if (Number.isNaN(price)) return json({ error: '가격은 0 이상의 숫자로 적어 주세요.' }, 400);
+  if (Number.isNaN(stock)) return json({ error: '재고는 0 이상의 숫자로 적어 주세요.' }, 400);
+  if (!category || !(await getCategories()).includes(category)) return json({ error: '카테고리를 골라 주세요.' }, 400);
+
+  const photo = form.get('photo');
+  if (!(photo instanceof File) || photo.size === 0) return json({ error: '사진을 올려 주세요.' }, 400);
+  if (!TYPES.includes(photo.type)) return json({ error: '사진은 webp·jpg·png 파일만 올릴 수 있어요.' }, 400);
+  if (photo.size > MAX_IMAGE) return json({ error: '사진이 너무 커요. 3MB 이하로 올려 주세요.' }, 413);
+
+  const key = await nextProductKey();
+  const trade = (await getCategoryTrades())[category] ?? '';
+  const image = await saveImage(key, new Uint8Array(await photo.arrayBuffer()), photo.type);
+  try {
+    // 카테고리가 속한 공정을 자재의 공정으로 정해 둔다(현장 요청 화면에서 그 공정 작업자에게 보이도록)
+    const product = await addProduct({ key, category, sub, name, brand, price, priceInclVat: null, vatBasis: '', soldout: false, stock, image, trades: trade ? [trade] : [] });
+    return json({ ok: true, product });
+  } catch (e) {
+    await removeImage(image).catch(() => undefined); // 등록에 실패하면 올린 사진도 지운다
+    throw e;
+  }
+}

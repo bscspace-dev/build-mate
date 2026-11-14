@@ -1,5 +1,5 @@
 import 'server-only';
-import type { Member, MemberPatch, Product, SurveyPayload, TrashedProduct } from './types';
+import type { MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct } from './types';
 import type { GrantedActions, GroupKey, MenuKey, RoleKey, Team } from './roles';
 import { removeImage } from './images';
 import { supabase } from './supabase';
@@ -33,12 +33,12 @@ async function fetchAll<Row>(build: (from: number, to: number) => PromiseLike<{ 
 // ───────── 자재 ─────────
 type ProductRow = {
   key: string; seq: number; category: string; sub: string; name: string; brand: string;
-  price: number | null; price_incl_vat: number | null; vat_basis: string | null; soldout: boolean; image: string; trades: string[];
+  price: number | null; price_incl_vat: number | null; vat_basis: string | null; soldout: boolean; stock: number | null; image: string; trades: string[];
   deleted_at: string | null;
 };
 const toProduct = (r: ProductRow): Product => ({
   seq: r.seq, key: r.key, category: r.category, sub: r.sub, name: r.name, brand: r.brand,
-  price: r.price ?? 0, priceInclVat: r.price_incl_vat, vatBasis: r.vat_basis ?? '', soldout: r.soldout, image: r.image, trades: r.trades ?? [],
+  price: r.price ?? 0, priceInclVat: r.price_incl_vat, vatBasis: r.vat_basis ?? '', soldout: r.soldout, stock: r.stock ?? 0, image: r.image, trades: r.trades ?? [],
 });
 
 export async function getProducts(): Promise<Product[]> {
@@ -124,15 +124,15 @@ export async function getSubmissions(): Promise<Record<string, Record<string, st
 
 // ───────── 회원 ─────────
 type MemberRow = {
-  id: string; name: string; role: string; trades: string[]; categories: string[] | null; menus: string[] | null; actions: GrantedActions | null; login_id: string | null; pass_hash: string | null;
+  id: string; name: string; role: string; trades: string[]; categories: string[] | null; handles: string | null; phone: string | null; address: string | null; menus: string[] | null; actions: GrantedActions | null; login_id: string | null; pass_hash: string | null;
   must_change_password: boolean; id_changed: boolean; created_at: string;
 };
 const toMember = (r: MemberRow): Member => ({
-  id: r.id, name: r.name, role: r.role as RoleKey, trades: r.trades ?? [], categories: r.categories ?? [], menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
+  id: r.id, name: r.name, role: r.role as RoleKey, trades: r.trades ?? [], categories: r.categories ?? [], handles: r.handles ?? '', phone: r.phone ?? '', address: r.address ?? '', menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
   loginId: r.login_id ?? undefined, passHash: r.pass_hash ?? undefined, mustChangePassword: r.must_change_password, idChanged: r.id_changed,
 });
 const toRow = (m: Member) => ({
-  id: m.id, name: m.name, role: m.role, trades: m.trades, categories: m.categories, menus: m.menus, actions: m.actions, login_id: m.loginId ?? null, pass_hash: m.passHash ?? null,
+  id: m.id, name: m.name, role: m.role, trades: m.trades, categories: m.categories, handles: m.handles, phone: m.phone, address: m.address, menus: m.menus, actions: m.actions, login_id: m.loginId ?? null, pass_hash: m.passHash ?? null,
   must_change_password: m.mustChangePassword, id_changed: m.idChanged, created_at: m.createdAt,
 });
 function toPatchRow(p: MemberPatch): Record<string, unknown> {
@@ -141,6 +141,9 @@ function toPatchRow(p: MemberPatch): Record<string, unknown> {
   if (p.role !== undefined) o.role = p.role;
   if (p.trades !== undefined) o.trades = p.trades;
   if (p.categories !== undefined) o.categories = p.categories;
+  if (p.handles !== undefined) o.handles = p.handles;
+  if (p.phone !== undefined) o.phone = p.phone;
+  if (p.address !== undefined) o.address = p.address;
   if (p.menus !== undefined) o.menus = p.menus;
   if (p.actions !== undefined) o.actions = p.actions;
   if (p.loginId !== undefined) o.login_id = p.loginId;
@@ -320,6 +323,67 @@ export async function removeTrade(name: string): Promise<TradeResult> {
   return { ok: true, count: n };
 }
 
+// ───────── 현장 자재 요청 (requests 테이블) ─────────
+type RequestRow = { id: number; worker_id: string | null; name: string; trade: string; site: string | null; at: string; items: RequestItem[]; done: boolean | null; done_at: string | null; done_by: string | null };
+const toRequest = (r: RequestRow): MaterialRequest => ({ id: String(r.id), workerId: r.worker_id, name: r.name, trade: r.trade, site: r.site ?? '', at: new Date(r.at).toISOString(), items: r.items ?? [], done: r.done ?? true, doneAt: r.done_at ? new Date(r.done_at).toISOString() : null, doneBy: r.done_by ?? null });
+
+export async function saveRequest(r: Omit<MaterialRequest, 'id' | 'at' | 'done' | 'doneAt' | 'doneBy'>): Promise<MaterialRequest> {
+  const row = must(await supabase().from('requests').insert({ worker_id: r.workerId, name: r.name, trade: r.trade, site: r.site, items: r.items }).select('*').single(), '요청 저장') as RequestRow;
+  return toRequest(row);
+}
+
+/**
+ * 요청을 '준비 완료'로 처리한다. 재고가 모자라 아직 못 채운 품목이 남아 있으면 처리하지 않는다.
+ * 'ok' 처리됨 · 'short' 부족한 품목이 남음 · 'none' 없거나 이미 완료된 요청
+ */
+export async function completeRequest(id: string, by: string): Promise<'ok' | 'short' | 'none'> {
+  const n = Number(id);
+  if (!Number.isInteger(n)) return 'none';
+  const row = must(await supabase().from('requests').select('items,done').eq('id', n).maybeSingle(), '요청 조회') as { items: RequestItem[]; done: boolean | null } | null;
+  if (!row || row.done) return 'none';
+  if ((row.items ?? []).some(it => (it.s ?? 0) > 0)) return 'short';
+  const rows = must(await supabase().from('requests').update({ done: true, done_at: new Date().toISOString(), done_by: by }).eq('id', n).eq('done', false).select('id'), '요청 완료 처리') as { id: number }[];
+  return rows.length > 0 ? 'ok' : 'none';
+}
+
+/**
+ * 재고가 모자랐던 품목을 채운다: 입고 수량(received)만큼 재고에 넣고, 이 요청의 부족분(s)을 바로 가져간다.
+ * 입고 수량은 부족분 이상이어야 하고, 남는 수량은 재고에 그대로 남는다.
+ */
+export async function fillRequestItem(id: string, k: string, received: number): Promise<{ request: MaterialRequest } | { error: string }> {
+  const n = Number(id);
+  if (!Number.isInteger(n)) return { error: '없는 요청이에요.' };
+  const row = must(await supabase().from('requests').select('*').eq('id', n).maybeSingle(), '요청 조회') as RequestRow | null;
+  if (!row) return { error: '없는 요청이에요.' };
+  if (row.done) return { error: '이미 준비 완료된 요청이에요.' };
+  const items = row.items ?? [];
+  const it = items.find(x => x.k === k);
+  const need = it?.s ?? 0;
+  if (!it || need <= 0) return { error: '채울 부족분이 없는 품목이에요.' };
+  if (!Number.isInteger(received) || received < need) return { error: '부족한 ' + need + '개 이상 입고해야 해요.' };
+  const add = received - need; // 부족분은 이 요청이 가져가고, 나머지만 재고에 남는다
+  if (add > 0) {
+    let done = false;
+    for (let tries = 0; tries < 5 && !done; tries++) {
+      const p = must(await supabase().from('products').select('stock').eq('key', k).maybeSingle(), '재고 조회') as { stock: number | null } | null;
+      if (!p) return { error: '재고 목록에 없는 자재예요.' };
+      const from = p.stock ?? 0;
+      const upd = must(await supabase().from('products').update({ stock: from + add }).eq('key', k).eq('stock', from).select('key'), '재고 입고') as { key: string }[];
+      done = upd.length > 0;
+    }
+    if (!done) return { error: '재고를 저장하지 못했어요. 잠시 후 다시 해 주세요.' };
+  }
+  const nextItems = items.map(x => (x.k === k ? { ...x, s: undefined, f: (x.f ?? 0) + need } : x));
+  const saved = must(await supabase().from('requests').update({ items: nextItems }).eq('id', n).select('*').single(), '요청 수정') as RequestRow;
+  return { request: toRequest(saved) };
+}
+
+/** 최신순 (최근 300건) */
+export async function getRequests(): Promise<MaterialRequest[]> {
+  const rows = must(await supabase().from('requests').select('*').order('at', { ascending: false }).limit(300), '요청 조회') as RequestRow[];
+  return rows.map(toRequest);
+}
+
 export async function moveProducts(keys: string[], category: string): Promise<CatResult> {
   const list = await loadCategories();
   if (!list.includes(category)) return { notFound: true };
@@ -330,6 +394,82 @@ export async function moveProducts(keys: string[], category: string): Promise<Ca
     n += rows.length;
   }
   return { ok: true, count: n };
+}
+
+/** 다음에 쓸 자재 번호 (p0001 형식, 휴지통 포함해서 가장 큰 번호 다음) */
+export async function nextProductKey(): Promise<string> {
+  const rows = must(await supabase().from('products').select('key').like('key', 'p%').order('key', { ascending: false }).limit(50), '자재 번호 조회') as { key: string }[];
+  let max = 0;
+  for (const r of rows) {
+    const m = /^p(\d+)$/.exec(r.key);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return 'p' + String(max + 1).padStart(4, '0');
+}
+
+/** 새 자재 등록. 목록 맨 뒤(seq 가 가장 큰 값 다음)에 들어간다. */
+export async function addProduct(p: Omit<Product, 'seq'>): Promise<Product> {
+  const top = must(await supabase().from('products').select('seq').order('seq', { ascending: false }).limit(1), '순서 조회') as { seq: number }[];
+  const seq = (top[0]?.seq ?? 0) + 1;
+  const row = must(
+    await supabase().from('products').insert({
+      key: p.key, seq, category: p.category, sub: p.sub, name: p.name, brand: p.brand, price: p.price, price_incl_vat: null, vat_basis: null,
+      soldout: false, stock: p.stock, image: p.image, trades: p.trades,
+    }).select('*').single(),
+    '자재 등록',
+  ) as ProductRow;
+  return toProduct(row);
+}
+
+/**
+ * 현장 요청이 들어오면 재고에서 요청 수량만큼 뺀다. 재고보다 많이 요청해도 받는다 — 재고는 0까지만 줄고,
+ * 실제로 뺀 수량(took)을 돌려준다. (요청 수량 - took = 부족한 수량)
+ */
+export async function takeStock(lines: { k: string; q: number }[]): Promise<{ ok: true; took: Record<string, number> } | { short: string }> {
+  const took: Record<string, number> = {};
+  for (const l of lines) {
+    let done = false;
+    for (let tries = 0; tries < 5 && !done; tries++) {
+      const r = must(await supabase().from('products').select('stock').eq('key', l.k).is('deleted_at', null).maybeSingle(), '재고 조회') as { stock: number | null } | null;
+      if (!r) {
+        await returnStock(took);
+        return { short: '없는 자재가 섞여 있어요. 화면을 새로고침해 주세요.' };
+      }
+      const from = r.stock ?? 0;
+      const t = Math.min(from, l.q);
+      if (t === 0) {
+        took[l.k] = 0;
+        done = true;
+        break;
+      }
+      // 읽은 값 그대로일 때만 바꾼다 (그 사이 다른 요청이 재고를 바꿨다면 다시 읽어서 시도한다)
+      const upd = must(await supabase().from('products').update({ stock: from - t }).eq('key', l.k).eq('stock', from).select('key'), '재고 차감') as { key: string }[];
+      if (upd.length) {
+        took[l.k] = t;
+        done = true;
+      }
+    }
+    if (!done) {
+      await returnStock(took);
+      return { short: '요청이 몰려서 처리하지 못했어요. 잠시 후 다시 요청해 주세요.' };
+    }
+  }
+  return { ok: true, took };
+}
+
+/** takeStock 으로 뺀 재고를 되돌린다 (요청 저장에 실패했을 때) */
+export async function returnStock(took: Record<string, number>): Promise<void> {
+  for (const [k, q] of Object.entries(took)) {
+    if (!q) continue;
+    const r = must(await supabase().from('products').select('stock').eq('key', k).maybeSingle(), '재고 조회') as { stock: number | null } | null;
+    if (r) await supabase().from('products').update({ stock: (r.stock ?? 0) + q }).eq('key', k);
+  }
+}
+
+/** 재고 수량 저장. 바뀐 개수(0 또는 1)를 돌려준다. */
+export async function setStock(key: string, stock: number): Promise<number> {
+  const rows = must(await supabase().from('products').update({ stock }).eq('key', key).select('key'), '재고 저장') as { key: string }[];
+  return rows.length;
 }
 
 export async function renameProduct(key: string, name: string): Promise<number> {
