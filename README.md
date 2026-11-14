@@ -1,36 +1,59 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 빌드메이트 웹
 
-## Getting Started
+현장 작업자에게 공정별 필요 자재를 조사하는 사이트 (Next.js 16 · Tailwind CSS 4 · motion · Node).
 
-First, run the development server:
+## 실행 (이 PC에서만 접속)
+- `start-local.bat` 더블클릭, 또는
+- `npm run build` → `npm run start:local` → http://127.0.0.1:3000
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## 화면 흐름
+1. **메인(`/`)에서 로그인** (아이디/비밀번호) — 관리자도, 모든 회원도 같은 로그인 창
+2. 로그인하면 **메뉴 선택 화면**: 내가 쓸 수 있는 메뉴(직급 기본 + 부여받은 메뉴)가 카드로 나오고, 골라서 들어간다. 맨 아래 "내 정보"는 모두에게 있다.
+   - **최고 관리자**(내장 계정 포함)는 메뉴 선택 없이 **바로 관리자 화면**으로 이동한다. (다른 메뉴는 화면 위쪽 메뉴에서)
+3. 임시 비밀번호로 처음 로그인하면 **새 비밀번호를 정하기 전에는 아무 메뉴도 쓸 수 없다**(비밀번호 변경 화면으로 보냄).
+
+## 직급과 메뉴
+회원 관리에서는 직급을 **사무실 / 현장 / 외주** 세 구분으로 한 번 더 묶어 보여준다 (구분은 직급에서 자동으로 정해지며 따로 저장하지 않는다).
+- 사무실: 디자인팀, 마케팅팀, 최고 관리자, 개발팀, 영업팀 / 현장: 현장작업자, 현장관리자(PM) / 외주: 협력업체
+
+| 직급 | 기본 메뉴 |
+|---|---|
+| 현장작업자 / 현장관리자(PM) | 설문 참여 |
+| 최고 관리자 / 개발팀 | 소모품, 회원 관리 |
+| 디자인팀 / 마케팅팀 / 영업팀 / 협력업체 | (없음 — 내 정보만, 필요하면 메뉴 부여) |
+
+- **메뉴 부여**: 최고 관리자·개발팀이 필요한 회원에게 **소모품** 또는 **설문 참여**를 추가로 부여할 수 있다. (**회원 관리**는 계정을 만들고 고치는 강한 권한이라 부여할 수 없고, 최고 관리자·개발팀만 갖는다.)
+- **공정(1~3개)**: 설문에 참여하는 회원(현장작업자·PM, 또는 설문 참여를 부여받은 회원)만 갖는다. 나머지는 항상 없음.
+- **내장 최고 관리자**: `.env.local` 의 `ADMIN_ID` / `ADMIN_PASSWORD` 계정. 비상용이며 소모품·회원 관리를 쓴다. 회원 목록에 고정 표시되고 화면에서는 수정할 수 없다.
+
+## 회원 생성·수정 규칙
+- **생성**: 최고 관리자·개발팀만. 아이디와 **임시 비밀번호**가 자동 발급된다(아이디는 직접 정해도 됨). 비밀번호는 암호화해서 저장하므로 **발급 직후 한 번만** 화면에 보인다. 잊으면 "임시 비밀번호 재발급".
+- **수정**: 최고 관리자·개발팀 + 본인만. 직급·메뉴 부여는 최고 관리자·개발팀만, 본인 직급은 스스로 못 바꾼다.
+- **아이디**: 본인은 **처음 1회만** 바꿀 수 있고(현재 비밀번호 확인), 이후에는 최고 관리자·개발팀만 바꿀 수 있다. 최고 관리자·개발팀 본인은 횟수 제한이 없다.
+- **비밀번호 재발급 / 계정 삭제**: 그 계정으로 로그인해 둔 기기는 자동 로그아웃된다. 내 계정은 스스로 지울 수 없다.
+- 이름은 서로 겹치지 않아야 한다(엑셀 취합이 이름+공정으로 구분). 관리자 아이디는 회원이 쓸 수 없다.
+
+## 설문
+- 공정에 해당하는 자재가 처음부터 모두 "필요", **쓰지 않는 자재를 누르면 "필요없는 품목"으로 이동**. 분류별 "확인 완료", 목록에 없는 자재 직접 추가, 되돌리기 지원.
+- 제출하면 서버에 저장. 이름·공정은 로그인한 계정의 등록 정보로 저장되므로 위조할 수 없다.
+
+## 소모품 메뉴
+삭제(휴지통) · 복원 · 영구 삭제(이미지까지 완전 삭제).
+
+## 보안
+- 로그인은 10분에 10번까지만 시도할 수 있다. 서버가 리버스 프록시 뒤에서 돌 때만 `.env.local` 에 `TRUST_PROXY=true` 를 넣어 `x-forwarded-for` 로 사용자를 구분한다(기본은 모든 요청을 한 묶음으로 센다).
+- `SESSION_SECRET` 은 로그인 쿠키 서명 키이므로 외부에 공유하지 마세요.
+
+## 데이터 (`data/`) 와 저장소
+- `products.json` 자재 / `trash.json` 휴지통 / `members.json` 회원(비밀번호는 해시) / `responses/` 설문 응답(1건당 파일 1개)
+- `workers.json` 은 예전 "현장관리자(작업자)" 목록으로, 처음 실행할 때 `members.json`(현장작업자 직급)으로 옮겨졌다. 이제 쓰지 않는 백업이다.
+- `.env.local` 의 `DATA_STORE=file`(기본) 또는 `supabase`. Supabase 로 옮기려면 `supabase/schema.sql` 실행 → `npm run supabase:check` → `npm run supabase:migrate` → `DATA_STORE=supabase`.
+- `npm run prepare-data -- --force` 는 자재 데이터를 **처음 상태로 다시 만듭니다** (삭제 내용 초기화).
+
+## 응답 → 엑셀
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+cd 현장설문
+npm install        # 처음 한 번만
+node aggregate.js  # 기본값: ..\data\responses 를 읽음
+```
+응답의 `items` 는 "최종으로 필요하다고 남긴 자재"입니다.

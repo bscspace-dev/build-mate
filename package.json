@@ -6,9 +6,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "start:local": "next start -H 127.0.0.1 -p 3000",
+    "dev:local": "next dev -H 127.0.0.1 -p 3000",
+    "prepare-data": "node scripts/prepare-data.mjs",
+    "supabase:check": "node scripts/supabase-check.mjs",
+    "supabase:migrate": "node scripts/supabase-migrate.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
+    "motion": "^14.14.0",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0"

@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/현장설문/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -39,3 +40,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 설문 응답·관리자 삭제 내용(로컬 데이터)
+/data/responses/
+
+# 계정 데이터(해시 포함)
+/data/members.json
+/data/workers.json
