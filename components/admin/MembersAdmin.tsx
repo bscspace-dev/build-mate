@@ -11,6 +11,7 @@ import {
 import { Modal } from "@/components/Sheet";
 
 const MAX_TRADES = 3;
+const MAX_CATS = 3;
 const chipBase = "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors";
 const chipOff = "border-black/10 bg-white text-zinc-800 hover:border-blue-400 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-200";
 const chipOn = "border-blue-600 bg-blue-600 font-semibold text-white";
@@ -22,13 +23,14 @@ type ApiResult = { ok: boolean; member?: PublicMember; credentials?: Creds; erro
 type Issued = { name: string; kind: "new" | "reset"; creds: Creds };
 
 export default function MembersAdmin({
-  scope, initialMembers, initialTeams, canManageTeams, trades, submissions, selfId, builtinId,
+  scope, initialMembers, initialTeams, canManageTeams, trades, categoryTrades, submissions, selfId, builtinId,
 }: {
   scope: SideKey; // inhouse = 사내 회원 관리, coop = 협력업체(외주) 관리 — 두 화면은 따로 관리한다
   initialMembers: PublicMember[];
   initialTeams: Team[];
   canManageTeams: boolean; // 팀명 추가·삭제 권한 (회원 관리의 등록·삭제 권한)
   trades: string[];
+  categoryTrades: Record<string, string>; // 카테고리 → 속한 공정 (공정 아래 카테고리를 고르는 데 쓴다)
   submissions: Record<string, Record<string, string>>;
   selfId: string | null; // 지금 로그인한 회원(내장 최고 관리자면 null)
   builtinId: string; // 내장 최고 관리자 아이디
@@ -40,6 +42,7 @@ export default function MembersAdmin({
   const defaultRole: RoleKey = scope === "coop" ? (teamsIn(initialTeams, "outsource")[0]?.key ?? "partner") : "worker";
   const [role, setRole] = useState<RoleKey>(defaultRole);
   const [picked, setPicked] = useState<string[]>([]);
+  const [pickedCats, setPickedCats] = useState<string[]>([]);
   const [menus, setMenus] = useState<MenuKey[]>([]); // 팀 기본 메뉴 외에 더 부여하는 메뉴
   const [actions, setActions] = useState<GrantedActions>({}); // 부여하는 메뉴마다 허용할 동작(등록/수정/삭제)
   const [loginId, setLoginId] = useState("");
@@ -111,6 +114,11 @@ export default function MembersAdmin({
 
   function toggleTrade(t: string) {
     setPicked(p => (p.includes(t) ? p.filter(x => x !== t) : p.length >= MAX_TRADES ? p : [...p, t]));
+    setPickedCats(cs => cs.filter(c => categoryTrades[c] !== t || !picked.includes(t))); // 공정을 빼면 그 공정의 카테고리도 뺀다
+  }
+  const catsOfTrade = (p: string[], t: string) => p.filter(c => categoryTrades[c] === t).length;
+  function toggleCat(c: string) {
+    setPickedCats(p => (p.includes(c) ? p.filter(x => x !== c) : catsOfTrade(p, categoryTrades[c]) >= MAX_CATS ? p : [...p, c]));
   }
   function chooseRole(r: RoleKey) {
     setRole(r);
@@ -139,6 +147,7 @@ export default function MembersAdmin({
     setMenus([]);
     setActions({});
     setPicked([]);
+    setPickedCats([]);
     setLoginId("");
     setEditId(null);
     setErr("");
@@ -173,10 +182,11 @@ export default function MembersAdmin({
     setErr("");
     try {
       const tradesToSend = needTrades ? picked : [];
+      const catsToSend = needTrades ? pickedCats.filter(c => picked.includes(categoryTrades[c])) : [];
       const r = await call(
         editId
-          ? { action: "update", id: editId, name, role, menus, actions, trades: tradesToSend, loginId }
-          : { action: "add", name, role, menus, actions, trades: tradesToSend, loginId },
+          ? { action: "update", id: editId, name, role, menus, actions, trades: tradesToSend, categories: catsToSend, loginId }
+          : { action: "add", name, role, menus, actions, trades: tradesToSend, categories: catsToSend, loginId },
       );
       if (r.ok && r.member) {
         const m = r.member;
@@ -198,6 +208,7 @@ export default function MembersAdmin({
     setMenus(m.menus);
     setActions(Object.fromEntries(m.menus.filter(k => MENU_ACTIONS[k].length > 0).map(k => [k, m.actions?.[k] ?? ["view"]])) as GrantedActions); // 예전 부여(동작 미지정)는 보기만으로 보여 준다
     setPicked(m.trades);
+    setPickedCats(m.categories ?? []);
     setLoginId(m.loginId ?? "");
     setErr("");
   }
@@ -421,6 +432,34 @@ export default function MembersAdmin({
                 );
               })}
             </div>
+            {picked.length > 0 && (
+              <>
+                <div className="mt-4 flex items-baseline gap-2">
+                  <span className="text-sm font-bold">카테고리</span>
+                  <span className="text-xs text-zinc-500">공정마다 최대 {MAX_CATS}개 · 안 고르면 공정 전체</span>
+                </div>
+                {picked.map(t => {
+                  const cats = Object.keys(categoryTrades).filter(c => categoryTrades[c] === t);
+                  if (!cats.length) return null;
+                  return (
+                    <div key={t} className="mt-2">
+                      <div className="text-xs font-bold text-blue-600 dark:text-blue-300">{t} <small className={`font-normal ${catsOfTrade(pickedCats, t) >= MAX_CATS ? "font-semibold text-blue-600" : "text-zinc-500"}`}>{catsOfTrade(pickedCats, t)}/{MAX_CATS}개</small></div>
+                      <div className="mt-1.5 flex flex-wrap gap-2 pb-1">
+                        {cats.map(c => {
+                          const on = pickedCats.includes(c);
+                          const locked = !on && catsOfTrade(pickedCats, t) >= MAX_CATS;
+                          return (
+                            <motion.button key={c} type="button" whileTap={locked ? undefined : { scale: 0.94 }} onClick={() => toggleCat(c)} aria-pressed={on} disabled={locked} className={`${chipBase} px-3 py-1.5 text-sm ${on ? chipOn : chipOff} ${locked ? "opacity-35" : ""}`}>
+                              {c}
+                            </motion.button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -595,7 +634,7 @@ export default function MembersAdmin({
                 <div className="flex flex-wrap items-center gap-2">
                   <b className="text-base">{m.name}</b>
                   {g && <span className={tagCls}>{sideLabel(sideOf(g))} · {groupLabel(g)}</span>}
-                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">{teamLabel(teams, m.role)}</span>
+                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">{teamLabel(teams, m.role)}{canSurvey(m.role, m.menus) && m.trades.length > 0 && " - " + m.trades.map(t => t + "팀").join("/")}</span>
                   {isMe && <span className={tagCls}>나</span>}
                   {m.mustChangePassword && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">임시 비밀번호 (변경 전)</span>}
                   <div className="ml-auto flex gap-1.5">
@@ -605,7 +644,7 @@ export default function MembersAdmin({
                 </div>
 
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {effectiveMenus(m.role, m.menus, m.actions).length === 0 && <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800">쓸 수 있는 메뉴 없음 (내 정보만)</span>}
+                  {effectiveMenus(m.role, m.menus, m.actions).length === 0 && <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800">쓸 수 있는 메뉴 없음</span>}
                   {effectiveMenus(m.role, m.menus, m.actions).map(k => (
                     <span key={k} className="rounded-full border border-black/10 px-2 py-0.5 text-[11px] text-zinc-600 dark:border-white/10 dark:text-zinc-300">
                       {menuLabel(k)}{m.menus.includes(k) ? " (부여" + (MENU_ACTIONS[k].length ? " · " + ((m.actions?.[k] ?? ["view"]).map(actionLabel).join("·") || "볼 수 없음") : "") + ")" : ""}
@@ -623,6 +662,7 @@ export default function MembersAdmin({
                         {t} · {sub[t] ? "제출 완료" : "미제출"}
                       </span>
                     ))}
+                    {(m.categories ?? []).length > 0 && <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">카테고리 · {m.categories.join(", ")}</span>}
                   </div>
                 )}
 
@@ -634,7 +674,7 @@ export default function MembersAdmin({
                     type="button"
                     disabled={isMe}
                     onClick={() => setConfirmReset(m)}
-                    title={isMe ? "내 비밀번호는 ‘내 정보’에서 바꿔요" : undefined}
+                    title={isMe ? "내 비밀번호는 우측 상단 ‘비밀번호 변경’에서 바꿔요" : undefined}
                     className="ml-auto rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-600 disabled:opacity-35 dark:bg-blue-500/15 dark:text-blue-300"
                   >
                     임시 비밀번호 재발급

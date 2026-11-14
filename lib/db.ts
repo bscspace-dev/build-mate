@@ -11,6 +11,8 @@ const impl = () => (process.env.DATA_STORE === 'supabase' ? sb : file);
 export const getProducts = () => impl().getProducts();
 export const getTrash = () => impl().getTrash();
 export const getTrades = () => impl().getTrades();
+export const addTrade = (name: string) => impl().addTrade(name);
+export const removeTrade = (name: string) => impl().removeTrade(name);
 export const deleteProducts = (keys: string[]) => impl().deleteProducts(keys);
 export const restoreProducts = (keys: string[]) => impl().restoreProducts(keys);
 export const purgeProducts = (keys: string[]) => impl().purgeProducts(keys);

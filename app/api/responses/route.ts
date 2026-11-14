@@ -20,7 +20,6 @@ export async function POST(req: Request) {
 
   const worker = await getSessionMember();
   if (!worker) return json({ error: '로그인이 필요해요. 다시 로그인해 주세요.' }, 401);
-  if (worker.mustChangePassword) return json({ error: '먼저 새 비밀번호를 정해 주세요.' }, 403);
   if (!canSurvey(worker.role, worker.menus)) return json({ error: '설문 참여 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
   const trade = typeof b.trade === 'string' ? b.trade : '';
   if (b.v !== 1 || !worker.trades.includes(trade)) return json({ error: '등록된 공정이 아니에요.' }, 400);

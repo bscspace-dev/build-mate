@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import MembersAdmin from "@/components/admin/MembersAdmin";
 import { actorCan, adminLoginId, getActor } from "@/lib/auth";
-import { getMembers, getSubmissions, getTeams, getTrades } from "@/lib/db";
+import { getCategoryTrades, getMembers, getSubmissions, getTeams, getTrades } from "@/lib/db";
 import { toPublic } from "@/lib/member-utils";
 
 export const metadata = { title: "회원 관리 · 빌드메이트" };
@@ -18,7 +18,7 @@ export default function MembersPage() {
 async function Loader() {
   const actor = await getActor("members");
   if (!actor) redirect("/"); // 최고 관리자·개발팀이 아니면 메인으로
-  const [members, trades, submissions, teams] = await Promise.all([getMembers(), getTrades(), getSubmissions(), getTeams()]);
+  const [members, trades, submissions, teams, categoryTrades] = await Promise.all([getMembers(), getTrades(), getSubmissions(), getTeams(), getCategoryTrades()]);
   return (
     <MembersAdmin
       scope="inhouse"
@@ -26,6 +26,7 @@ async function Loader() {
       initialTeams={teams}
       canManageTeams={actorCan(actor, "members", "register") && actorCan(actor, "members", "delete")}
       trades={trades}
+      categoryTrades={categoryTrades}
       submissions={submissions}
       selfId={actor.kind === "member" ? actor.member.id : null}
       builtinId={adminLoginId()}

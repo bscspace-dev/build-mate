@@ -16,7 +16,7 @@ type Confirm = { mode: Mode | "purge"; keys: string[] } | null;
 type Toast = { id: number; text: string; undo?: { mode: Mode; keys: string[] } } | null;
 
 function ProductCard({
-  p, selected, onSelect, onAction, onMove, onRename, onShift, shiftable, trashMode, tradeCount, canDelete, canEdit,
+  p, selected, onSelect, onAction, onMove, onRename, onShift, shiftable, trashMode, canDelete, canEdit,
 }: {
   p: Product | TrashedProduct;
   selected: boolean;
@@ -27,7 +27,6 @@ function ProductCard({
   onShift: (k: string, dir: -1 | 1) => void;
   shiftable: { prev: boolean; next: boolean } | null; // 순서 이동 가능 여부(기본 순서 보기 + 수정 권한일 때만)
   trashMode: boolean;
-  tradeCount: number;
   canDelete: boolean; // 삭제 권한이 없으면 삭제·복원 버튼을 숨긴다
   canEdit: boolean; // 수정 권한이 없으면 카테고리 이동 버튼을 숨긴다
 }) {
@@ -62,20 +61,6 @@ function ProductCard({
       {p.soldout && <span className="pointer-events-none absolute left-2 top-10 rounded-md bg-red-600 px-1.5 py-0.5 text-[11px] text-white">품절</span>}
       <div className="p-3">
         <div className="line-clamp-3 min-h-[3.6em] text-[13px] leading-snug break-keep">{p.name}</div>
-        <div className="mt-0.5 min-h-[1.2em] text-[11px] text-zinc-500">{p.brand || p.sub}</div>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {p.trades.length === 0 && <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800">공정 미배정</span>}
-          {p.trades.length > 0 && p.trades.length >= tradeCount ? (
-            <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">모든 공정 공통</span>
-          ) : (
-            <>
-              {p.trades.slice(0, 3).map(t => (
-                <span key={t} className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">{t}</span>
-              ))}
-              {p.trades.length > 3 && <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800">+{p.trades.length - 3}</span>}
-            </>
-          )}
-        </div>
         {deletedAt && (
           <div className="mt-1.5 text-[11px] text-zinc-500">
             삭제 <time suppressHydrationWarning dateTime={deletedAt}>{new Date(deletedAt).toLocaleString("ko-KR")}</time>
@@ -135,7 +120,7 @@ function ProductCard({
 }
 
 export default function AdminCatalog({
-  initialProducts, initialTrash, trades, responseCount, categories, categoryTrades, canRegister, canEdit, canDelete,
+  initialProducts, initialTrash, trades: initialTrades, responseCount, categories, categoryTrades, canRegister, canEdit, canDelete,
 }: {
   initialProducts: Product[];
   initialTrash: TrashedProduct[];
@@ -162,6 +147,9 @@ export default function AdminCatalog({
   const [busy, setBusy] = useState(false);
   const [modalErr, setModalErr] = useState("");
   const [toast, setToast] = useState<Toast>(null);
+  const [trades, setTrades] = useState(initialTrades);
+  const [newTrade, setNewTrade] = useState("");
+  const [tradeDel, setTradeDel] = useState<string | null>(null); // 삭제 확인 중인 공정
   const [catList, setCatList] = useState(categories);
   const [catTrades, setCatTrades] = useState(categoryTrades);
   const [newCatTrade, setNewCatTrade] = useState("");
@@ -182,15 +170,17 @@ export default function AdminCatalog({
 
   // 필터 단계: 분류 → 세부분류 → 공정 → 검색 (자재는 출처 사이트 구분 없이 하나로 통합돼 있다)
   const cats = useMemo(() => {
+    // 공정을 고르면 그 공정에 지정된 카테고리만 보여 준다 (미배정 = 어느 공정에도 지정 안 된 카테고리)
+    const inTrade = (c: string) => trade === "전체" || (trade === "미배정" ? !trades.includes(catTrades[c] ?? "") : catTrades[c] === trade);
     const counts = new Map<string, number>();
-    base.forEach(p => counts.set(p.category, (counts.get(p.category) ?? 0) + 1));
+    base.forEach(p => { if (inTrade(p.category)) counts.set(p.category, (counts.get(p.category) ?? 0) + 1); });
     const m = new Map<string, number>();
-    catList.forEach(c => { if (!trashMode || counts.has(c)) m.set(c, counts.get(c) ?? 0); }); // 소모품 보기에서는 비어 있는 카테고리도 보여 준다
+    catList.forEach(c => { if (inTrade(c) && (!trashMode || counts.has(c))) m.set(c, counts.get(c) ?? 0); }); // 소모품 보기에서는 비어 있는 카테고리도 보여 준다
     counts.forEach((n, c) => { if (!m.has(c)) m.set(c, n); });
     return m;
-  }, [base, catList, trashMode]);
+  }, [base, catList, trashMode, trade, trades, catTrades]);
   const activeCat = cat === "전체" || cats.has(cat) ? cat : "전체";
-  const byCat = useMemo(() => base.filter(p => activeCat === "전체" || p.category === activeCat), [base, activeCat]);
+  const byCat = useMemo(() => base.filter(p => (activeCat === "전체" ? cats.has(p.category) : p.category === activeCat)), [base, activeCat, cats]);
   const subs = useMemo(() => (activeCat === "전체" ? [] : [...new Set(byCat.map(p => p.sub).filter(Boolean))]), [byCat, activeCat]);
   const activeSub = subs.includes(sub) ? sub : "";
   const list = useMemo(() => {
@@ -198,12 +188,11 @@ export default function AdminCatalog({
     const r = byCat.filter(
       p =>
         (!activeSub || p.sub === activeSub) &&
-        (trade === "전체" || (trade === "미배정" ? p.trades.length === 0 : p.trades.includes(trade))) &&
         (!kw || `${p.name} ${p.brand} ${p.sub}`.toLowerCase().includes(kw)),
     );
     if (sort === "nm") return [...r].sort((a, b) => a.name.localeCompare(b.name, "ko"));
     return r;
-  }, [byCat, activeSub, trade, q, sort]);
+  }, [byCat, activeSub, q, sort]); // 공정 필터는 카테고리 단위(cats)로 이미 적용돼 있다
 
   const visible = list.slice(0, shown);
   const selCount = selected.size;
@@ -251,6 +240,41 @@ export default function AdminCatalog({
     if (r.status === 401) { router.replace("/"); return { ok: false, error: "권한이 없어요." }; }
     const j = (await r.json().catch(() => ({}))) as { error?: string; name?: string };
     return r.ok ? { ok: true, name: j.name } : { ok: false, error: j.error ?? "요청에 실패했어요." };
+  }
+  async function callTrade(body: object): Promise<{ ok: boolean; error?: string; count?: number }> {
+    const r = await fetch("/api/admin/trades", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (r.status === 401) { router.replace("/"); return { ok: false, error: "권한이 없어요." }; }
+    const j = (await r.json().catch(() => ({}))) as { error?: string; count?: number };
+    return r.ok ? { ok: true, count: j.count } : { ok: false, error: j.error ?? "요청에 실패했어요." };
+  }
+  async function addTradeName(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newTrade.trim().replace(/s+/g, " ");
+    if (!name || busy) return;
+    setBusy(true); setCatErr("");
+    try {
+      const r = await callTrade({ action: "add", name });
+      if (r.ok) { setTrades(l => [...l, name]); setNewTrade(""); } else setCatErr(r.error ?? "");
+    } catch { setCatErr("서버에 연결할 수 없어요."); }
+    setBusy(false);
+  }
+  async function deleteTradeName(name: string) {
+    if (busy) return;
+    setBusy(true); setCatErr("");
+    try {
+      const r = await callTrade({ action: "delete", name });
+      if (r.ok) {
+        const strip = <T extends { trades: string[] }>(rows: T[]) => rows.map(p => (p.trades.includes(name) ? { ...p, trades: p.trades.filter(t => t !== name) } : p));
+        setProducts(strip); setTrash(strip);
+        setCatTrades(m => Object.fromEntries(Object.entries(m).map(([c, t]) => [c, t === name ? "" : t])));
+        setTrades(l => l.filter(t => t !== name));
+        if (trade === name) setTrade("전체");
+        if (newCatTrade === name) setNewCatTrade("");
+        setTradeDel(null);
+        setToast({ id: Date.now(), text: "“" + name + "” 공정을 지웠어요" });
+      } else setCatErr(r.error ?? "");
+    } catch { setCatErr("서버에 연결할 수 없어요."); }
+    setBusy(false);
   }
   async function moveCat(name: string, dir: "up" | "down") {
     if (busy) return;
@@ -480,19 +504,10 @@ export default function AdminCatalog({
         <div className="no-scrollbar flex gap-1.5 overflow-x-auto">
           {["전체", ...[...cats.keys()].sort((a, b) => Number(a === "공통 소모품") - Number(b === "공통 소모품"))].map(c => (
             <button key={c} type="button" onClick={() => { setCat(c); setSub(""); setShown(PAGE); resetSel(); }} className={`${chipBase} text-[13px] ${activeCat === c ? chipOn : chipOff}`}>
-              {c}<small className="ml-1 opacity-70">{c === "전체" ? base.length : cats.get(c)}</small>
+              {c}<small className="ml-1 opacity-70">{c === "전체" ? [...cats.values()].reduce((a, n) => a + n, 0) : cats.get(c)}</small>
             </button>
           ))}
         </div>
-        {subs.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {["", ...subs].map(s => (
-              <button key={s || "all"} type="button" onClick={() => filter(setSub)(s)} className={`rounded-md px-2.5 py-1 text-xs ${activeSub === s ? "bg-blue-600 text-white" : "bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300"}`}>
-                {s || "전체"}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
@@ -500,7 +515,6 @@ export default function AdminCatalog({
           {visible.map(p => (
             <ProductCard
               key={p.key}
-              tradeCount={trades.length}
               canDelete={canDelete}
               canEdit={canEdit}
               onMove={k => { setMoveErr(""); setMoveKeys([k]); }}
@@ -605,10 +619,10 @@ export default function AdminCatalog({
       </Modal>
 
       {/* 카테고리 관리: 등록 · 이름 수정 · 삭제 */}
-      <Modal open={catOpen} onClose={() => !busy && setCatOpen(false)}>
+      <Modal wide open={catOpen} onClose={() => !busy && setCatOpen(false)}>
         <h2 className="text-lg font-bold">카테고리 관리</h2>
         <p className="mt-1 text-xs text-zinc-500">카테고리는 지정한 공정별로 묶여요. ▲▼로 같은 공정 안에서 순서를 바꿀 수 있어요. 카테고리를 삭제하면 그 안의 소모품은 모두 휴지통으로 이동해요(복원 가능).</p>
-        <div className="mt-3 max-h-[45vh] overflow-y-auto pr-1">
+        <div className="mt-3 max-h-[50vh] overflow-y-auto pr-1">
           {[...trades, ""].map(g => {
             const inG = catList.filter(c => (g === "" ? !trades.includes(catTrades[c] ?? "") : catTrades[c] === g));
             if (inG.length === 0) return null;
@@ -640,7 +654,7 @@ export default function AdminCatalog({
                             <span className="min-w-0 flex-1 truncate text-[15px]">{c}</span>
                             <small className="text-zinc-500">{n}개</small>
                             {canEdit && (
-                              <select value={catTrades[c] ?? ""} disabled={busy} onChange={e => setTradeOf(c, e.target.value)} aria-label={c + " 공정"} className="max-w-[6.5rem] rounded-lg border border-black/10 bg-transparent px-1.5 py-1.5 text-xs dark:border-white/10">
+                              <select value={catTrades[c] ?? ""} disabled={busy} onChange={e => setTradeOf(c, e.target.value)} aria-label={c + " 공정"} className="max-w-[9rem] rounded-lg border border-black/10 bg-transparent px-1.5 py-1.5 text-xs dark:border-white/10">
                                 <option value="">공정 미지정</option>
                                 {trades.map(t => <option key={t} value={t}>{t}</option>)}
                               </select>
@@ -657,10 +671,40 @@ export default function AdminCatalog({
             );
           })}
         </div>
+        {(canRegister || canDelete) && (
+          <div className="mt-4 border-t border-black/10 pt-3 dark:border-white/10">
+            <div className="text-xs font-bold text-blue-600 dark:text-blue-300">공정 관리 <small className="font-normal text-zinc-500">{trades.length}</small></div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {trades.map(t => (
+                <span key={t} className="inline-flex items-center gap-1 rounded-full border border-black/10 py-1 pl-3 pr-1.5 text-sm dark:border-white/10">
+                  {t}
+                  {canDelete && <button type="button" aria-label={t + " 공정 삭제"} disabled={busy} onClick={() => { setCatErr(""); setTradeDel(t); }} className="rounded-full px-1.5 text-zinc-500 hover:text-red-600 disabled:opacity-35">×</button>}
+                </span>
+              ))}
+              {trades.length === 0 && <span className="text-sm text-zinc-500">공정이 없어요.</span>}
+            </div>
+            {canRegister && (
+              <form onSubmit={addTradeName} className="mt-2 flex gap-2">
+                <input value={newTrade} maxLength={10} onChange={e => setNewTrade(e.target.value)} placeholder="새 공정 이름" aria-label="새 공정 이름" className="min-w-0 flex-1 rounded-xl border border-black/15 bg-transparent px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-white/15" />
+                <motion.button whileTap={{ scale: 0.96 }} disabled={busy || !newTrade.trim()} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40">+ 공정 등록</motion.button>
+              </form>
+            )}
+            {tradeDel !== null && (
+              <div className="mt-3 rounded-xl bg-red-50 p-3 text-sm dark:bg-red-500/10" role="alertdialog">
+                <p className="font-semibold text-red-700 dark:text-red-300">“{tradeDel}” 공정을 삭제할까요?</p>
+                <p className="mt-1 text-red-700/80 dark:text-red-200/80">소모품과 회원에 걸린 이 공정, 카테고리의 공정 지정이 모두 빠져요. 소모품은 지워지지 않아요. 이미 낸 설문 응답은 그대로 남아요.</p>
+                <div className="mt-2 flex gap-2">
+                  <button type="button" disabled={busy} onClick={() => setTradeDel(null)} className="flex-1 rounded-lg bg-white py-2 font-bold dark:bg-zinc-800">취소</button>
+                  <button type="button" disabled={busy} onClick={() => deleteTradeName(tradeDel)} className="flex-1 rounded-lg bg-red-600 py-2 font-bold text-white disabled:opacity-50">{busy ? "처리 중…" : "삭제"}</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         {canRegister && (
           <form onSubmit={addCat} className="mt-3 flex gap-2">
             <input value={newCat} maxLength={20} onChange={e => setNewCat(e.target.value)} placeholder="새 카테고리 이름" aria-label="새 카테고리 이름" className="min-w-0 flex-1 rounded-xl border border-black/15 bg-transparent px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-white/15" />
-            <select value={newCatTrade} onChange={e => setNewCatTrade(e.target.value)} aria-label="공정" className="max-w-[6.5rem] rounded-xl border border-black/15 bg-transparent px-2 text-sm dark:border-white/15"><option value="">공정 미지정</option>{trades.map(t => <option key={t} value={t}>{t}</option>)}</select>
+            <select value={newCatTrade} onChange={e => setNewCatTrade(e.target.value)} aria-label="공정" className="max-w-[9rem] rounded-xl border border-black/15 bg-transparent px-2 text-sm dark:border-white/15"><option value="">공정 미지정</option>{trades.map(t => <option key={t} value={t}>{t}</option>)}</select>
             <motion.button whileTap={{ scale: 0.96 }} disabled={busy || !newCat.trim()} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40">+ 등록</motion.button>
           </form>
         )}

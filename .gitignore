@@ -47,3 +47,8 @@ next-env.d.ts
 # 계정 데이터(해시 포함)
 /data/members.json
 /data/workers.json
+
+# cloudflare
+/.open-next
+/.wrangler
+.dev.vars

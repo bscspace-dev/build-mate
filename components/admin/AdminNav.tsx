@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "motion/react";
-import { MENUS, type MenuKey } from "@/lib/roles";
+import PasswordChangeButton from "@/components/PasswordChange";
+import LoginIdChangeButton from "@/components/LoginIdChange";
+import { isStaffAdmin, MENUS, type MenuKey } from "@/lib/roles";
 
-type Me = { kind: "root" | "member"; name: string; roleLabel: string; menus: MenuKey[] };
+type Me = { kind: "root" | "member"; name: string; roleLabel: string; menus: MenuKey[]; temp: boolean; idChange: false | "once" | "unlimited" };
 
 // 관리자 화면 공통 메뉴. 로그인한 사람이 쓸 수 있는 메뉴(직급 기본 + 부여받은 메뉴)만 보인다.
 export default function AdminNav() {
@@ -20,7 +22,7 @@ export default function AdminNav() {
       .then(r => (r.ok ? r.json() : null))
       .then(j => {
         if (!alive || !j) return;
-        setMe({ kind: j.kind, name: j.kind === "member" ? j.member.name : j.name, roleLabel: j.roleLabel, menus: j.menus ?? [] });
+        setMe({ kind: j.kind, name: j.kind === "member" ? j.member.name : j.name, roleLabel: j.roleLabel, menus: j.menus ?? [], temp: j.kind === "member" && !!j.member.mustChangePassword, idChange: j.kind !== "member" ? false : isStaffAdmin(j.member.role) ? "unlimited" : j.member.idChanged ? false : "once" });
       })
       .catch(() => undefined);
     return () => {
@@ -36,7 +38,6 @@ export default function AdminNav() {
 
   const items = [
     ...MENUS.filter(m => me?.menus.includes(m.key)).flatMap(m => [{ href: m.href, label: m.label }, ...(m.key === "members" ? [{ href: "/admin/partners", label: "협력업체" }] : [])]),
-    ...(me?.kind === "member" ? [{ href: "/me", label: "내 정보" }] : []),
   ];
 
   return (
@@ -65,6 +66,8 @@ export default function AdminNav() {
               {me.name} · {me.roleLabel}
             </span>
           )}
+          {me?.idChange && <LoginIdChangeButton temp={me.temp} unlimited={me.idChange === "unlimited"} className="rounded-full border border-black/10 px-3 py-1.5 text-sm text-zinc-700 hover:border-blue-400 dark:border-white/10 dark:text-zinc-200" />}
+          {me?.kind === "member" && <PasswordChangeButton temp={me.temp} className="rounded-full border border-black/10 px-3 py-1.5 text-sm text-zinc-700 hover:border-blue-400 dark:border-white/10 dark:text-zinc-200" />}
           <button type="button" onClick={logout} className="rounded-full border border-black/10 px-3 py-1.5 text-sm text-zinc-700 hover:border-blue-400 dark:border-white/10 dark:text-zinc-200">
             로그아웃
           </button>

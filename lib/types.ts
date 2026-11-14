@@ -22,6 +22,7 @@ export type Member = {
   name: string;
   role: RoleKey; // 직급
   trades: string[]; // 설문에 참여하는 회원(현장작업자·현장관리자, 또는 설문 참여를 부여받은 회원)만 1~3개, 나머지는 빈 배열
+  categories: string[]; // 설문에서 맡는 카테고리(공정 아래 카테고리) 최대 3개. 비어 있으면 공정 전체
   menus: MenuKey[]; // 직급 기본 메뉴 외에 최고 관리자·개발팀이 추가로 부여한 메뉴 (소모품 / 설문 참여)
   actions: GrantedActions; // 부여받은 메뉴에서 허용된 동작 (예: { catalog: ['delete'] }). 설문 참여에는 없다
   createdAt: string;

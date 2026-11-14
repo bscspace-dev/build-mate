@@ -3,7 +3,7 @@ import type { Member, MemberPatch, Product, SurveyPayload, TrashedProduct } from
 import type { GrantedActions, GroupKey, MenuKey, RoleKey, Team } from './roles';
 import { removeImage } from './images';
 import { supabase } from './supabase';
-import type { CatResult } from './db-file';
+import type { CatResult, TradeResult } from './db-file';
 
 // Supabase(Postgres) 저장소. db-file.ts 와 같은 함수 이름·반환 형태를 가진다 (db.ts 가 둘 중 하나를 고른다).
 // 서버에서 비밀 키로만 접근한다. 한 번에 보내는 key 목록은 URL 길이 제한 때문에 잘라서 보낸다.
@@ -124,15 +124,15 @@ export async function getSubmissions(): Promise<Record<string, Record<string, st
 
 // ───────── 회원 ─────────
 type MemberRow = {
-  id: string; name: string; role: string; trades: string[]; menus: string[] | null; actions: GrantedActions | null; login_id: string | null; pass_hash: string | null;
+  id: string; name: string; role: string; trades: string[]; categories: string[] | null; menus: string[] | null; actions: GrantedActions | null; login_id: string | null; pass_hash: string | null;
   must_change_password: boolean; id_changed: boolean; created_at: string;
 };
 const toMember = (r: MemberRow): Member => ({
-  id: r.id, name: r.name, role: r.role as RoleKey, trades: r.trades ?? [], menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
+  id: r.id, name: r.name, role: r.role as RoleKey, trades: r.trades ?? [], categories: r.categories ?? [], menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
   loginId: r.login_id ?? undefined, passHash: r.pass_hash ?? undefined, mustChangePassword: r.must_change_password, idChanged: r.id_changed,
 });
 const toRow = (m: Member) => ({
-  id: m.id, name: m.name, role: m.role, trades: m.trades, menus: m.menus, actions: m.actions, login_id: m.loginId ?? null, pass_hash: m.passHash ?? null,
+  id: m.id, name: m.name, role: m.role, trades: m.trades, categories: m.categories, menus: m.menus, actions: m.actions, login_id: m.loginId ?? null, pass_hash: m.passHash ?? null,
   must_change_password: m.mustChangePassword, id_changed: m.idChanged, created_at: m.createdAt,
 });
 function toPatchRow(p: MemberPatch): Record<string, unknown> {
@@ -140,6 +140,7 @@ function toPatchRow(p: MemberPatch): Record<string, unknown> {
   if (p.name !== undefined) o.name = p.name;
   if (p.role !== undefined) o.role = p.role;
   if (p.trades !== undefined) o.trades = p.trades;
+  if (p.categories !== undefined) o.categories = p.categories;
   if (p.menus !== undefined) o.menus = p.menus;
   if (p.actions !== undefined) o.actions = p.actions;
   if (p.loginId !== undefined) o.login_id = p.loginId;
@@ -288,6 +289,35 @@ export async function removeCategory(name: string): Promise<CatResult> {
   const moved = must(await supabase().from('products').update({ deleted_at: new Date().toISOString() }).eq('category', name).is('deleted_at', null).select('key'), '카테고리 소모품 삭제') as { key: string }[];
   must(await supabase().from('categories').delete().eq('name', name), '카테고리 삭제');
   return { ok: true, count: moved.length };
+}
+
+// ───────── 공정 추가 / 삭제 (app_settings.trades) ─────────
+async function saveTrades(list: string[]) {
+  must(await supabase().from('app_settings').upsert({ key: 'trades', value: list }, { onConflict: 'key' }), '공정 목록 저장');
+}
+
+export async function addTrade(name: string): Promise<TradeResult> {
+  const trades = await getTrades();
+  if (trades.some(t => squashCat(t) === squashCat(name))) return { conflict: true };
+  await saveTrades([...trades, name]);
+  return { ok: true };
+}
+
+/** 공정을 지운다. 소모품(휴지통 포함)·회원에 걸린 이 공정과 카테고리의 공정 지정도 함께 뺀다. */
+export async function removeTrade(name: string): Promise<TradeResult> {
+  const trades = await getTrades();
+  if (!trades.includes(name)) return { notFound: true };
+  let n = 0;
+  const prods = await fetchAll<{ key: string; trades: string[] }>((a, b) => supabase().from('products').select('key,trades').contains('trades', [name]).order('key').range(a, b), '공정 소모품 조회');
+  for (const p of prods) {
+    must(await supabase().from('products').update({ trades: (p.trades ?? []).filter(t => t !== name) }).eq('key', p.key), '소모품 공정 제거');
+    n++;
+  }
+  const mems = await fetchAll<{ id: string; trades: string[] }>((a, b) => supabase().from('members').select('id,trades').contains('trades', [name]).order('id').range(a, b), '공정 회원 조회');
+  for (const m of mems) must(await supabase().from('members').update({ trades: (m.trades ?? []).filter(t => t !== name) }).eq('id', m.id), '회원 공정 제거');
+  must(await supabase().from('categories').update({ trade: '' }).eq('trade', name), '카테고리 공정 해제');
+  await saveTrades(trades.filter(t => t !== name));
+  return { ok: true, count: n };
 }
 
 export async function moveProducts(keys: string[], category: string): Promise<CatResult> {

@@ -72,11 +72,11 @@ export function actorCan(actor: Actor, menu: MenuKey, action: ActionKey): boolea
 /**
  * 이 메뉴를 쓸 수 있는 사람. 없으면 null.
  *  · 내장 최고 관리자: 소모품·회원 관리 (설문은 회원 계정이 없어 불가)
- *  · 회원: 직급 기본 메뉴 + 부여받은 메뉴 중에 있고, 임시 비밀번호를 이미 바꿨을 때
+ *  · 회원: 직급 기본 메뉴 + 부여받은 메뉴 중에 있고
  */
 export async function getActor(menu: MenuKey): Promise<Actor | null> {
   if (await hasRootSession()) return menu === 'survey' ? null : { kind: 'root' };
   const member = await getSessionMember();
-  if (member && !member.mustChangePassword && hasMenu(member.role, member.menus, menu, member.actions)) return { kind: 'member', member };
+  if (member && hasMenu(member.role, member.menus, menu, member.actions)) return { kind: 'member', member };
   return null;
 }

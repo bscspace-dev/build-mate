@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
+import PasswordChangeButton from "@/components/PasswordChange";
+import LoginIdChangeButton from "@/components/LoginIdChange";
 
 export type MenuCard = { key: string; label: string; desc: string; href: string; granted?: boolean };
 
 // 로그인한 뒤 메인에 뜨는 메뉴 선택 화면. 직급 기본 메뉴 + 최고 관리자·개발팀이 부여한 메뉴가 카드로 나온다.
-export default function MenuHome({ name, roleLabel, items }: { name: string; roleLabel: string; items: MenuCard[] }) {
+export default function MenuHome({ name, roleLabel, items, idChange, temp }: { name: string; roleLabel: string; items: MenuCard[]; idChange: false | "once" | "unlimited"; temp: boolean }) {
   const router = useRouter();
 
   async function logout() {
@@ -25,6 +27,8 @@ export default function MenuHome({ name, roleLabel, items }: { name: string; rol
             <span className="ml-2">이용할 메뉴를 골라 주세요.</span>
           </p>
         </div>
+        {idChange && <LoginIdChangeButton temp={temp} unlimited={idChange === "unlimited"} className="shrink-0 rounded-full border border-black/10 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:border-blue-400 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-200" />}
+        <PasswordChangeButton temp={temp} className="shrink-0 rounded-full border border-black/10 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:border-blue-400 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-200" />
         <button type="button" onClick={logout} className="shrink-0 rounded-full border border-black/10 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:border-blue-400 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-200">
           로그아웃
         </button>

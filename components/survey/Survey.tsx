@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import type { SurveyItem } from "@/lib/catalog";
 import { Sheet } from "@/components/Sheet";
+import PasswordChangeButton from "@/components/PasswordChange";
+import LoginIdChangeButton from "@/components/LoginIdChange";
 
 const PAGE = 120;
 
@@ -60,7 +62,7 @@ const Card = memo(function Card({ item, state, onToggle, showCat }: { item: Surv
 });
 
 export default function Survey({
-  items, allTrades, workerId, workerName, myTrades, submitted, otherLinks,
+  items, allTrades, workerId, workerName, myTrades, submitted, otherLinks, idChange, temp,
 }: {
   items: SurveyItem[];
   allTrades: string[]; // 자재의 공정 비트마스크 기준이 되는 전체 공정 목록
@@ -68,6 +70,8 @@ export default function Survey({
   workerName: string; // 관리자가 등록한 이름
   myTrades: string[]; // 관리자가 등록한 공정 (1~3개)
   submitted: string[]; // 이미 제출한 공정
+  temp: boolean; // 임시 비밀번호 상태(처음 로그인) — 현재 비밀번호 확인 없이 바꿀 수 있다
+  idChange: false | "once" | "unlimited"; // 아이디 변경 버튼: 처음 1회(once) / 제한 없음(unlimited) / 이미 씀(false)
   otherLinks: { label: string; href: string }[]; // 이 회원이 쓸 수 있는 다른 메뉴(소모품·회원 관리) 바로 가기
 }) {
   const router = useRouter();
@@ -315,7 +319,8 @@ export default function Survey({
               {otherLinks.map(l => (
                 <button key={l.href} type="button" onClick={() => router.push(l.href)} className={`${chipBase} ${chipOff}`}>{l.label}</button>
               ))}
-              <button type="button" onClick={() => router.push("/me")} className={`${chipBase} ${chipOff}`}>내 정보</button>
+              {idChange && <LoginIdChangeButton temp={temp} unlimited={idChange === "unlimited"} className={`${chipBase} ${chipOff}`} />}
+              <PasswordChangeButton temp={temp} className={`${chipBase} ${chipOff}`} />
               <button type="button" onClick={logout} className={`${chipBase} ${chipOff}`}>로그아웃</button>
             </div>
             <div className="mt-3 rounded-2xl bg-blue-50 p-4 text-sm leading-relaxed text-blue-900 dark:bg-blue-500/10 dark:text-blue-100">

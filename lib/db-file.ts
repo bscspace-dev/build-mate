@@ -116,12 +116,12 @@ type LegacyWorker = { id: string; name: string; trades: string[]; createdAt: str
 async function loadMembers(): Promise<Member[]> {
   try {
     // 예전에 만들어진 회원에는 menus(부여받은 메뉴)가 없으니 빈 값으로 채운다
-    return (await readJson<Member[]>('members.json')).map(m => ({ ...m, menus: m.menus ?? [], actions: m.actions ?? {} }));
+    return (await readJson<Member[]>('members.json')).map(m => ({ ...m, menus: m.menus ?? [], actions: m.actions ?? {}, categories: m.categories ?? [] }));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     const old = await readOr<LegacyWorker[]>('workers.json', []);
     const migrated: Member[] = old.map(w => ({
-      id: w.id, name: w.name, role: 'worker', trades: w.trades, menus: [], actions: {}, createdAt: w.createdAt,
+      id: w.id, name: w.name, role: 'worker', trades: w.trades, categories: [], menus: [], actions: {}, createdAt: w.createdAt,
       loginId: w.loginId, passHash: w.passHash, mustChangePassword: false, idChanged: false,
     }));
     await writeJson('members.json', migrated);
@@ -337,6 +337,38 @@ export function removeCategory(name: string): Promise<CatResult> {
     const map = await readTradeMap();
     if (name in map) { delete map[name]; await writeJson('category-trades.json', map); }
     return { ok: true, count: gone.length } as const;
+  });
+}
+
+// ───────── 공정 추가 / 삭제 (data/meta.json 의 trades) ─────────
+export type TradeResult = { ok: true; count?: number } | { conflict: true } | { notFound: true };
+
+export function addTrade(name: string): Promise<TradeResult> {
+  return withLock(async () => {
+    const trades = await getTrades();
+    if (trades.some(t => squashCat(t) === squashCat(name))) return { conflict: true } as const;
+    const meta = await readJson<{ trades: string[] }>('meta.json');
+    await writeJson('meta.json', { ...meta, trades: [...trades, name] });
+    return { ok: true } as const;
+  });
+}
+
+/** 공정을 지운다. 소모품(휴지통 포함)·회원에 걸린 이 공정과 카테고리의 공정 지정도 함께 뺀다. */
+export function removeTrade(name: string): Promise<TradeResult> {
+  return withLock(async () => {
+    const trades = await getTrades();
+    if (!trades.includes(name)) return { notFound: true } as const;
+    const meta = await readJson<{ trades: string[] }>('meta.json');
+    const [products, trash, members, map] = await Promise.all([getProducts(), getTrash(), loadMembers(), readTradeMap()]);
+    let n = 0;
+    const strip = <T extends { trades: string[] }>(rows: T[]) => rows.map(r => (r.trades.includes(name) ? (n++, { ...r, trades: r.trades.filter(t => t !== name) }) : r));
+    await writeJson('products.json', strip(products));
+    await writeJson('trash.json', strip(trash));
+    await writeJson('members.json', members.map(m => (m.trades.includes(name) ? { ...m, trades: m.trades.filter(t => t !== name) } : m)));
+    for (const c of Object.keys(map)) if (map[c] === name) map[c] = '';
+    await writeJson('category-trades.json', map);
+    await writeJson('meta.json', { ...meta, trades: trades.filter(t => t !== name) });
+    return { ok: true, count: n } as const;
   });
 }
 

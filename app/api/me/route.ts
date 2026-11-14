@@ -15,15 +15,14 @@ export async function GET() {
       kind: 'member',
       member: toPublic(member),
       roleLabel: teamLabel(await getTeams(), member.role),
-      // 지금 쓸 수 있는 메뉴 (임시 비밀번호 상태에서는 비밀번호를 바꾸기 전까지 없음)
-      menus: member.mustChangePassword ? [] : effectiveMenus(member.role, member.menus, member.actions),
+      menus: effectiveMenus(member.role, member.menus, member.actions), // 지금 쓸 수 있는 메뉴
     });
   }
   if (await hasRootSession()) return json({ kind: 'root', name: '최고 관리자(내장)', roleLabel: '최고 관리자', menus: ['catalog', 'members'] });
   return json({ error: '로그인이 필요해요.' }, 401);
 }
 
-// 내 정보 수정 (본인만): 이름·공정 / 아이디(처음 1회) / 비밀번호
+// 본인 정보 수정: 비밀번호 변경(화면 우측 상단 버튼). 이름·공정·아이디 변경은 화면에서 쓰지 않지만 API 는 남겨 둔다.
 export async function POST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const member = await getSessionMember();
@@ -50,8 +49,8 @@ export async function POST(req: Request) {
   }
 
   if (b.action === 'loginId') {
-    // 아이디를 바꿀 때도 현재 비밀번호를 한 번 더 확인한다
-    if (!member.passHash || !(await verifyPassword(str(b.password), member.passHash))) return json({ error: '현재 비밀번호가 맞지 않아요.' }, 403);
+    // 아이디를 바꿀 때도 현재 비밀번호를 한 번 더 확인한다 (임시 비밀번호 상태인 처음 로그인에서는 생략)
+    if (!member.mustChangePassword && (!member.passHash || !(await verifyPassword(str(b.password), member.passHash)))) return json({ error: '현재 비밀번호가 맞지 않아요.' }, 403);
     const r = await updateMember(actor, member.id, { loginId: str(b.loginId) }, await getTrades());
     if ('error' in r) return json({ error: r.error }, r.error.includes('한 번만') ? 403 : 400);
     return json({ ok: true, member: r });

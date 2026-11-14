@@ -3,7 +3,7 @@ import type { Member, PublicMember } from './types';
 
 /** 브라우저로 보내도 되는 형태로 변환 — 비밀번호 해시는 제외한다. */
 export const toPublic = (m: Member): PublicMember => ({
-  id: m.id, name: m.name, role: m.role, trades: m.trades, menus: m.menus, actions: m.actions, createdAt: m.createdAt,
+  id: m.id, name: m.name, role: m.role, trades: m.trades, categories: m.categories, menus: m.menus, actions: m.actions, createdAt: m.createdAt,
   loginId: m.loginId ?? null, mustChangePassword: m.mustChangePassword, idChanged: m.idChanged,
 });
 

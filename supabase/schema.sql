@@ -67,6 +67,7 @@ create table if not exists public.members (
   name                 text not null,
   role                 text not null references public.teams(key) on delete restrict,
   trades               text[] not null default '{}' check (cardinality(trades) <= 3),
+  categories           text[] not null default '{}' check (cardinality(categories) <= 9),  -- 설문에서 맡는 카테고리 (공정 아래, 공정마다 최대 3개 → 최대 9개)
   menus                text[] not null default '{}' check (menus <@ array['catalog','survey']),
   actions              jsonb  not null default '{}',
   login_id             text,

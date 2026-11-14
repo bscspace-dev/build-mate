@@ -1,7 +1,7 @@
 import 'server-only';
 import crypto from 'node:crypto';
 import { generateLoginId, generatePassword, hashPassword, isReservedLoginId, normalizeLoginId, validLoginId, validPassword, verifyPassword } from './accounts';
-import { getMember, getMembers, getTeams, insertMember, patchMember, removeMember } from './db';
+import { getCategoryTrades, getMember, getMembers, getTeams, insertMember, patchMember, removeMember } from './db';
 import { toPublic, type Actor, type Credentials } from './member-utils';
 import { canSurvey, GRANTABLE_MENUS, isStaffAdmin, MENU_ACTIONS, MENUS, roleMenus, type GrantedActions, type MenuKey, type RoleKey } from './roles';
 import type { Member, MemberPatch, PublicMember } from './types';
@@ -62,6 +62,31 @@ function checkTrades(survey: boolean, raw: unknown, allowed: string[]): string[]
   return trades;
 }
 
+/**
+ * 설문에서 맡을 카테고리(공정 아래 카테고리): 공정마다 최대 3개. 고른 공정에 속한 카테고리만 가능하다.
+ * strict=false 면 공정을 바꿔 맞지 않게 된 카테고리를 조용히 뺀다.
+ */
+async function checkCategories(raw: unknown, trades: string[], strict: boolean): Promise<string[] | Err> {
+  const list = Array.isArray(raw) ? [...new Set(raw.filter((c): c is string => typeof c === 'string'))] : [];
+  if (!list.length) return [];
+  const map = await getCategoryTrades();
+  const ok = (c: string) => c in map && trades.includes(map[c]);
+  const valid = list.filter(ok);
+  if (strict && valid.length !== list.length) return { error: '고른 공정에 속하지 않는 카테고리예요.' };
+  const used = new Map<string, number>();
+  const out: string[] = [];
+  for (const c of valid) {
+    const n = used.get(map[c]) ?? 0;
+    if (n >= 3) {
+      if (strict) return { error: `“${map[c]}” 공정의 카테고리는 최대 3개까지 고를 수 있어요.` };
+      continue;
+    }
+    used.set(map[c], n + 1);
+    out.push(c);
+  }
+  return out;
+}
+
 function checkLoginId(raw: string): string | Err {
   const id = normalizeLoginId(raw);
   if (!validLoginId(id)) return { error: '아이디는 영문 소문자·숫자·_- 로 3~20자예요.' };
@@ -71,7 +96,7 @@ function checkLoginId(raw: string): string | Err {
 
 /** 회원 생성(관리 권한 필요 — 호출하는 쪽에서 확인). 임시 비밀번호는 이 반환값으로 한 번만 알려준다. */
 export async function addMember(
-  input: { name: string; role: unknown; trades?: unknown; menus?: unknown; actions?: unknown; loginId?: string },
+  input: { name: string; role: unknown; trades?: unknown; categories?: unknown; menus?: unknown; actions?: unknown; loginId?: string },
   allowedTrades: string[],
 ): Promise<{ member: PublicMember; credentials: Credentials } | Err> {
   const name = checkName(input.name);
@@ -82,6 +107,8 @@ export async function addMember(
   const actions = checkActions(menus, input.actions);
   const trades = checkTrades(canSurvey(role, menus), input.trades, allowedTrades);
   if (!Array.isArray(trades)) return trades;
+  const categories = canSurvey(role, menus) ? await checkCategories(input.categories, trades, true) : [];
+  if (!Array.isArray(categories)) return categories;
 
   const taken = new Set((await getMembers()).map(m => m.loginId).filter((x): x is string => !!x));
   let loginId: string;
@@ -94,7 +121,7 @@ export async function addMember(
 
   const password = generatePassword();
   const member: Member = {
-    id: crypto.randomBytes(9).toString('base64url'), name, role, trades, menus, actions, createdAt: new Date().toISOString(),
+    id: crypto.randomBytes(9).toString('base64url'), name, role, trades, categories, menus, actions, createdAt: new Date().toISOString(),
     loginId, passHash: await hashPassword(password), mustChangePassword: true, idChanged: false,
   };
   const r = await insertMember(member);
@@ -110,7 +137,7 @@ export async function addMember(
 export async function updateMember(
   actor: Actor,
   id: string,
-  patch: { name?: string; role?: unknown; menus?: unknown; actions?: unknown; trades?: unknown; loginId?: string },
+  patch: { name?: string; role?: unknown; menus?: unknown; actions?: unknown; trades?: unknown; categories?: unknown; loginId?: string },
   allowedTrades: string[],
 ): Promise<PublicMember | Err> {
   const target = await getMember(id);
@@ -173,6 +200,15 @@ export async function updateMember(
     }
   } else if (target.trades.length) next.trades = [];
 
+  // 카테고리: 설문에 참여하는 회원만, 고른 공정에 속한 것 최대 3개. 공정이 바뀌면 안 맞는 것은 빠진다.
+  if (!survey) {
+    if (target.categories.length) next.categories = [];
+  } else if (patch.categories !== undefined || next.trades !== undefined) {
+    const c = await checkCategories(patch.categories !== undefined ? patch.categories : target.categories, next.trades ?? target.trades, patch.categories !== undefined);
+    if (!Array.isArray(c)) return c;
+    if (!sameSet(c, target.categories)) next.categories = c;
+  }
+
   if (patch.loginId !== undefined) {
     const r = checkLoginId(patch.loginId);
     if (typeof r !== 'string') return r;
@@ -194,16 +230,17 @@ export async function updateMember(
 
 /** 본인 비밀번호 변경. 현재 비밀번호를 확인하고, 성공하면 임시 비밀번호 상태가 풀린다. 새 비밀번호가 적용된 회원을 돌려준다(세션 재발급용). */
 export async function changeOwnPassword(member: Member, current: string, next: string): Promise<{ member: Member } | Err> {
-  if (!member.passHash || !(await verifyPassword(current, member.passHash))) return { error: '현재 비밀번호가 맞지 않아요.' };
+  // 임시 비밀번호 상태(처음 로그인)에서는 임시 비밀번호를 몰라도 바로 새 비밀번호를 정할 수 있다
+  if (!member.mustChangePassword && (!member.passHash || !(await verifyPassword(current, member.passHash)))) return { error: '현재 비밀번호가 맞지 않아요.' };
   if (!validPassword(next)) return { error: '새 비밀번호는 6자 이상으로 적어 주세요.' };
-  if (next === current) return { error: '현재 비밀번호와 다른 비밀번호로 정해 주세요.' };
+  if (!member.mustChangePassword && next === current) return { error: '현재 비밀번호와 다른 비밀번호로 정해 주세요.' };
   const res = await patchMember(member.id, { passHash: await hashPassword(next), mustChangePassword: false });
   return 'member' in res ? { member: res.member } : { error: '회원을 찾을 수 없어요.' };
 }
 
 /** 임시 비밀번호 재발급(관리 권한 필요). 다시 첫 로그인 상태가 되고, 이전에 로그인해 둔 기기는 로그아웃된다. */
 export async function resetMember(actor: Actor, id: string): Promise<{ member: PublicMember; credentials: Credentials } | Err> {
-  if (isSelf(actor, id)) return { error: '내 비밀번호는 “내 정보”에서 바꿔 주세요.' };
+  if (isSelf(actor, id)) return { error: '내 비밀번호는 화면 우측 상단의 ‘비밀번호 변경’에서 바꿔 주세요.' };
   const members = await getMembers();
   const target = members.find(m => m.id === id);
   if (!target) return { error: '회원을 찾을 수 없어요.' };
