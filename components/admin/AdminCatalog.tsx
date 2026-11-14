@@ -636,7 +636,7 @@ export default function AdminCatalog({
                   {inG.map((c, ci) => {
                     const n = products.filter(p => p.category === c).length;
                     return (
-                      <div key={c} className="flex items-center gap-2 rounded-xl border border-black/10 px-3 py-2 dark:border-white/10">
+                      <div key={c} className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-xl border border-black/10 px-3 py-2 dark:border-white/10">
                         {renaming?.name === c ? (
                           <>
                             <input autoFocus value={renaming.to} maxLength={20} onChange={e => setRenaming({ name: c, to: e.target.value })} onKeyDown={e => { if (e.key === "Enter") renameCat(); }} aria-label="새 카테고리 이름" className="min-w-0 flex-1 rounded-lg border border-black/15 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue-500 dark:border-white/15" />
@@ -651,7 +651,7 @@ export default function AdminCatalog({
                                 <button type="button" aria-label={c + " 아래로"} disabled={busy || ci === inG.length - 1} onClick={() => moveCat(c, "down")} className="px-1 text-[10px] leading-none text-zinc-500 disabled:opacity-25">▼</button>
                               </span>
                             )}
-                            <span className="min-w-0 flex-1 truncate text-[15px]">{c}</span>
+                            <span className="min-w-[5rem] flex-1 truncate text-[15px]">{c}</span>
                             <small className="text-zinc-500">{n}개</small>
                             {canEdit && (
                               <select value={catTrades[c] ?? ""} disabled={busy} onChange={e => setTradeOf(c, e.target.value)} aria-label={c + " 공정"} className="max-w-[9rem] rounded-lg border border-black/10 bg-transparent px-1.5 py-1.5 text-xs dark:border-white/10">

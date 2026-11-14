@@ -42,8 +42,9 @@ export default function AdminNav() {
 
   return (
     <nav className="border-b border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900" aria-label="메뉴">
-      <div className="mx-auto flex w-full max-w-6xl items-center gap-1 px-4">
-        <Link href="/" className="mr-4 py-3.5 text-sm font-extrabold" title="메뉴 선택 화면으로">빌드메이트</Link>
+      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-x-1 px-4">
+        <Link href="/" className="order-1 mr-4 shrink-0 whitespace-nowrap py-3 text-sm font-extrabold sm:order-none sm:py-3.5" title="메뉴 선택 화면으로">빌드메이트</Link>
+        <div className="no-scrollbar order-3 -mx-4 flex w-[calc(100%+2rem)] items-center gap-1 overflow-x-auto px-4 sm:order-none sm:mx-0 sm:w-auto sm:px-0">
         {items.map(m => {
           const active = m.href === "/admin" ? path === "/admin" : path.startsWith(m.href);
           return (
@@ -51,7 +52,7 @@ export default function AdminNav() {
               key={m.href}
               href={m.href}
               aria-current={active ? "page" : undefined}
-              className={`relative px-3 py-3.5 text-sm font-bold transition-colors ${active ? "text-blue-600 dark:text-blue-300" : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"}`}
+              className={`relative shrink-0 whitespace-nowrap px-3 py-3 text-sm font-bold transition-colors sm:py-3.5 ${active ? "text-blue-600 dark:text-blue-300" : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"}`}
             >
               {m.label}
               {active && (
@@ -60,15 +61,16 @@ export default function AdminNav() {
             </Link>
           );
         })}
-        <div className="ml-auto flex items-center gap-2">
+        </div>
+        <div className="order-2 ml-auto flex items-center gap-1.5 sm:order-none sm:gap-2">
           {me && (
             <span className="hidden text-xs text-zinc-500 sm:inline">
               {me.name} · {me.roleLabel}
             </span>
           )}
-          {me?.idChange && <LoginIdChangeButton temp={me.temp} unlimited={me.idChange === "unlimited"} className="rounded-full border border-black/10 px-3 py-1.5 text-sm text-zinc-700 hover:border-blue-400 dark:border-white/10 dark:text-zinc-200" />}
-          {me?.kind === "member" && <PasswordChangeButton temp={me.temp} className="rounded-full border border-black/10 px-3 py-1.5 text-sm text-zinc-700 hover:border-blue-400 dark:border-white/10 dark:text-zinc-200" />}
-          <button type="button" onClick={logout} className="rounded-full border border-black/10 px-3 py-1.5 text-sm text-zinc-700 hover:border-blue-400 dark:border-white/10 dark:text-zinc-200">
+          {me?.idChange && <LoginIdChangeButton temp={me.temp} unlimited={me.idChange === "unlimited"} className="shrink-0 whitespace-nowrap rounded-full border border-black/10 px-2.5 py-1 text-xs text-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm hover:border-blue-400 dark:border-white/10 dark:text-zinc-200" />}
+          {me?.kind === "member" && <PasswordChangeButton temp={me.temp} className="shrink-0 whitespace-nowrap rounded-full border border-black/10 px-2.5 py-1 text-xs text-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm hover:border-blue-400 dark:border-white/10 dark:text-zinc-200" />}
+          <button type="button" onClick={logout} className="shrink-0 whitespace-nowrap rounded-full border border-black/10 px-2.5 py-1 text-xs text-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm hover:border-blue-400 dark:border-white/10 dark:text-zinc-200">
             로그아웃
           </button>
         </div>
