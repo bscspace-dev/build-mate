@@ -353,6 +353,26 @@ export function addTrade(name: string): Promise<TradeResult> {
   });
 }
 
+/** 여러 소모품의 세부분류를 한 번에 저장한다 (공정>카테고리 앞머리 갱신용) */
+export function setSubs(entries: { key: string; sub: string }[]): Promise<void> {
+  return withLock(async () => {
+    const map = new Map(entries.map(e => [e.key, e.sub]));
+    const products = await getProducts();
+    await writeJson('products.json', products.map(p => (map.has(p.key) ? { ...p, sub: map.get(p.key)! } : p)));
+  });
+}
+
+/** 공정 순서를 바꾼다. order 는 현재 공정 목록과 이름이 똑같아야 한다(순서만 다름). */
+export function reorderTrades(order: string[]): Promise<boolean> {
+  return withLock(async () => {
+    const trades = await getTrades();
+    if (order.length !== trades.length || new Set(order).size !== order.length || !order.every(t => trades.includes(t))) return false;
+    const meta = await readJson<{ trades: string[] }>('meta.json');
+    await writeJson('meta.json', { ...meta, trades: order });
+    return true;
+  });
+}
+
 /** 공정을 지운다. 소모품(휴지통 포함)·회원에 걸린 이 공정과 카테고리의 공정 지정도 함께 뺀다. */
 export function removeTrade(name: string): Promise<TradeResult> {
   return withLock(async () => {
@@ -530,10 +550,42 @@ export function renameProduct(key: string, name: string): Promise<number> {
   });
 }
 
+/** 소모품 정보 고치기 (휴지통의 것도 가능). 없으면 null, 있으면 바꾸기 전 이미지 주소를 돌려준다. */
+export function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; image?: string }): Promise<{ prevImage: string } | null> {
+  return withLock(async () => {
+    const [products, trash] = await Promise.all([getProducts(), getTrash()]);
+    let prevImage: string | null = null;
+    const up = <T extends Product>(rows: T[]) => rows.map(r => {
+      if (r.key !== key) return r;
+      prevImage = r.image;
+      return { ...r, name: e.name, sub: e.sub, brand: e.brand, price: e.price, priceInclVat: e.price === r.price ? r.priceInclVat : null, image: e.image ?? r.image };
+    });
+    const np = up(products);
+    const nt = up(trash);
+    if (prevImage === null) return null;
+    await writeJson('products.json', np);
+    await writeJson('trash.json', nt);
+    return { prevImage };
+  });
+}
+
 /** 카테고리 순서를 통째로 저장한다 (order = 새 순서의 전체 이름 목록) */
 export function saveCategoryOrder(order: string[]): Promise<void> {
   return withLock(async () => {
     await writeJson('categories.json', order);
+  });
+}
+
+/** keys 를 주어진 순서대로 보이게 한다: 이 품목들이 원래 쓰던 순서 값(seq)을 같은 묶음 안에서 다시 나눠 가진다 */
+export function reorderProducts(keys: string[]): Promise<boolean> {
+  return withLock(async () => {
+    const products = await getProducts();
+    const rows = keys.map(k => products.find(p => p.key === k));
+    if (new Set(keys).size !== keys.length || rows.some(r => !r)) return false;
+    const seqs = rows.map(r => r!.seq).sort((x, y) => x - y);
+    rows.forEach((r, i) => { r!.seq = seqs[i]; });
+    await writeJson('products.json', products.sort((x, y) => x.seq - y.seq));
+    return true;
   });
 }
 

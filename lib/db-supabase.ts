@@ -299,6 +299,19 @@ async function saveTrades(list: string[]) {
   must(await supabase().from('app_settings').upsert({ key: 'trades', value: list }, { onConflict: 'key' }), '공정 목록 저장');
 }
 
+export async function setSubs(entries: { key: string; sub: string }[]): Promise<void> {
+  for (let i = 0; i < entries.length; i += 20) {
+    await Promise.all(entries.slice(i, i + 20).map(async e => { must(await supabase().from('products').update({ sub: e.sub }).eq('key', e.key), '세부분류 저장'); }));
+  }
+}
+
+export async function reorderTrades(order: string[]): Promise<boolean> {
+  const trades = await getTrades();
+  if (order.length !== trades.length || new Set(order).size !== order.length || !order.every(t => trades.includes(t))) return false;
+  await saveTrades(order);
+  return true;
+}
+
 export async function addTrade(name: string): Promise<TradeResult> {
   const trades = await getTrades();
   if (trades.some(t => squashCat(t) === squashCat(name))) return { conflict: true };
@@ -477,8 +490,31 @@ export async function renameProduct(key: string, name: string): Promise<number> 
   return rows.length;
 }
 
+export async function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; image?: string }): Promise<{ prevImage: string } | null> {
+  const cur = must(await supabase().from('products').select('image,price').eq('key', key).maybeSingle(), '소모품 조회') as { image: string; price: number | null } | null;
+  if (!cur) return null;
+  const patch: Record<string, unknown> = { name: e.name, sub: e.sub, brand: e.brand, price: e.price };
+  if (e.price !== (cur.price ?? 0)) patch.price_incl_vat = null;
+  if (e.image) patch.image = e.image;
+  must(await supabase().from('products').update(patch).eq('key', key), '소모품 수정');
+  return { prevImage: cur.image };
+}
+
 export async function saveCategoryOrder(order: string[]): Promise<void> {
   must(await supabase().from('categories').upsert(order.map((name, i) => ({ name, sort: i + 1 })), { onConflict: 'name' }), '카테고리 순서 저장');
+}
+
+export async function reorderProducts(keys: string[]): Promise<boolean> {
+  if (new Set(keys).size !== keys.length || keys.length === 0) return false;
+  const rows = must(await supabase().from('products').select('key,seq').in('key', keys).is('deleted_at', null), '순서 조회') as { key: string; seq: number }[];
+  if (rows.length !== keys.length) return false;
+  const seqs = rows.map(r => r.seq).sort((x, y) => x - y);
+  const cur = new Map(rows.map(r => [r.key, r.seq]));
+  const changed = keys.map((k, i) => ({ k, seq: seqs[i] })).filter(x => cur.get(x.k) !== x.seq);
+  for (let i = 0; i < changed.length; i += 20) {
+    await Promise.all(changed.slice(i, i + 20).map(async x => { must(await supabase().from('products').update({ seq: x.seq }).eq('key', x.k), '순서 변경'); }));
+  }
+  return true;
 }
 
 export async function swapProducts(a: string, b: string): Promise<boolean> {

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import type { SurveyItem } from "@/lib/catalog";
@@ -29,6 +29,38 @@ function writeSites(site: string) {
   }
 }
 
+// 별표(즐겨찾기)한 자재 (이 기기에만, 이름별로 저장)
+const starKey = (who: string) => `bm_stars_${who}`;
+const STAR_EVENT = "bm-stars-change";
+function subscribeStars(cb: () => void) {
+  window.addEventListener("storage", cb);
+  window.addEventListener(STAR_EVENT, cb);
+  return () => { window.removeEventListener("storage", cb); window.removeEventListener(STAR_EVENT, cb); };
+}
+function readStarsRaw(who: string): string {
+  try {
+    return window.localStorage.getItem(starKey(who)) ?? "[]";
+  } catch {
+    return "[]";
+  }
+}
+function parseStars(raw: string): string[] {
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function writeStars(who: string, keys: string[]) {
+  try {
+    window.localStorage.setItem(starKey(who), JSON.stringify(keys));
+  } catch {
+    // 저장 못 해도 요청에는 문제없다
+  }
+  window.dispatchEvent(new Event(STAR_EVENT));
+}
+
 const chipBase = "shrink-0 rounded-full border px-3 py-1.5 text-sm transition-colors";
 const chipOff = "border-black/10 bg-white text-zinc-800 hover:border-blue-400 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-200";
 const chipOn = "border-blue-600 bg-blue-600 font-semibold text-white";
@@ -36,10 +68,10 @@ const chipOn = "border-blue-600 bg-blue-600 font-semibold text-white";
 type Sel = Record<string, number>; // 자재 코드 → 수량 (0 = 아직 안 적음)
 type Custom = { id: number; n: string; q: number }; // 목록에 없어서 직접 적는 품목
 
-const Card = memo(function Card({ item, qty, onToggle, onQty }: { item: SurveyItem; qty: number | undefined; onToggle: (k: string) => void; onQty: (k: string, q: number) => void }) {
+const Card = memo(function Card({ item, qty, starred, onToggle, onQty, onStar }: { item: SurveyItem; qty: number | undefined; starred: boolean; onToggle: (k: string) => void; onQty: (k: string, q: number) => void; onStar: (k: string) => void }) {
   const on = qty !== undefined;
   return (
-    <div className={`overflow-hidden rounded-2xl border-2 bg-white transition-colors dark:bg-zinc-900 ${on ? "border-blue-600 ring-2 ring-blue-600/20" : "border-black/10 dark:border-white/10"}`}>
+    <div className={`relative overflow-hidden rounded-2xl border-2 bg-white transition-colors dark:bg-zinc-900 ${on ? "border-blue-600 ring-2 ring-blue-600/20" : "border-black/10 dark:border-white/10"}`}>
       <button type="button" onClick={() => onToggle(item.k)} aria-pressed={on} className="relative block w-full text-left">
         {item.i ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -52,6 +84,9 @@ const Card = memo(function Card({ item, qty, onToggle, onQty }: { item: SurveyIt
         <div className="p-2.5 pb-1.5">
           <b className="line-clamp-3 min-h-[3.9em] text-[13px] font-semibold leading-snug break-keep">{item.n}</b>
         </div>
+      </button>
+      <button type="button" onClick={() => onStar(item.k)} aria-pressed={starred} aria-label={`${item.n} 별표 ${starred ? "해제" : "등록"}`} className={`absolute right-1 top-9 flex h-9 w-9 items-center justify-center rounded-full text-2xl leading-none drop-shadow ${starred ? "text-amber-400" : "text-zinc-300 hover:text-amber-300"}`}>
+        {starred ? "★" : "☆"}
       </button>
       <div className="px-2.5 pb-2.5">
         {on ? (
@@ -93,6 +128,7 @@ export default function RequestForm({
   const [sels, setSels] = useState<Record<string, Sel>>({}); // 공정별 선택 (공정을 오가도 유지)
   const [customs, setCustoms] = useState<Record<string, Custom[]>>({}); // 공정별 직접 적은 품목
   const [cat, setCat] = useState("전체");
+  const [onlyStar, setOnlyStar] = useState(false);
   const [q, setQ] = useState("");
   const [shown, setShown] = useState(PAGE);
   const [busy, setBusy] = useState(false);
@@ -110,6 +146,14 @@ export default function RequestForm({
     return () => window.clearTimeout(t);
   }, [toastId]);
 
+  const starsRaw = useSyncExternalStore(subscribeStars, () => readStarsRaw(workerName), () => "[]");
+  const stars = useMemo(() => parseStars(starsRaw), [starsRaw]);
+  const starSet = useMemo(() => new Set(stars), [stars]);
+  const onStar = useCallback((k: string) => {
+    const cur = parseStars(readStarsRaw(workerName));
+    writeStars(workerName, cur.includes(k) ? cur.filter(x => x !== k) : [...cur, k]);
+  }, [workerName]);
+
   const bit = allTrades.indexOf(trade);
   const base = useMemo(() => (bit < 0 ? [] : items.filter(i => i.t & (1 << bit))), [items, bit]);
   const cats = useMemo(() => {
@@ -118,10 +162,12 @@ export default function RequestForm({
     return m;
   }, [base]);
   const activeCat = cat === "전체" || cats.has(cat) ? cat : "전체";
+  const starCount = useMemo(() => base.filter(i => starSet.has(i.k)).length, [base, starSet]);
+  const starOnly = onlyStar && starCount > 0;
   const list = useMemo(() => {
     const kw = q.trim().replace(/\s+/g, "").toLowerCase();
-    return base.filter(i => (activeCat === "전체" || i.c === activeCat) && (!kw || `${i.n}${i.b}${i.s}`.replace(/\s+/g, "").toLowerCase().includes(kw)));
-  }, [base, activeCat, q]);
+    return base.filter(i => (!starOnly || starSet.has(i.k)) && (activeCat === "전체" || i.c === activeCat) && (!kw || `${i.n}${i.b}${i.s}`.replace(/\s+/g, "").toLowerCase().includes(kw)));
+  }, [base, activeCat, q, starOnly, starSet]);
 
   const sel = sels[trade] ?? {};
   const picked = Object.keys(sel);
@@ -240,6 +286,9 @@ export default function RequestForm({
           />
 
           <div className="no-scrollbar mt-3 flex gap-1.5 overflow-x-auto">
+            <button type="button" aria-pressed={starOnly} onClick={() => { setOnlyStar(v => !v); setShown(PAGE); }} className={`${chipBase} text-[13px] ${starOnly ? "border-amber-400 bg-amber-400 font-semibold text-white" : chipOff}`}>
+              ★ 별표<small className="ml-1 opacity-70">{starCount}</small>
+            </button>
             {["전체", ...cats.keys()].map(c => (
               <button key={c} type="button" onClick={() => { setCat(c); setShown(PAGE); }} className={`${chipBase} text-[13px] ${activeCat === c ? chipOn : chipOff}`}>
                 {c}<small className="ml-1 opacity-70">{c === "전체" ? base.length : cats.get(c)}</small>
@@ -249,7 +298,7 @@ export default function RequestForm({
 
           <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
             {list.slice(0, shown).map(i => (
-              <Card key={i.k} item={i} qty={sel[i.k]} onToggle={onToggle} onQty={onQty} />
+              <Card key={i.k} item={i} qty={sel[i.k]} starred={starSet.has(i.k)} onToggle={onToggle} onQty={onQty} onStar={onStar} />
             ))}
           </div>
           {list.length === 0 && <p className="py-10 text-center text-zinc-500">해당하는 자재가 없어요</p>}

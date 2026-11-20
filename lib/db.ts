@@ -12,6 +12,8 @@ export const getProducts = () => impl().getProducts();
 export const getTrash = () => impl().getTrash();
 export const getTrades = () => impl().getTrades();
 export const addTrade = (name: string) => impl().addTrade(name);
+export const setSubs = (entries: { key: string; sub: string }[]) => impl().setSubs(entries);
+export const reorderTrades = (order: string[]) => impl().reorderTrades(order);
 export const removeTrade = (name: string) => impl().removeTrade(name);
 export const deleteProducts = (keys: string[]) => impl().deleteProducts(keys);
 export const restoreProducts = (keys: string[]) => impl().restoreProducts(keys);
@@ -22,7 +24,9 @@ export const takeStock = (lines: { k: string; q: number }[]) => impl().takeStock
 export const returnStock = (took: Record<string, number>) => impl().returnStock(took);
 export const setStock = (key: string, stock: number) => impl().setStock(key, stock);
 export const renameProduct = (key: string, name: string) => impl().renameProduct(key, name);
+export const updateProduct = (key: string, e: Parameters<typeof file.updateProduct>[1]) => impl().updateProduct(key, e);
 export const saveCategoryOrder = (order: string[]) => impl().saveCategoryOrder(order);
+export const reorderProducts = (keys: string[]) => impl().reorderProducts(keys);
 export const swapProducts = (a: string, b: string) => impl().swapProducts(a, b);
 export const saveRequest = (r: Parameters<typeof file.saveRequest>[0]) => impl().saveRequest(r);
 export const getRequests = () => impl().getRequests();

@@ -1,5 +1,6 @@
 import { actorCan, getActor } from '@/lib/auth';
-import { addCategory, getCategories, getCategoryTrades, getTrades, removeCategory, renameCategory, saveCategoryOrder, setCategoryTrade } from '@/lib/db';
+import { headOf, rewriteSub } from '@/lib/sub-path';
+import { getProducts, setSubs, addCategory, getCategories, getCategoryTrades, getTrades, removeCategory, renameCategory, saveCategoryOrder, setCategoryTrade } from '@/lib/db';
 import { json, sameOrigin } from '@/lib/guard';
 
 // 소모품 카테고리 등록 / 이름 수정·순서 변경 / 삭제 (각각 소모품 메뉴의 등록·수정·삭제 권한)
@@ -22,8 +23,11 @@ export async function POST(req: Request) {
 
   if (body.action === 'settrade') {
     const trade = typeof body.trade === 'string' ? body.trade : '';
+    const [ctBefore, trades, prods] = await Promise.all([getCategoryTrades(), getTrades(), getProducts()]);
     const r = await setCategoryTrade(name, trade);
     if ('notFound' in r) return json({ error: '없는 카테고리나 공정이에요.' }, 404);
+    const oldHead = headOf(name, ctBefore, trades), newHead = headOf(name, { ...ctBefore, [name]: trade }, trades);
+    if (oldHead !== newHead) await setSubs(prods.filter(p => p.category === name).map(p => ({ key: p.key, sub: rewriteSub(p.sub, oldHead, newHead) })));
     return json({ ok: true });
   }
 
@@ -35,6 +39,18 @@ export async function POST(req: Request) {
     return json({ ok: true, name });
   }
   if (body.action === 'reorder') {
+    // 끌어서 이동: name 을 to(다른 카테고리)가 있던 자리로 옮긴다
+    if (typeof body.to === 'string') {
+      const list = await getCategories();
+      const i = list.indexOf(name);
+      const j = list.indexOf(body.to);
+      if (i < 0 || j < 0) return json({ error: '없는 카테고리예요.' }, 404);
+      if (i !== j) {
+        list.splice(j, 0, list.splice(i, 1)[0]);
+        await saveCategoryOrder(list);
+      }
+      return json({ ok: true, order: list });
+    }
     // 같은 공정 묶음 안에서 한 칸 위(up) / 아래(down)로 옮긴다
     if (body.dir !== 'up' && body.dir !== 'down') return json({ error: 'bad request' }, 400);
     const [list, tmap] = await Promise.all([getCategories(), getCategoryTrades()]);
@@ -53,9 +69,12 @@ export async function POST(req: Request) {
     const to = clean(body.to);
     if (!to || to.length > MAX) return json({ error: `새 이름은 1~${MAX}자로 적어 주세요.` }, 400);
     if (to === name) return json({ ok: true, name: to, count: 0 });
+    const [ctBefore, trades, prods] = await Promise.all([getCategoryTrades(), getTrades(), getProducts()]);
     const r = await renameCategory(name, to);
     if ('notFound' in r) return json({ error: '없는 카테고리예요.' }, 404);
     if ('conflict' in r) return json({ error: '이미 있는 카테고리 이름이에요.' }, 400);
+    const oldHead = headOf(name, ctBefore, trades), newHead = headOf(to, { ...ctBefore, [to]: ctBefore[name] ?? '' }, trades);
+    await setSubs(prods.filter(p => p.category === name).map(p => ({ key: p.key, sub: rewriteSub(p.sub, oldHead, newHead) })));
     return json({ ok: true, name: to, count: 'count' in r ? r.count : 0 });
   }
   const r = await removeCategory(name);

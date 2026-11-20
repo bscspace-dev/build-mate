@@ -1,5 +1,6 @@
 import { actorCan, getActor } from '@/lib/auth';
-import { addProduct, getCategories, getCategoryTrades, nextProductKey } from '@/lib/db';
+import { addProduct, getCategories, getCategoryTrades, nextProductKey, getTrades } from '@/lib/db';
+import { headOf, rewriteSub } from '@/lib/sub-path';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { removeImage, saveImage } from '@/lib/images';
 
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
 
   const name = text(form.get('name'), 100);
   const category = text(form.get('category'), 20);
-  const sub = text(form.get('sub'), 50);
+  const sub = text(form.get('sub'), 100);
   const brand = text(form.get('brand'), 50);
   const price = whole(form.get('price'), 99_999_999);
   const stock = whole(form.get('stock'), 9_999_999);
@@ -42,11 +43,13 @@ export async function POST(req: Request) {
   if (photo.size > MAX_IMAGE) return json({ error: '사진이 너무 커요. 3MB 이하로 올려 주세요.' }, 413);
 
   const key = await nextProductKey();
-  const trade = (await getCategoryTrades())[category] ?? '';
+  const catTrades = await getCategoryTrades();
+  const trade = catTrades[category] ?? '';
+  const subPath = rewriteSub(sub, '', headOf(category, catTrades, await getTrades())); // 세부분류: 공정>카테고리(>직접 적은 내용)
   const image = await saveImage(key, new Uint8Array(await photo.arrayBuffer()), photo.type);
   try {
     // 카테고리가 속한 공정을 자재의 공정으로 정해 둔다(현장 요청 화면에서 그 공정 작업자에게 보이도록)
-    const product = await addProduct({ key, category, sub, name, brand, price, priceInclVat: null, vatBasis: '', soldout: false, stock, image, trades: trade ? [trade] : [] });
+    const product = await addProduct({ key, category, sub: subPath, name, brand, price, priceInclVat: null, vatBasis: '', soldout: false, stock, image, trades: trade ? [trade] : [] });
     return json({ ok: true, product });
   } catch (e) {
     await removeImage(image).catch(() => undefined); // 등록에 실패하면 올린 사진도 지운다

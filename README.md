@@ -4,7 +4,7 @@
 
 ## 실행 (이 PC에서만 접속)
 - `start-local.bat` 더블클릭, 또는
-- `npm run build` → `npm run start:local` → http://127.0.0.1:3000
+- `npm run build` → `npm run start:local` → http://127.0.0.1:3100
 
 ## 화면 흐름
 1. **메인(`/`)에서 로그인** (아이디/비밀번호) — 관리자도, 모든 회원도 같은 로그인 창

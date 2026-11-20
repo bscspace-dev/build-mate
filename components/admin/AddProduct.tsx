@@ -9,7 +9,7 @@ const inputCls = "mt-1.5 w-full rounded-xl border border-black/15 bg-transparent
 const MAX_SIDE = 1000; // 사진은 긴 변을 이 크기로 줄여서 올린다
 
 // 사진을 줄이고 webp 로 바꾼다 (webp 를 못 만드는 브라우저는 jpg)
-async function shrink(file: File): Promise<Blob> {
+export async function shrink(file: File): Promise<Blob> {
   const bmp = await createImageBitmap(file);
   const scale = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
   const canvas = document.createElement("canvas");
@@ -31,8 +31,9 @@ async function shrink(file: File): Promise<Blob> {
 
 // 새 품목 등록: 사진 + 정보
 export default function AddProduct({
-  open, onClose, categories, defaultCategory, onAdded,
+  open, onClose, categories, defaultCategory, headOfCat, onAdded,
 }: {
+  headOfCat: (category: string) => string; // 카테고리의 "공정>카테고리"
   open: boolean;
   onClose: () => void;
   categories: string[];
@@ -44,12 +45,19 @@ export default function AddProduct({
   const [preview, setPreview] = useState("");
   const [name, setName] = useState("");
   const [category, setCategory] = useState(defaultCategory);
-  const [sub, setSub] = useState("");
+  const [sub, setSub] = useState<string | null>(null); // null = 직접 고치지 않음 (고른 카테고리의 공정>카테고리가 자동으로 들어간다)
+  const subShown = sub ?? (category ? headOfCat(category) : "");
   const [brand, setBrand] = useState("");
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("0");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  // 창을 열 때마다 지금 선택된 카테고리로 맞춘다 (처음 한 번만 반영되던 문제)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (open) setCategory(defaultCategory);
+  }, [open, defaultCategory]);
 
   useEffect(() => {
     if (!photo) return;
@@ -63,7 +71,7 @@ export default function AddProduct({
     setPhoto(null);
     setPreview("");
     setName("");
-    setSub("");
+    setSub(null);
     setBrand("");
     setPrice("");
     setStock("0");
@@ -89,7 +97,7 @@ export default function AddProduct({
       fd.set("photo", new File([blob], blob.type === "image/webp" ? "photo.webp" : "photo.jpg", { type: blob.type }));
       fd.set("name", name);
       fd.set("category", category);
-      fd.set("sub", sub);
+      fd.set("sub", subShown);
       fd.set("brand", brand);
       fd.set("price", price);
       fd.set("stock", stock);
@@ -136,10 +144,10 @@ export default function AddProduct({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label htmlFor="np-sub" className="mt-4 block text-sm font-bold">세부분류 <span className="font-normal text-zinc-500">(선택)</span></label>
-            <input id="np-sub" value={sub} onChange={e => setSub(e.target.value)} maxLength={50} autoComplete="off" className={inputCls} />
+            <input id="np-sub" value={subShown} onChange={e => setSub(e.target.value)} maxLength={100} autoComplete="off" className={inputCls} />
           </div>
           <div>
-            <label htmlFor="np-brand" className="mt-4 block text-sm font-bold">브랜드 <span className="font-normal text-zinc-500">(선택)</span></label>
+            <label htmlFor="np-brand" className="mt-4 block text-sm font-bold">사용 브랜드 <span className="font-normal text-zinc-500">(선택)</span></label>
             <input id="np-brand" value={brand} onChange={e => setBrand(e.target.value)} maxLength={50} autoComplete="off" className={inputCls} />
           </div>
           <div>
