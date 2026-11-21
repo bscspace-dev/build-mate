@@ -4,9 +4,21 @@ import { json, limited, sameOrigin } from '@/lib/guard';
 import type { PurchaseStatus } from '@/lib/types';
 
 // 구매관리: 등록(등록 권한) · 수정·상태 변경(수정 권한) · 삭제(삭제 권한)
-type Body = { action?: unknown; id?: unknown; name?: unknown; url?: unknown; price?: unknown; qty?: unknown; memo?: unknown; status?: unknown };
+type Body = { action?: unknown; id?: unknown; name?: unknown; brand?: unknown; url?: unknown; price?: unknown; qty?: unknown; memo?: unknown; tags?: unknown; status?: unknown };
 const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/[ \t]+/g, ' ').slice(0, max) : '');
 const STATUSES: PurchaseStatus[] = ['want', 'ordered', 'done'];
+
+/** 태그 정리: 앞의 #·공백을 떼고 20자까지, 쉼표 제거, 중복 없이 최대 5개 */
+function cleanTags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const t of raw) {
+    const v = typeof t === 'string' ? t.replace(/[,#]/g, ' ').trim().replace(/\s+/g, ' ').slice(0, 20) : '';
+    if (v && !out.includes(v)) out.push(v);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
 
 /** 링크 정리: 비어 있으면 빈 값, http(s)가 없으면 https:// 를 붙이고, http·https 가 아니면(javascript: 등) 거절한다. */
 function cleanUrl(raw: unknown): string | null {
@@ -45,7 +57,7 @@ export async function POST(req: Request) {
   const qty = typeof b.qty === 'number' && Number.isInteger(b.qty) && b.qty >= 1 && b.qty <= 9999 ? b.qty : NaN;
   if (Number.isNaN(price)) return json({ error: '가격은 0 이상의 숫자(원)로 적어 주세요.' }, 400);
   if (Number.isNaN(qty)) return json({ error: '수량은 1 이상의 숫자로 적어 주세요.' }, 400);
-  const input = { name, url, price, qty, memo: clip(b.memo, 300), status };
+  const input = { name, brand: clip(b.brand, 30), url, price, qty, memo: clip(b.memo, 300), tags: cleanTags(b.tags), status };
 
   if (a === 'add') {
     await addPurchase(input, actor.kind === 'member' ? actor.member.name : '최고 관리자');

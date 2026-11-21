@@ -217,10 +217,12 @@ alter table public.leave_requests enable row level security;   -- 정책을 만�
 create table if not exists public.purchases (
   id         bigint generated always as identity primary key,
   name       text not null,                          -- 품목명
+  brand      text not null default '',               -- 브랜드
   url        text not null default '',               -- 구매 링크
   price      integer not null default 0 check (price >= 0),   -- 개당 가격(원)
   qty        integer not null default 1 check (qty >= 1),     -- 수량
   memo       text not null default '',
+  tags       text[] not null default '{}',           -- 묶어 보기용 태그
   status     text not null default 'want' check (status in ('want','ordered','done')),   -- 구매 예정 / 주문함 / 구매 완료
   created_by text not null default '',               -- 등록한 사람 이름
   created_at timestamptz not null default now(),

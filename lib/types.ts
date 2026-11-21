@@ -88,16 +88,18 @@ export type PurchaseStatus = 'want' | 'ordered' | 'done';
 export type PurchaseItem = {
   id: string;
   name: string; // 품목명
+  brand: string; // 브랜드 (없으면 빈 문자열)
   url: string; // 구매 링크 (없으면 빈 문자열)
   price: number; // 개당 가격(원)
   qty: number; // 수량
   memo: string;
+  tags: string[]; // 묶어 보기용 태그 (최대 5개)
   status: PurchaseStatus;
   createdBy: string; // 등록한 사람 이름
   createdAt: string;
   updatedAt: string;
 };
-export type PurchaseInput = { name: string; url: string; price: number; qty: number; memo: string; status: PurchaseStatus };
+export type PurchaseInput = { name: string; brand: string; url: string; price: number; qty: number; memo: string; tags: string[]; status: PurchaseStatus };
 
 /** 마감일 변경 한 번: from(바꾸기 전 마감일) → to(새 마감일). to 가 늦으면 연장, 빠르면 단축 */
 export type SiteExtension = { from: string; to: string; at: string };
