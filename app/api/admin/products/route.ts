@@ -1,6 +1,7 @@
 import { actorCan, getActor } from '@/lib/auth';
 import { headOf } from '@/lib/sub-path';
-import { getCategoryTrades, getProducts, getTrades, setSubs, deleteProducts, moveProducts, purgeProducts, renameProduct, reorderProducts, restoreProducts, setStock, swapProducts } from '@/lib/db';
+import { getCategoryTrades, getProducts, getTrades, setSubs, deleteProducts, moveProducts, setKind, purgeProducts, renameProduct, reorderProducts, restoreProducts, setStock, swapProducts } from '@/lib/db';
+import { asKind, KINDS } from '@/lib/types';
 import { json, sameOrigin } from '@/lib/guard';
 
 // 소모품: 삭제(휴지통으로 이동) / 복원 / 영구 삭제(휴지통의 것만, 이미지까지 완전 삭제) → '삭제' 권한
@@ -10,10 +11,10 @@ export async function POST(req: Request) {
   const actor = await getActor('catalog');
   if (!actor) return json({ error: '소모품 메뉴 권한이 필요해요.' }, 401);
 
-  const body = (await req.json().catch(() => null)) as { action?: unknown; keys?: unknown; category?: unknown; key?: unknown; name?: unknown; stock?: unknown; items?: unknown; a?: unknown; b?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as { action?: unknown; keys?: unknown; category?: unknown; key?: unknown; name?: unknown; stock?: unknown; items?: unknown; a?: unknown; b?: unknown; kind?: unknown } | null;
   const a = body?.action;
-  if (!body || (a !== 'delete' && a !== 'restore' && a !== 'purge' && a !== 'move' && a !== 'rename' && a !== 'swap' && a !== 'reorder' && a !== 'stock' && a !== 'stockBulk')) return json({ error: 'bad request' }, 400);
-  const editing = a === 'move' || a === 'rename' || a === 'swap' || a === 'reorder' || a === 'stock' || a === 'stockBulk';
+  if (!body || (a !== 'delete' && a !== 'restore' && a !== 'purge' && a !== 'move' && a !== 'kind' && a !== 'rename' && a !== 'swap' && a !== 'reorder' && a !== 'stock' && a !== 'stockBulk')) return json({ error: 'bad request' }, 400);
+  const editing = a === 'move' || a === 'kind' || a === 'rename' || a === 'swap' || a === 'reorder' || a === 'stock' || a === 'stockBulk';
   if (editing ? !actorCan(actor, 'catalog', 'edit') : !actorCan(actor, 'catalog', 'delete')) {
     return json({ error: editing ? '소모품 수정 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' : '소모품 삭제 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
   }
@@ -65,6 +66,11 @@ export async function POST(req: Request) {
     return json({ error: 'bad keys' }, 400);
   }
   const keys = body.keys as string[];
+  if (a === 'kind') {
+    if (!(KINDS as readonly unknown[]).includes(body.kind)) return json({ error: '분류를 골라 주세요.' }, 400);
+    const kind = asKind(body.kind);
+    return json({ ok: true, count: await setKind(keys, kind), kind });
+  }
   if (a === 'move') {
     const category = typeof body.category === 'string' ? body.category.trim() : '';
     if (!category) return json({ error: '옮길 카테고리를 골라 주세요.' }, 400);

@@ -4,8 +4,8 @@ import MenuHome, { type MenuCard } from "@/components/MenuHome";
 import WorkerLogin from "@/components/survey/WorkerLogin";
 import { hasRootSession } from "@/lib/auth";
 import { getSessionMember } from "@/lib/member-session";
-import { getTeams } from "@/lib/db";
-import { effectiveMenus, isStaffAdmin, menuDesc, menuHref, menuLabel, teamLabel } from "@/lib/roles";
+import { getMenuOrder, getTeams, getVehicles } from "@/lib/db";
+import { effectiveMenus, isStaffAdmin, menuDesc, menuHref, menuLabel, sortMenus, memberRoles, teamsLabel } from "@/lib/roles";
 
 export const metadata = { title: "빌드메이트" };
 
@@ -33,7 +33,7 @@ async function HomeLoader() {
   if (member.role === "super") redirect("/admin"); // 최고 관리자는 바로 관리자 화면
 
   const items: MenuCard[] = [
-    ...effectiveMenus(member.role, member.menus, member.actions).map(k => ({
+    ...sortMenus(effectiveMenus(memberRoles(member), member.menus, member.actions), await getMenuOrder()).map(k => ({
       key: k,
       label: menuLabel(k),
       desc: menuDesc(k),
@@ -41,5 +41,8 @@ async function HomeLoader() {
       granted: member.menus.includes(k), // 직급 기본이 아니라 따로 부여받은 메뉴 표시
     })),
   ];
-  return <MenuHome name={member.name} roleLabel={teamLabel(await getTeams(), member.role)} items={items} idChange={isStaffAdmin(member.role) ? "unlimited" : member.idChanged ? false : "once"} temp={member.mustChangePassword} />;
+  const teams = await getTeams();
+  const mine = (await getVehicles()).filter(v => v.driverId === member.id);
+  if (mine.length > 0) items.push({ key: "myvehicle", label: "내 차량", desc: `배차된 차량(${mine.map(v => v.nickname || v.name).join(", ")})에 실린 연장·상비품을 확인해요`, href: "/my-vehicle" });
+  return <MenuHome name={member.name} roleLabel={teamsLabel(teams, member)} items={items} idChange={isStaffAdmin(memberRoles(member)) ? "unlimited" : member.idChanged ? false : "once"} temp={member.mustChangePassword} />;
 }

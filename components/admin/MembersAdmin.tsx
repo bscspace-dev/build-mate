@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import type { PublicMember } from "@/lib/types";
 import {
-  actionLabel, canSurvey, effectiveMenus, groupLabel, groupsIn, MENU_ACTIONS, MENUS, menuLabel, roleMenus, SIDES, sideLabel, sideOf, teamGroup, teamLabel, teamsIn,
+  effectivePay, memberRoles, PAY_TYPES, payTypeLabel, teamsLabel, menuActionLabel, canSurvey, effectiveMenus, groupLabel, groupsIn, MENU_ACTIONS, MENUS, menuLabel, roleMenus, SIDES, sideLabel, sideOf, teamGroup, teamLabel, teamsIn,
   type ActionKey, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type SideKey, type Team,
 } from "@/lib/roles";
 import { Modal } from "@/components/Sheet";
@@ -19,13 +19,15 @@ const inputCls = "mt-2 w-full rounded-xl border border-black/15 bg-transparent p
 const tagCls = "rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
 
 type Creds = { loginId: string; password: string };
-type ApiResult = { ok: boolean; member?: PublicMember; credentials?: Creds | null; error?: string };
+type ApiResult = { ok: boolean; member?: PublicMember; credentials?: Creds | null; annual?: { total: number | null; used: number }; error?: string };
 type Issued = { name: string; kind: "new" | "reset"; creds: Creds };
 
 export default function MembersAdmin({
-  scope, initialMembers, initialTeams, canManageTeams, trades, categoryTrades, submissions, selfId, builtinId,
+  scope, leaveYear, leaveBalances, initialMembers, initialTeams, canManageTeams, trades, categoryTrades, submissions, selfId, builtinId,
 }: {
   scope: SideKey; // inhouse = 사내 회원 관리, coop = 거래처 관리 — 두 화면은 따로 관리한다
+  leaveYear?: number; // 연차 기준 연도 (올해)
+  leaveBalances?: Record<string, { total: number | null; used: number }>; // 회원별 올해 연차 총 일수·사용 일수
   initialMembers: PublicMember[];
   initialTeams: Team[];
   canManageTeams: boolean; // 팀명 추가·삭제 권한 (회원 관리의 등록·삭제 권한)
@@ -37,10 +39,14 @@ export default function MembersAdmin({
 }) {
   const router = useRouter();
   const [members, setMembers] = useState(initialMembers);
+  const [balances, setBalances] = useState(leaveBalances ?? {});
+  const [annualRemain, setAnnualRemain] = useState(""); // 연차 잔여 (4대보험 사무직 기준 회원만, 비우면 미설정)
   const [teams, setTeams] = useState(initialTeams);
   const [name, setName] = useState("");
   const defaultRole: RoleKey = scope === "coop" ? (teamsIn(initialTeams, "outsource")[0]?.key ?? "partner") : "worker";
   const [role, setRole] = useState<RoleKey>(defaultRole);
+  const [extraRole, setExtraRole] = useState<RoleKey | "">(""); // 겸직 팀 (사무실 팀 + 현장 팀)
+  const [payType, setPayType] = useState<"" | "daily" | "office">(""); // 급여 기준 ("" = 주 팀에 따라 자동)
   const [picked, setPicked] = useState<string[]>([]);
   const [pickedCats, setPickedCats] = useState<string[]>([]);
   const [menus, setMenus] = useState<MenuKey[]>([]); // 팀 기본 메뉴 외에 더 부여하는 메뉴
@@ -80,7 +86,7 @@ export default function MembersAdmin({
 
   const say = (text: string) => setToast({ id: Date.now(), text });
   const editingSelf = editId !== null && editId === selfId;
-  const needTrades = canSurvey(role, menus); // 설문에 참여하는 회원만 공정을 갖는다
+  const needTrades = canSurvey([role, ...(extraRole ? [extraRole] : [])], menus); // 설문에 참여하는 회원만 공정을 갖는다
   const full = picked.length >= MAX_TRADES;
 
   const inScope = (m: PublicMember) => {
@@ -126,10 +132,28 @@ export default function MembersAdmin({
   function toggleCat(c: string) {
     setPickedCats(p => (p.includes(c) ? p.filter(x => x !== c) : catsOfTrade(p, categoryTrades[c]) >= MAX_CATS ? p : [...p, c]));
   }
-  function chooseRole(r: RoleKey) {
-    setRole(r);
-    setMenus(p => p.filter(k => !roleMenus(r).includes(k))); // 새 팀의 기본 메뉴와 겹치는 부여는 뺀다
-    setActions(p => Object.fromEntries(Object.entries(p).filter(([k]) => !roleMenus(r).includes(k as MenuKey))));
+  // 팀 선택: 사무실 팀 하나 + 현장 팀 하나까지 함께 고를 수 있다 (둘 다 선택 표시됨).
+  //  · 이미 고른 팀을 다시 누르면 뺀다 (하나는 남아야 한다)
+  //  · 같은 부서의 다른 팀을 누르면 그 부서의 선택이 바뀐다
+  //  · 거래처 쪽 팀은 단독으로만 고른다
+  function applyTeams(nr: RoleKey, ne: RoleKey | "") {
+    setRole(nr);
+    setExtraRole(ne);
+    const both = [nr, ...(ne ? [ne] : [])];
+    setMenus(p => p.filter(k => !roleMenus(both).includes(k))); // 새 팀의 기본 메뉴와 겹치는 부여는 뺀다
+    setActions(p => Object.fromEntries(Object.entries(p).filter(([k]) => !roleMenus(both).includes(k as MenuKey))));
+  }
+  function toggleTeam(key: RoleKey) {
+    const picked = [role, ...(extraRole ? [extraRole] : [])];
+    const dual = (x: RoleKey) => { const g = teamGroup(teams, x); return g === "office" || g === "field"; };
+    if (picked.includes(key)) {
+      if (picked.length === 1) return;
+      return applyTeams(picked.find(x => x !== key)!, "");
+    }
+    if (!dual(key) || !dual(role)) return applyTeams(key, "");
+    const g = teamGroup(teams, key);
+    if (teamGroup(teams, role) === g) return applyTeams(key, extraRole); // 주 팀과 같은 부서: 주 팀을 바꾼다
+    return applyTeams(role, key); // 반대 부서: 겸직 팀으로 함께 선택 (이미 겸직이 있으면 바뀐다)
   }
   function toggleMenu(k: MenuKey) {
     const on = menus.includes(k);
@@ -153,6 +177,9 @@ export default function MembersAdmin({
     setPhone("");
     setAddress("");
     setRole(defaultRole);
+    setAnnualRemain("");
+    setExtraRole("");
+    setPayType("");
     setMenus([]);
     setActions({});
     setPicked([]);
@@ -192,14 +219,17 @@ export default function MembersAdmin({
     try {
       const tradesToSend = needTrades ? picked : [];
       const catsToSend = needTrades ? pickedCats.filter(c => picked.includes(categoryTrades[c])) : [];
+      const officePay = scope !== "coop" && effectivePay(teams, { role, payType }) === "office";
+      const annualRemainToSend = officePay ? (annualRemain.trim() === "" ? null : Number(annualRemain)) : undefined; // 사무직 기준이 아니면 보내지 않는다
       const r = await call(
         editId
-          ? { action: "update", id: editId, name, role, menus, actions, trades: tradesToSend, categories: catsToSend, handles, phone, address, loginId: loginId || undefined }
-          : { action: "add", name, role, menus, actions, trades: tradesToSend, categories: catsToSend, handles, phone, address, loginId: loginId || undefined, account: scope !== "coop" },
+          ? { action: "update", id: editId, name, role, extraRole, payType, annualRemain: annualRemainToSend, menus, actions, trades: tradesToSend, categories: catsToSend, handles, phone, address, loginId: loginId || undefined }
+          : { action: "add", name, role, extraRole, payType, annualRemain: annualRemainToSend, menus, actions, trades: tradesToSend, categories: catsToSend, handles, phone, address, loginId: loginId || undefined, account: scope !== "coop" },
       );
       if (r.ok && r.member) {
         const m = r.member;
         setMembers(prev => (editId ? prev.map(x => (x.id === m.id ? m : x)) : [...prev, m]));
+        if (r.annual) setBalances(prev => ({ ...prev, [m.id]: r.annual! })); // 저장한 연차 잔여를 바로 반영
         if (!editId && r.credentials) setIssued({ name: m.name, kind: "new", creds: r.credentials });
         else say(editId ? "수정했어요" : "등록했어요");
         resetForm();
@@ -214,6 +244,9 @@ export default function MembersAdmin({
     setEditId(m.id);
     setName(m.name);
     setRole(m.role);
+    { const b = balances[m.id]; setAnnualRemain(b && b.total !== null ? String(b.total - b.used) : ""); } // 연차 잔여 = 총 일수 - 이미 쓴 일수
+    setExtraRole(m.extraRole ?? "");
+    setPayType(m.payType ?? "");
     setMenus(m.menus);
     setActions(Object.fromEntries(m.menus.filter(k => MENU_ACTIONS[k].length > 0).map(k => [k, m.actions?.[k] ?? ["view"]])) as GrantedActions); // 예전 부여(동작 미지정)는 보기만으로 보여 준다
     setPicked(m.trades);
@@ -338,7 +371,7 @@ export default function MembersAdmin({
         </>
       )}
 
-      <div className="mt-4 text-sm font-bold">팀 <span className="font-normal text-zinc-500">{scope === "coop" ? "· 거래처 팀(자유롭게 추가할 수 있어요)" : "· 사내(사무실·현장)"}</span></div>
+      <div className="mt-4 text-sm font-bold">팀 <span className="font-normal text-zinc-500">{scope === "coop" ? "· 거래처 팀(자유롭게 추가할 수 있어요)" : "· 사내(사무실·현장) — 사무실 팀과 현장 팀을 하나씩 함께 고를 수 있어요"}</span></div>
       <div className="mt-2 space-y-3" role="radiogroup" aria-label="팀">
         {sidesShown.map(sd => (
           <div key={sd.key} className="rounded-xl border border-black/10 p-3 dark:border-white/10">
@@ -349,17 +382,17 @@ export default function MembersAdmin({
                   <span className="w-12 shrink-0 text-xs font-bold text-zinc-500">{g.label}</span>
                   {teamsIn(teams, g.key).length === 0 && <span className="text-xs text-zinc-400">팀이 없어요</span>}
                   {teamsIn(teams, g.key).map(t => {
-                    const on = role === t.key;
+                    const on = role === t.key || extraRole === t.key; // 사무실·현장 팀을 하나씩 함께 고를 수 있다
                     const locked = editingSelf && !on; // 내 팀은 스스로 바꿀 수 없다
                     return (
                       <motion.button
                         key={t.key}
                         type="button"
-                        role="radio"
+                        role="checkbox"
                         aria-checked={on}
                         whileTap={locked ? undefined : { scale: 0.94 }}
                         disabled={locked}
-                        onClick={() => chooseRole(t.key)}
+                        onClick={() => toggleTeam(t.key)}
                         className={`${chipBase} px-4 py-2 text-[15px] ${on ? chipOn : chipOff} ${locked ? "opacity-35" : ""}`}
                       >
                         {t.label}
@@ -374,9 +407,37 @@ export default function MembersAdmin({
       </div>
       {editingSelf && <p className="mt-2 text-xs text-zinc-500">내 팀은 직접 바꿀 수 없어요.</p>}
 
+      {scope !== "coop" && (() => {
+        const eff = effectivePay(teams, { role, payType });
+        return (
+          <>
+            <div className="mt-4">
+              <div className="text-sm font-bold">급여 기준 <span className="font-normal text-zinc-500">· 일수로 계산할지, 4대보험 사무직 기준인지</span></div>
+              <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="급여 기준">
+                <motion.button type="button" role="radio" aria-checked={payType === ""} whileTap={{ scale: 0.94 }} onClick={() => setPayType("")} className={`${chipBase} px-4 py-2 text-[15px] ${payType === "" ? chipOn : chipOff}`}>자동<small className="ml-1 opacity-80">· 주 팀 기준</small></motion.button>
+                {PAY_TYPES.map(p => <motion.button key={p.v} type="button" role="radio" aria-checked={payType === p.v} whileTap={{ scale: 0.94 }} onClick={() => setPayType(p.v)} className={`${chipBase} px-4 py-2 text-[15px] ${payType === p.v ? chipOn : chipOff}`}>{p.label}</motion.button>)}
+              </div>
+              {eff === "office" && (
+                <div className="mt-4 rounded-xl bg-violet-50 p-3 dark:bg-violet-500/10">
+                  <label htmlFor="mannual" className="block text-sm font-bold">연차 잔여 <span className="font-normal text-zinc-500">· {leaveYear ?? new Date().getFullYear()}년 · 휴가를 쓸 때마다 자동으로 차감돼요</span></label>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <input id="mannual" inputMode="decimal" value={annualRemain} onChange={e => setAnnualRemain(e.target.value.replace(/[^\d.]/g, ""))} placeholder="미설정" autoComplete="off" className="w-28 rounded-xl border border-black/15 bg-white px-3.5 py-2.5 text-right text-lg font-extrabold outline-none focus:border-violet-500 dark:border-white/15 dark:bg-zinc-900" />
+                    <span className="text-sm font-bold">일</span>
+                    {editId && balances[editId] && (balances[editId].total !== null || balances[editId].used > 0) && <span className="text-xs text-zinc-500">총 {balances[editId].total ?? "—"}일 · 사용 {balances[editId].used}일</span>}
+                  </div>
+                  <p className="mt-1.5 text-xs text-zinc-500">남은 연차 일수를 적어 주세요(0.5 단위). 관리자가 휴가를 승인할 때마다 그만큼 줄어들어요. 비워 두면 연차 제한 없이 신청돼요. 잔여를 바꿔 저장하면 이미 쓴 일수는 그대로 두고 총 일수만 맞춰져요.</p>
+                </div>
+              )}
+              <p className="mt-1.5 text-xs text-zinc-500">지금 적용: <b>{payTypeLabel(eff)}</b>{payType === "" && " (주 팀이 사무실이면 사무직 기준, 그 밖은 일수제)"} · 4대보험 사무직 기준은 휴가를 <b>연차에서 차감</b>하고, 일수제는 휴가 일수만 출근에서 제외해요.</p>
+            </div>
+          </>
+        );
+      })()}
+
       <div className="mt-4 text-sm font-bold">
         메뉴 부여 <span className="font-normal text-zinc-500">(선택) · 안 골라도 등록돼요. 팀 기본 메뉴는 항상 쓸 수 있어요</span>
       </div>
+      {scope === "coop" && <p className="mt-1 text-xs text-zinc-500">거래처도 메뉴를 부여할 수 있어요. 로그인해서 쓰려면 목록에서 ‘아이디 생성’으로 아이디를 만들어야 해요.</p>}
       <div className="mt-2 flex flex-wrap gap-2">
         {MENUS.map(mn => {
           const base = roleMenus(role).includes(mn.key);
@@ -420,7 +481,7 @@ export default function MembersAdmin({
                     onClick={() => toggleAction(k, a)}
                     className={chipBase + " px-4 py-2 text-[15px] " + (on ? chipOn : chipOff)}
                   >
-                    {actionLabel(a)}
+                    {menuActionLabel(k, a)}
                   </motion.button>
                 );
               })}
@@ -653,7 +714,7 @@ export default function MembersAdmin({
         {shown.length === 0 && (kw || side !== "all" || group !== "all" || filter !== "all") && <p className="py-6 text-center text-sm text-zinc-500">해당하는 회원이 아직 없어요.</p>}
         {scope === "coop" && shown.length > 0 && (
           <div className="no-scrollbar overflow-x-auto rounded-2xl border border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900">
-            <table className="w-full min-w-[40rem] border-collapse text-left text-sm">
+            <table className="w-full min-w-[48rem] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-black/10 text-xs text-zinc-500 dark:border-white/10">
                   <th className="whitespace-nowrap px-3 py-2.5 font-bold">팀</th>
@@ -661,6 +722,7 @@ export default function MembersAdmin({
                   <th className="whitespace-nowrap px-3 py-2.5 font-bold">취급품목</th>
                   <th className="whitespace-nowrap px-3 py-2.5 font-bold">연락처</th>
                   <th className="whitespace-nowrap px-3 py-2.5 font-bold">주소</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-bold">쓸 수 있는 메뉴</th>
                   <th className="px-3 py-2.5" />
                 </tr>
               </thead>
@@ -674,6 +736,15 @@ export default function MembersAdmin({
                       <td className="px-3 py-3 text-zinc-700 dark:text-zinc-300">{m.handles || <span className="text-zinc-400">—</span>}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-zinc-700 dark:text-zinc-300">{m.phone || <span className="text-zinc-400">—</span>}</td>
                       <td className="min-w-[10rem] px-3 py-3 text-zinc-700 dark:text-zinc-300">{m.address || <span className="text-zinc-400">—</span>}</td>
+                      <td className="min-w-[9rem] px-3 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {effectiveMenus(memberRoles(m), m.menus, m.actions).length === 0 && <span className="text-zinc-400">—</span>}
+                          {effectiveMenus(memberRoles(m), m.menus, m.actions).map(k => (
+                            <span key={k} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">{menuLabel(k)}{MENU_ACTIONS[k].length ? " · " + ((m.actions?.[k] ?? ["view"]).map(a => menuActionLabel(k, a)).join("·") || "볼 수 없음") : ""}</span>
+                          ))}
+                          {m.menus.length > 0 && !m.loginId && <span className="w-full text-[10px] text-amber-600 dark:text-amber-300">아이디 생성 후 사용 가능</span>}
+                        </div>
+                      </td>
                       <td className="whitespace-nowrap px-3 py-3">
                         <div className="flex flex-wrap justify-end gap-1.5">
                           <button type="button" onClick={() => startEdit(m)} className="rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-bold dark:bg-zinc-800">수정</button>
@@ -706,7 +777,8 @@ export default function MembersAdmin({
                 <div className="flex flex-wrap items-center gap-2">
                   <b className="text-base">{m.name}</b>
                   {g && <span className={tagCls}>{sideLabel(sideOf(g))} · {groupLabel(g)}</span>}
-                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">{teamLabel(teams, m.role)}{canSurvey(m.role, m.menus) && m.trades.length > 0 && " - " + m.trades.map(t => t + "팀").join("/")}</span>
+                  <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">{teamsLabel(teams, m)}{canSurvey(memberRoles(m), m.menus) && m.trades.length > 0 && " - " + m.trades.map(t => t + "팀").join("/")}</span>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${effectivePay(teams, m) === "office" ? "bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"}`} title="급여 기준">{effectivePay(teams, m) === "office" ? "사무직 기준" : "일수제"}{m.payType === "" && <small className="ml-0.5 opacity-70">(자동)</small>}</span>
                   {isMe && <span className={tagCls}>나</span>}
                   {m.mustChangePassword && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">임시 비밀번호 (변경 전)</span>}
                   <div className="ml-auto flex gap-1.5">
@@ -716,15 +788,15 @@ export default function MembersAdmin({
                 </div>
 
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {effectiveMenus(m.role, m.menus, m.actions).length === 0 && <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800">쓸 수 있는 메뉴 없음</span>}
-                  {effectiveMenus(m.role, m.menus, m.actions).map(k => (
+                  {effectiveMenus(memberRoles(m), m.menus, m.actions).length === 0 && <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800">쓸 수 있는 메뉴 없음</span>}
+                  {effectiveMenus(memberRoles(m), m.menus, m.actions).map(k => (
                     <span key={k} className="rounded-full border border-black/10 px-2 py-0.5 text-[11px] text-zinc-600 dark:border-white/10 dark:text-zinc-300">
-                      {menuLabel(k)}{m.menus.includes(k) ? " (부여" + (MENU_ACTIONS[k].length ? " · " + ((m.actions?.[k] ?? ["view"]).map(actionLabel).join("·") || "볼 수 없음") : "") + ")" : ""}
+                      {menuLabel(k)}{m.menus.includes(k) ? " (부여" + (MENU_ACTIONS[k].length ? " · " + ((m.actions?.[k] ?? ["view"]).map(a => menuActionLabel(k, a)).join("·") || "볼 수 없음") : "") + ")" : ""}
                     </span>
                   ))}
                 </div>
 
-                {canSurvey(m.role, m.menus) && (
+                {canSurvey(memberRoles(m), m.menus) && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {m.trades.map(t => (
                       <span

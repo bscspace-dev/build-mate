@@ -2,7 +2,7 @@ import 'server-only';
 import crypto from 'node:crypto';
 import { cookies } from 'next/headers';
 import { getSessionMember } from './member-session';
-import { can, hasMenu, type ActionKey, type MenuKey } from './roles';
+import { can, hasMenu, memberRoles, type ActionKey, type MenuKey } from './roles';
 import type { Actor } from './member-utils';
 
 const COOKIE = 'bm_admin';
@@ -67,7 +67,7 @@ export async function hasRootSession(): Promise<boolean> {
 
 /** 이 사람이 이 메뉴에서 이 동작(등록/수정/삭제)을 해도 되는가. 내장 최고 관리자는 모두 가능. */
 export function actorCan(actor: Actor, menu: MenuKey, action: ActionKey): boolean {
-  return actor.kind === 'root' ? menu !== 'survey' : can(actor.member.role, actor.member.menus, actor.member.actions, menu, action);
+  return actor.kind === 'root' ? menu !== 'survey' : can(memberRoles(actor.member), actor.member.menus, actor.member.actions, menu, action);
 }
 
 /**
@@ -78,6 +78,6 @@ export function actorCan(actor: Actor, menu: MenuKey, action: ActionKey): boolea
 export async function getActor(menu: MenuKey): Promise<Actor | null> {
   if (await hasRootSession()) return menu === 'survey' ? null : { kind: 'root' };
   const member = await getSessionMember();
-  if (member && hasMenu(member.role, member.menus, menu, member.actions)) return { kind: 'member', member };
+  if (member && hasMenu(memberRoles(member), member.menus, menu, member.actions)) return { kind: 'member', member };
   return null;
 }

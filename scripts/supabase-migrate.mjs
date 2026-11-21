@@ -30,7 +30,8 @@ const DEFAULT_TEAMS = [
   { key: 'super', label: '최고 관리자', group: 'office', locked: true },
   { key: 'dev', label: '개발팀', group: 'office', locked: true },
   { key: 'sales', label: '영업팀', group: 'office', locked: false },
-  { key: 'worker', label: '현장작업자', group: 'field', locked: true },
+  { key: 'worker', label: '현장작업자(정)', group: 'field', locked: true },
+  { key: 'worker_sub', label: '현장작업자(부)', group: 'field', locked: true },
   { key: 'pm', label: '현장관리자(PM)', group: 'field', locked: true },
   { key: 'partner', label: '협력업체', group: 'outsource', locked: false },
 ];

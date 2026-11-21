@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import type { Product, TrashedProduct } from "@/lib/types";
+import { KINDS, type Kind, type Product, type TrashedProduct } from "@/lib/types";
 import { Modal } from "@/components/Sheet";
 import AddProduct from "@/components/admin/AddProduct";
 import EditProduct from "@/components/admin/EditProduct";
@@ -85,7 +85,7 @@ function StockBox({ value, canEdit, onCommit }: { value: number; canEdit: boolea
 const BLANK_DRAG = typeof Image !== "undefined" ? Object.assign(new Image(), { src: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" }) : (null as unknown as HTMLImageElement);
 
 function ProductCard({
-  p, selected, starred, onSelect, onStar, onAction, onMove, onRename, onShift, onStock, shiftable, trashMode, canDelete, canEdit, list, reorderable, dragging, onDragStart, onDragEnd, onDropOn,
+  p, deployed, selected, starred, onSelect, onStar, onAction, onMove, onRename, onShift, onStock, shiftable, trashMode, canDelete, canEdit, list, reorderable, dragging, onDragStart, onDragEnd, onDropOn,
 }: {
   dragging: boolean; // 지금 이 카드를 끌고 있는지
   onDragStart: ((k: string) => void) | null; // null = 끌어서 순서 바꾸기 불가
@@ -97,6 +97,7 @@ function ProductCard({
   starred: boolean;
   onStar: (k: string) => void;
   p: Product | TrashedProduct;
+  deployed: { icon: string; label: string; qty: number }[]; // 연장이 배정된 차량 (없으면 빈 배열)
   selected: boolean;
   onSelect: (k: string) => void;
   onAction: (k: string, mode: Mode | "purge") => void;
@@ -180,6 +181,11 @@ function ProductCard({
           {list && p.brand && <small className="block text-[11px] text-zinc-500">{p.brand}</small>}
         </div>
         {!list && p.brand && <div className="mt-0.5 truncate text-[11px] text-zinc-500">{p.brand}</div>}
+        {p.kind === "연장" && !trashMode && deployed.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {deployed.map((d, i) => <span key={i} className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-800 dark:bg-blue-500/20 dark:text-blue-200">{d.icon} {d.label} 배정{d.qty > 1 ? " ×" + d.qty : ""}</span>)}
+          </div>
+        )}
         {!trashMode && <div className={list ? "w-48 [&>div]:mt-0" : "contents"}><StockBox value={p.stock ?? 0} canEdit={canEdit} onCommit={n => onStock(p.key, n)} /></div>}
         {deletedAt && (
           <div className="mt-1.5 text-[11px] text-zinc-500">
@@ -240,8 +246,9 @@ function ProductCard({
 }
 
 export default function AdminCatalog({
-  initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
+  deployed: deployedMap, initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
 }: {
+  deployed: Record<string, { icon: string; label: string; qty: number }[]>; // 연장 품목 번호 → 배정된 차량
   initialProducts: Product[];
   initialTrash: TrashedProduct[];
   trades: string[];
@@ -252,9 +259,12 @@ export default function AdminCatalog({
   canDelete: boolean; // 소모품의 "삭제" 권한 (없으면 보기 전용)
 }) {
   const router = useRouter();
+  // 차량운용에서 배정·재고가 바뀐 채로 돌아와도 옛 화면이 남지 않게, 열릴 때 서버 데이터를 한 번 새로 받는다
+  useEffect(() => { router.refresh(); }, [router]);
   const [products, setProducts] = useState(initialProducts);
   const [trash, setTrash] = useState(initialTrash);
   const [view, setView] = useState<"catalog" | "trash">("catalog");
+  const [kind, setKind] = useState<Kind>("상비품"); // 장비운용 분류 탭
   const [cat, setCat] = useState("전체");
   const [sub, setSub] = useState("");
   const [trade, setTrade] = useState("전체");
@@ -307,7 +317,8 @@ export default function AdminCatalog({
   const canManageCats = canRegister || canEdit || canDelete;
 
   const trashMode = view === "trash";
-  const base: (Product | TrashedProduct)[] = trashMode ? trash : products;
+  const kindCounts = useMemo(() => { const m: Record<string, number> = {}; (trashMode ? trash : products).forEach(p => { m[p.kind] = (m[p.kind] ?? 0) + 1; }); return m; }, [products, trash, trashMode]);
+  const base: (Product | TrashedProduct)[] = useMemo(() => (trashMode ? trash : products).filter(p => p.kind === kind), [trashMode, trash, products, kind]);
 
   // 필터 단계: 분류 → 세부분류 → 공정 → 검색 (자재는 출처 사이트 구분 없이 하나로 통합돼 있다)
   const cats = useMemo(() => {
@@ -421,7 +432,7 @@ export default function AdminCatalog({
         }));
       const d = new Date();
       const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-      downloadBlob(buildXlsx(sheets), `${trashMode ? "소모품_휴지통" : "소모품"}${withPhoto ? "_사진" : ""}_${stamp}.xlsx`);
+      downloadBlob(buildXlsx(sheets), `${trashMode ? "장비운용_휴지통" : "장비운용_" + kind}${withPhoto ? "_사진" : ""}_${stamp}.xlsx`);
       setExportOpen(false);
     } catch (err) {
       setToast({ id: Date.now(), text: err instanceof Error ? err.message : "엑셀 파일을 만들지 못했어요." });
@@ -775,6 +786,25 @@ export default function AdminCatalog({
     }
     setBusy(false);
   }
+  const [kindKeys, setKindKeys] = useState<string[] | null>(null); // 분류 변경 창
+  async function changeKind(to: Kind) {
+    if (busy || !kindKeys) return;
+    setBusy(true); setMoveErr("");
+    try {
+      const r = await fetch("/api/admin/products", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "kind", keys: kindKeys, kind: to }) });
+      if (r.status === 401) { router.replace("/"); return; }
+      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "분류를 바꾸지 못했어요.");
+      const set = new Set(kindKeys);
+      const mv = <T extends { key: string; kind: Kind }>(rows: T[]) => rows.map(p => (set.has(p.key) ? { ...p, kind: to } : p));
+      setProducts(mv); setTrash(mv);
+      setSelected(prev => { const n = new Set(prev); kindKeys.forEach(k => n.delete(k)); return n; });
+      setToast({ id: Date.now(), text: kindKeys.length + "개를 “" + to + "”(으)로 옮겼어요" });
+      setKindKeys(null);
+    } catch (e) {
+      setMoveErr(e instanceof Error ? e.message : "분류를 바꾸지 못했어요.");
+    }
+    setBusy(false);
+  }
   const doMove = (category: string) => { if (moveKeys) void moveTo(moveKeys, category); };
 
   async function doConfirm() {
@@ -875,7 +905,7 @@ export default function AdminCatalog({
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-32">
       <header className="flex flex-wrap items-center gap-3 py-5">
-        <h1 className="mr-auto text-xl font-extrabold">소모품</h1>
+        <h1 className="mr-auto text-xl font-extrabold">장비운용</h1>
         {canRegister && activeCat !== "전체" && ( // 카테고리를 고른 상태에서만 품목 추가
           <motion.button whileTap={{ scale: 0.96 }} type="button" onClick={() => setAddOpen(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
             + 품목 추가
@@ -890,10 +920,18 @@ export default function AdminCatalog({
       )}
 
       <div className="flex gap-2">
-        {([["catalog", `소모품 ${products.length}`], ["trash", `휴지통 ${trash.length}`]] as const).map(([v, label]) => (
+        {([["catalog", `장비운용 ${products.length}`], ["trash", `휴지통 ${trash.length}`]] as const).map(([v, label]) => (
           <button key={v} type="button" onClick={() => switchView(v)} className={`relative rounded-xl px-4 py-2.5 text-sm font-bold ${view === v ? "text-white" : "bg-white text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"}`}>
             {view === v && <motion.span layoutId="viewTab" className="absolute inset-0 rounded-xl bg-blue-600" transition={{ type: "spring", stiffness: 400, damping: 34 }} />}
             <span className="relative">{label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-3 flex gap-2" role="tablist" aria-label="장비운용 분류">
+        {KINDS.map(k => (
+          <button key={k} type="button" role="tab" aria-selected={kind === k} onClick={() => { setKind(k); setCat("전체"); setSub(""); setPage(1); resetSel(); }} className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-extrabold sm:flex-none sm:px-8 ${kind === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-700 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>
+            {k}<small className="ml-1.5 opacity-70">{kindCounts[k] ?? 0}</small>
           </button>
         ))}
       </div>
@@ -1002,6 +1040,7 @@ export default function AdminCatalog({
               onStock={setStockOf}
               shiftable={!mouseUser && canEdit && !trashMode && sort === "no" ? { prev: list[0]?.key !== p.key, next: list[list.length - 1]?.key !== p.key } : null}
               p={p}
+              deployed={deployedMap[p.key] ?? []}
               selected={selected.has(p.key)}
               starred={starSet.has(p.key)}
               onStar={onStar}
@@ -1042,6 +1081,11 @@ export default function AdminCatalog({
             <span className="mr-auto text-sm font-bold">{selCount}개 선택</span>
             <button type="button" onClick={selectAllShown} className="text-xs underline underline-offset-2 opacity-80">현재 목록 전체({list.length})</button>
             <button type="button" onClick={resetSel} className="text-xs font-bold underline underline-offset-2">전체 해제</button>
+            {canEdit && (
+              <motion.button whileTap={{ scale: 0.95 }} type="button" onClick={() => { setMoveErr(""); setKindKeys([...selected]); }} className="rounded-xl bg-zinc-700 px-4 py-2 text-sm font-bold text-white">
+                분류 변경
+              </motion.button>
+            )}
             {canEdit && !trashMode && (
               <motion.button whileTap={{ scale: 0.95 }} type="button" onClick={() => { setMoveErr(""); setMoveKeys([...selected]); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
                 카테고리 이동
@@ -1076,12 +1120,28 @@ export default function AdminCatalog({
         product={editP}
         onClose={() => setEditP(null)}
         onSaved={(key, e) => {
-          const up = <T extends { key: string; name: string; sub: string; brand: string; price: number; image: string }>(rows: T[]) => rows.map(p => (p.key === key ? { ...p, name: e.name, sub: e.sub, brand: e.brand, price: e.price, image: e.image ?? p.image } : p));
+          const up = <T extends { key: string; name: string; sub: string; brand: string; price: number; kind: Kind; image: string }>(rows: T[]) => rows.map(p => (p.key === key ? { ...p, name: e.name, sub: e.sub, brand: e.brand, price: e.price, kind: e.kind ?? p.kind, image: e.image ?? p.image } : p));
           setProducts(up); setTrash(up);
           setToast({ id: Date.now(), text: "품목 정보를 수정했어요" });
           setEditP(null);
         }}
       />
+
+      {/* 분류 변경: 연장 / 소모품 / 자재 */}
+      <Modal open={kindKeys !== null} onClose={() => !busy && setKindKeys(null)}>
+        {kindKeys && (
+          <>
+            <h2 className="text-lg font-bold">{kindKeys.length}개를 어느 분류로 옮길까요?</h2>
+            <div className="mt-3 flex gap-2">
+              {KINDS.map(k => (
+                <button key={k} type="button" disabled={busy} onClick={() => void changeKind(k)} className={`flex-1 rounded-xl py-3 text-sm font-extrabold disabled:opacity-50 ${k === kind ? "bg-blue-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}>{k}</button>
+              ))}
+            </div>
+            {moveErr && <p className="mt-3 text-sm text-red-500" role="alert">{moveErr}</p>}
+            <button type="button" disabled={busy} onClick={() => setKindKeys(null)} className="mt-4 w-full rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">취소</button>
+          </>
+        )}
+      </Modal>
 
       {/* 카테고리 이동: 목록이 길어도 스크롤된다 */}
       <Modal open={moveKeys !== null} onClose={() => !busy && setMoveKeys(null)}>
@@ -1118,11 +1178,12 @@ export default function AdminCatalog({
         open={addOpen}
         onClose={() => setAddOpen(false)}
         categories={catList}
+        defaultKind={kind}
         defaultCategory={cat !== "전체" && catList.includes(cat) ? cat : ""}
         headOfCat={c => headOf(c, catTrades, trades)}
         onAdded={p => {
           setProducts(prev => [...prev, p]);
-          setView("catalog"); setTrade("전체"); setQ(""); setSub(""); setSort("no"); setCat(p.category); setPage(1);
+          setView("catalog"); setKind(p.kind); setTrade("전체"); setQ(""); setSub(""); setSort("no"); setCat(p.category); setPage(1);
           setToast({ id: Date.now(), text: "“" + p.name + "” 품목을 등록했어요" });
         }}
       />

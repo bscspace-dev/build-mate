@@ -1,24 +1,27 @@
 import { hasRootSession } from '@/lib/auth';
-import { getTeams, getTrades } from '@/lib/db';
+import { getMenuOrder, getTeams, getTrades, getVehicles } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { changeOwnPassword, updateMember } from '@/lib/members';
 import { toPublic } from '@/lib/member-utils';
 import { createMemberSession, getSessionMember } from '@/lib/member-session';
-import { effectiveMenus, teamLabel } from '@/lib/roles';
+import { effectiveMenus, memberRoles, teamsLabel } from '@/lib/roles';
 import { verifyPassword } from '@/lib/accounts';
 
 // 지금 로그인한 사람의 정보 (관리자 화면 메뉴에 이름·직급을 보여주는 데도 쓴다)
 export async function GET() {
   const member = await getSessionMember();
   if (member) {
+    const teams = await getTeams();
     return json({
       kind: 'member',
       member: toPublic(member),
-      roleLabel: teamLabel(await getTeams(), member.role),
-      menus: effectiveMenus(member.role, member.menus, member.actions), // 지금 쓸 수 있는 메뉴
+      roleLabel: teamsLabel(teams, member),
+      menus: effectiveMenus(memberRoles(member), member.menus, member.actions), // 지금 쓸 수 있는 메뉴
+      menuOrder: await getMenuOrder(),
+      myVehicles: (await getVehicles()).filter(v => v.driverId === member.id).length, // 배차된 차량 수
     });
   }
-  if (await hasRootSession()) return json({ kind: 'root', name: '최고 관리자(내장)', roleLabel: '최고 관리자', menus: ['catalog', 'requests', 'members'] });
+  if (await hasRootSession()) return json({ kind: 'root', name: '최고 관리자(내장)', roleLabel: '최고 관리자', menus: ['catalog', 'vehicles', 'purchases', 'suppliers', 'sites', 'placements', 'attendance', 'leave', 'requests', 'members'], menuOrder: await getMenuOrder() });
   return json({ error: '로그인이 필요해요.' }, 401);
 }
 

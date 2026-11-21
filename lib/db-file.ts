@@ -2,9 +2,12 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct } from './types';
+import { asIcon, asKind } from './types';
+import { toEntries, type CycleEntry } from './attendance-cycle';
+import type { AnnualLeave } from './leave';
+import type { Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PurchaseItem, PurchaseInput } from './types';
 import { removeImage } from './images';
-import { DEFAULT_TEAMS, type Team } from './roles';
+import { DEFAULT_TEAMS, withFieldWorkerTeams, type Team } from './roles';
 
 // 파일 기반 저장소 (data/*.json). 쓰기는 한 번에 하나씩, 임시파일 → rename 으로 안전하게 저장한다.
 const DIR = path.join(process.cwd(), 'data');
@@ -26,8 +29,8 @@ async function writeJson(file: string, data: unknown) {
   await fs.rename(tmp, target);
 }
 
-export const getProducts = async () => (await readJson<Product[]>('products.json')).map(p => ({ ...p, stock: p.stock ?? 0 }));
-export const getTrash = () => readJson<TrashedProduct[]>('trash.json');
+export const getProducts = async () => (await readJson<Product[]>('products.json')).map(p => ({ ...p, stock: p.stock ?? 0, kind: asKind(p.kind) }));
+export const getTrash = async () => (await readJson<TrashedProduct[]>('trash.json')).map(p => ({ ...p, kind: asKind(p.kind) }));
 export async function getTrades(): Promise<string[]> {
   return (await readJson<{ trades: string[] }>('meta.json')).trades;
 }
@@ -116,12 +119,12 @@ type LegacyWorker = { id: string; name: string; trades: string[]; createdAt: str
 async function loadMembers(): Promise<Member[]> {
   try {
     // 예전에 만들어진 회원에는 menus(부여받은 메뉴)가 없으니 빈 값으로 채운다
-    return (await readJson<Member[]>('members.json')).map(m => ({ ...m, menus: m.menus ?? [], actions: m.actions ?? {}, categories: m.categories ?? [], handles: m.handles ?? '', phone: m.phone ?? '', address: m.address ?? '' }));
+    return (await readJson<Member[]>('members.json')).map(m => ({ ...m, menus: m.menus ?? [], actions: m.actions ?? {}, categories: m.categories ?? [], handles: m.handles ?? '', phone: m.phone ?? '', address: m.address ?? '', extraRole: m.extraRole ?? '', payType: m.payType ?? '' }));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     const old = await readOr<LegacyWorker[]>('workers.json', []);
     const migrated: Member[] = old.map(w => ({
-      id: w.id, name: w.name, role: 'worker', trades: w.trades, categories: [], handles: '', phone: '', address: '', menus: [], actions: {}, createdAt: w.createdAt,
+      id: w.id, name: w.name, role: 'worker', extraRole: '', payType: '', trades: w.trades, categories: [], handles: '', phone: '', address: '', menus: [], actions: {}, createdAt: w.createdAt,
       loginId: w.loginId, passHash: w.passHash, mustChangePassword: false, idChanged: false,
     }));
     await writeJson('members.json', migrated);
@@ -172,7 +175,10 @@ export function patchMember(id: string, patch: MemberPatch): Promise<{ member: M
 // 처음이면 기본 팀(DEFAULT_TEAMS)으로 채운다. 이후에는 최고 관리자·개발팀이 추가·삭제한다.
 async function loadTeams(): Promise<Team[]> {
   try {
-    return await readJson<Team[]>('teams.json');
+    const list = await readJson<Team[]>('teams.json');
+    const fixed = withFieldWorkerTeams(list); // 현장작업자(정/부) 분리 반영
+    if (fixed) await writeJson('teams.json', fixed);
+    return fixed ?? list;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     await writeJson('teams.json', DEFAULT_TEAMS);
@@ -195,7 +201,7 @@ export function removeTeam(key: string): Promise<{ ok: true } | { inUse: number 
   return withLock(async () => {
     const list = await loadTeams();
     if (!list.some(x => x.key === key)) return { notFound: true as const };
-    const used = (await loadMembers()).filter(m => m.role === key).length;
+    const used = (await loadMembers()).filter(m => m.role === key || m.extraRole === key).length;
     if (used > 0) return { inUse: used };
     await writeJson('teams.json', list.filter(x => x.key !== key));
     return { ok: true as const };
@@ -475,6 +481,23 @@ export function moveProducts(keys: string[], category: string): Promise<CatResul
   });
 }
 
+/** 품목의 장비운용 분류(연장/소모품/자재)를 바꾼다 (휴지통 포함). 바뀐 개수를 돌려준다. */
+export function setKind(keys: string[], kind: Kind): Promise<number> {
+  return withLock(async () => {
+    const set = new Set(keys);
+    const [products, trash] = await Promise.all([getProducts(), getTrash()]);
+    let n = 0;
+    const mv = <T extends { key: string; kind: Kind }>(rows: T[]) => rows.map(r => (set.has(r.key) && r.kind !== kind ? (n++, { ...r, kind }) : r));
+    const np = mv(products);
+    const nt = mv(trash);
+    if (n) {
+      await writeJson('products.json', np);
+      await writeJson('trash.json', nt);
+    }
+    return n;
+  });
+}
+
 /** 다음에 쓸 자재 번호 (p0001 형식, 휴지통 포함해서 가장 큰 번호 다음) */
 export async function nextProductKey(): Promise<string> {
   const [products, trash] = await Promise.all([getProducts(), getTrash()]);
@@ -551,14 +574,14 @@ export function renameProduct(key: string, name: string): Promise<number> {
 }
 
 /** 소모품 정보 고치기 (휴지통의 것도 가능). 없으면 null, 있으면 바꾸기 전 이미지 주소를 돌려준다. */
-export function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; image?: string }): Promise<{ prevImage: string } | null> {
+export function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string }): Promise<{ prevImage: string } | null> {
   return withLock(async () => {
     const [products, trash] = await Promise.all([getProducts(), getTrash()]);
     let prevImage: string | null = null;
     const up = <T extends Product>(rows: T[]) => rows.map(r => {
       if (r.key !== key) return r;
       prevImage = r.image;
-      return { ...r, name: e.name, sub: e.sub, brand: e.brand, price: e.price, priceInclVat: e.price === r.price ? r.priceInclVat : null, image: e.image ?? r.image };
+      return { ...r, name: e.name, sub: e.sub, brand: e.brand, price: e.price, kind: e.kind ?? r.kind, priceInclVat: e.price === r.price ? r.priceInclVat : null, image: e.image ?? r.image };
     });
     const np = up(products);
     const nt = up(trash);
@@ -600,6 +623,331 @@ export function swapProducts(a: string, b: string): Promise<boolean> {
     pa.seq = pb.seq;
     pb.seq = sa;
     await writeJson('products.json', products.sort((x, y) => x.seq - y.seq));
+    return true;
+  });
+}
+
+// ───────── 차량운용 (data/vehicles.json · data/vehicle-items.json) ─────────
+async function readList<T>(file: string): Promise<T[]> {
+  try {
+    return await readJson<T[]>(file);
+  } catch {
+    return [];
+  }
+}
+export const getVehicles = async () => (await readList<Vehicle>('vehicles.json')).map(v => ({ ...v, nickname: v.nickname ?? '', icon: asIcon(v.icon), driverId: v.driverId ?? '' }));
+export const getVehicleItems = () => readList<VehicleItem>('vehicle-items.json');
+
+export function addVehicle(name: string, nickname: string, icon: string, memo: string, driverId: string): Promise<VehicleResult<{ vehicle: Vehicle }>> {
+  return withLock(async () => {
+    const list = await getVehicles();
+    if (list.some(v => v.name === name)) return { error: '같은 차량 번호가 이미 있어요.' };
+    if (nickname && list.some(v => v.nickname === nickname)) return { error: '같은 별칭이 이미 있어요.' };
+    const vehicle: Vehicle = { id: crypto.randomBytes(6).toString('hex'), name, nickname, icon, memo, driverId, createdAt: new Date().toISOString() };
+    await writeJson('vehicles.json', [...list, vehicle]);
+    return { ok: true, vehicle };
+  });
+}
+
+export function updateVehicle(id: string, name: string, nickname: string, icon: string, memo: string, driverId: string): Promise<VehicleResult> {
+  return withLock(async () => {
+    const list = await getVehicles();
+    if (!list.some(v => v.id === id)) return { error: '없는 차량이에요.' };
+    if (list.some(v => v.id !== id && v.name === name)) return { error: '같은 차량 번호가 이미 있어요.' };
+    if (nickname && list.some(v => v.id !== id && v.nickname === nickname)) return { error: '같은 별칭이 이미 있어요.' };
+    await writeJson('vehicles.json', list.map(v => (v.id === id ? { ...v, name, nickname, icon, memo, driverId } : v)));
+    return { ok: true };
+  });
+}
+
+/** 차량 삭제: 배치된 품목이 남아 있으면 먼저 회수해야 한다 (재고가 어긋나지 않게) */
+export function removeVehicle(id: string): Promise<VehicleResult> {
+  return withLock(async () => {
+    const list = await getVehicles();
+    if (!list.some(v => v.id === id)) return { error: '없는 차량이에요.' };
+    if ((await getVehicleItems()).some(i => i.vehicleId === id)) return { error: '배치된 품목이 남아 있어요. 먼저 모두 회수해 주세요.' };
+    await writeJson('vehicles.json', list.filter(v => v.id !== id));
+    return { ok: true };
+  });
+}
+
+/** 재고를 더하거나 뺀다 (휴지통에 있는 품목도). 바뀌었으면 true */
+async function addStock(key: string, delta: number): Promise<boolean> {
+  const [products, trash] = await Promise.all([getProducts(), getTrash()]);
+  let hit = false;
+  const up = <T extends { key: string; stock: number }>(rows: T[]) => rows.map(r => (r.key === key ? (hit = true, { ...r, stock: Math.max(0, r.stock + delta) }) : r));
+  const np = up(products);
+  const nt = up(trash);
+  if (hit) {
+    await writeJson('products.json', np);
+    await writeJson('trash.json', nt);
+  }
+  return hit;
+}
+
+/**
+ * 차량에 연장·상비품을 올린다.
+ *  · 연장: 장비운용(창고) 재고에서 배정한 수량만큼 뺀다. 재고가 모자라면 배정할 수 없다. 구분 메모(note)가 다르면 따로 적는다.
+ *  · 상비품: 차량에 실린 수량을 따로 센다 (창고 재고는 건드리지 않는다). 같은 품목끼리 수량을 합친다.
+ */
+export function assignItem(vehicleId: string, key: string, qty: number, note: string): Promise<VehicleResult> {
+  return withLock(async () => {
+    if (!(await getVehicles()).some(v => v.id === vehicleId)) return { error: '없는 차량이에요.' };
+    const p = (await getProducts()).find(x => x.key === key);
+    if (!p) return { error: '없는 품목이에요.' };
+    if (p.kind === '자재') return { error: '자재는 차량에 싣지 않아요. 연장이나 상비품만 가능해요.' };
+    const n = qty;
+    if (p.kind === '연장' && p.stock < n) return { error: '창고 재고가 부족해요. (현재 ' + p.stock + '개)' };
+    const items = await getVehicleItems();
+    const now = new Date().toISOString();
+    const memo = p.kind === '연장' ? note : '';
+    const same = items.find(i => i.vehicleId === vehicleId && i.key === key && i.note === memo); // 같은 품목·같은 메모는 수량을 합친다
+    if (p.kind === '연장') await addStock(key, -n);
+    await writeJson('vehicle-items.json', same
+      ? items.map(i => (i === same ? { ...i, qty: i.qty + n, at: now } : i))
+      : [...items, { id: crypto.randomBytes(6).toString('hex'), vehicleId, key, qty: n, note: memo, at: now }]);
+    return { ok: true };
+  });
+}
+
+/** 차량에서 뺀다. 연장을 내리면 창고 재고로 돌아오고, 상비품은 차량 수량만 줄어든다. */
+export function returnItem(itemId: string, qty: number): Promise<VehicleResult> {
+  return withLock(async () => {
+    const items = await getVehicleItems();
+    const it = items.find(i => i.id === itemId);
+    if (!it) return { error: '이미 처리됐거나 없는 항목이에요.' };
+    if (qty > it.qty) return { error: '차량에는 ' + it.qty + '개만 있어요.' };
+    const kind = [...(await getProducts()), ...(await getTrash())].find(x => x.key === it.key)?.kind;
+    await writeJson('vehicle-items.json', qty === it.qty ? items.filter(i => i !== it) : items.map(i => (i === it ? { ...i, qty: i.qty - qty } : i)));
+    if (kind === '연장') await addStock(it.key, qty);
+    return { ok: true };
+  });
+}
+
+// ───────── 상단 메뉴 순서 (data/menu-order.json) — 모두에게 같게 적용된다 ─────────
+export async function getMenuOrder(): Promise<string[]> {
+  try {
+    const v = await readJson<unknown>('menu-order.json');
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+export function saveMenuOrder(order: string[]): Promise<void> {
+  return withLock(async () => {
+    await writeJson('menu-order.json', order);
+  });
+}
+
+// ───────── 현장 (data/sites.json) — 자재 요청에서 고르는 등록된 현장 ─────────
+// 예전에는 사진이 한 장(photo)이었다 — 있으면 photos 의 첫 장으로 읽는다.
+type StoredSite = Omit<Site, 'photos' | 'extensions'> & { photos?: string[]; photo?: string; extensions?: SiteExtension[] };
+export const getSites = async (): Promise<Site[]> =>
+  (await readList<StoredSite>('sites.json')).map(({ photo, photos, extensions, ...s }) => ({ ...s, address: s.address ?? '', pmId: s.pmId ?? '', startDate: s.startDate ?? '', endDate: s.endDate ?? '', photos: photos ?? (photo ? [photo] : []), extensions: extensions ?? [] }));
+
+export function addSite(i: SiteInput): Promise<VehicleResult<{ site: Site }>> {
+  return withLock(async () => {
+    const list = await getSites();
+    if (list.some(s => s.name === i.name)) return { error: '같은 이름의 현장이 이미 있어요.' };
+    const site: Site = { id: crypto.randomBytes(6).toString('hex'), ...i, photos: i.photos ?? [], extensions: [], createdAt: new Date().toISOString() };
+    await writeJson('sites.json', [...list, site]);
+    return { ok: true, site };
+  });
+}
+
+/** 수정. 사진 목록에서 빠진 사진 주소들(removed)을 돌려줘서 파일을 정리할 수 있게 한다. */
+export function updateSite(id: string, i: SiteInput): Promise<VehicleResult<{ removed: string[] }>> {
+  return withLock(async () => {
+    const list = await getSites();
+    const cur = list.find(s => s.id === id);
+    if (!cur) return { error: '없는 현장이에요.' };
+    if (list.some(s => s.id !== id && s.name === i.name)) return { error: '같은 이름의 현장이 이미 있어요.' };
+    const photos = i.photos ?? cur.photos;
+    // 마감일을 바꾸면 이력에 남긴다 (바꾸기 전 마감일이 있을 때만 연장·단축으로 센다)
+    const extensions = cur.endDate && i.endDate && cur.endDate !== i.endDate ? [...cur.extensions, { from: cur.endDate, to: i.endDate, at: new Date().toISOString() }] : cur.extensions;
+    await writeJson('sites.json', list.map(s => (s.id === id ? { ...s, ...i, photos, extensions } : s)));
+    return { ok: true, removed: cur.photos.filter(p => !photos.includes(p)) };
+  });
+}
+
+export function removeSite(id: string): Promise<VehicleResult<{ photos: string[] }>> {
+  return withLock(async () => {
+    const list = await getSites();
+    const cur = list.find(s => s.id === id);
+    if (!cur) return { error: '없는 현장이에요.' };
+    await writeJson('sites.json', list.filter(s => s.id !== id)); // 이미 들어온 요청에는 현장 이름이 그대로 남는다
+    const pl = await readList<StoredPlacement>('placements.json');
+    if (pl.some(p => p.siteId === id)) await writeJson('placements.json', pl.filter(p => p.siteId !== id)); // 그 현장의 배치도 함께 지운다
+    const nt = await readList<PlacementNote>('placement-notes.json');
+    if (nt.some(n => n.siteId === id)) await writeJson('placement-notes.json', nt.filter(n => n.siteId !== id)); // 작업 내용 메모도
+    return { ok: true, photos: cur.photos };
+  });
+}
+
+// ───────── 현장 배치 (data/placements.json) — 날짜·시간대(오전/오후)별로 누가 어느 현장에 가는지 ─────────
+// 한 사람은 같은 날 같은 시간대에 한 현장에만 배치된다 (다시 배치하면 그 현장으로 옮겨진다).
+// 시간대가 없던 예전 배치는 종일(오전+오후)로 읽는다.
+type StoredPlacement = { date: string; slot?: Slot; siteId: string; memberId: string };
+const readPlacements = async (): Promise<Placement[]> =>
+  (await readList<StoredPlacement>('placements.json')).flatMap((p): Placement[] => (p.slot ? [p as Placement] : [{ ...p, slot: 'am' }, { ...p, slot: 'pm' }]));
+
+export const getPlacements = async (from: string, to: string): Promise<Placement[]> => (await readPlacements()).filter(p => p.date >= from && p.date <= to);
+
+/** 날짜 하루의 이 시간대(들)에 이 현장으로 사람들을 배치한다. 같은 시간대에 다른 현장에 있던 사람은 옮겨진다. 배치된 인원 수를 돌려준다. */
+export function assignPlacements(date: string, siteId: string, memberIds: string[], slots: Slot[]): Promise<number> {
+  return withLock(async () => {
+    const list = await readPlacements();
+    const ids = new Set(memberIds);
+    // 야간(오후 5~8시)과 심야(오후 8~10시)는 하루에 하나만: 새로 넣는 쪽이 이기고 반대쪽은 빠진다 (1.5일이 아니라 새로 체크한 것만 센다)
+    const drop = new Set<Slot>(slots);
+    if (slots.includes('nt')) drop.add('ot');
+    if (slots.includes('ot')) drop.add('nt');
+    const keep = list.filter(p => !(p.date === date && drop.has(p.slot) && ids.has(p.memberId)));
+    await writeJson('placements.json', [...keep, ...memberIds.flatMap(memberId => slots.map(slot => ({ date, slot, siteId, memberId })))]);
+    return memberIds.length;
+  });
+}
+
+export function removePlacement(date: string, memberId: string, slots: Slot[]): Promise<boolean> {
+  return withLock(async () => {
+    const list = await readPlacements();
+    const next = list.filter(p => !(p.date === date && p.memberId === memberId && slots.includes(p.slot)));
+    if (next.length === list.length) return false;
+    await writeJson('placements.json', next);
+    return true;
+  });
+}
+
+/** fromDate 의 배치(오전·오후 모두)를 toDate 로 복사한다 (toDate 에 같은 시간대가 이미 있는 사람은 건너뛴다). allow 에 없는 현장·회원도 건너뛴다. 복사한 인원 수를 돌려준다. */
+export function copyPlacements(fromDate: string, toDate: string, allow: { sites: string[]; members: string[] }): Promise<number> {
+  return withLock(async () => {
+    const list = await readPlacements();
+    const taken = new Set(list.filter(p => p.date === toDate).map(p => p.slot + ':' + p.memberId));
+    const add = list
+      .filter(p => p.date === fromDate && !taken.has(p.slot + ':' + p.memberId) && allow.sites.includes(p.siteId) && allow.members.includes(p.memberId))
+      .map(p => ({ date: toDate, slot: p.slot, siteId: p.siteId, memberId: p.memberId }));
+    if (add.length) await writeJson('placements.json', [...list, ...add]);
+    return new Set(add.map(p => p.memberId)).size;
+  });
+}
+
+// ───────── 현장 작업 내용 (data/placement-notes.json) — 현장·날짜별 메모 ─────────
+export const getPlacementNotes = async (from: string, to: string): Promise<PlacementNote[]> =>
+  (await readList<PlacementNote>('placement-notes.json')).filter(n => n.date >= from && n.date <= to);
+
+/** 그날 이 현장의 작업 내용을 저장한다. 비우면 지운다. */
+export function setPlacementNote(date: string, siteId: string, note: string): Promise<void> {
+  return withLock(async () => {
+    const list = await readList<PlacementNote>('placement-notes.json');
+    const rest = list.filter(n => !(n.date === date && n.siteId === siteId));
+    await writeJson('placement-notes.json', note ? [...rest, { date, siteId, note }] : rest);
+  });
+}
+
+// ───────── 출근 조회 기준 이력 (data/attendance-cycle.json) — 매달 며칠부터 며칠까지, 적용 시작 월별로 ─────────
+export async function getAttendanceCycles(): Promise<CycleEntry[]> {
+  try {
+    return toEntries(await readJson<unknown>('attendance-cycle.json'));
+  } catch {
+    return toEntries(null);
+  }
+}
+export function saveAttendanceCycles(list: CycleEntry[]): Promise<void> {
+  return withLock(async () => {
+    await writeJson('attendance-cycle.json', list);
+  });
+}
+
+// ───────── 휴가 신청 (data/leaves.json) ─────────
+export const getLeaves = () => readList<LeaveRequest>('leaves.json');
+
+export function addLeave(i: LeaveInput): Promise<LeaveRequest> {
+  return withLock(async () => {
+    const list = await getLeaves();
+    const row: LeaveRequest = { id: crypto.randomBytes(6).toString('hex'), ...i, status: 'pending', createdAt: new Date().toISOString(), decidedAt: '', decidedBy: '', decisionNote: '' };
+    await writeJson('leaves.json', [row, ...list]);
+    return row;
+  });
+}
+
+/** 본인이 낸 '승인 대기' 신청만 취소(삭제)할 수 있다 */
+export function cancelLeave(id: string, memberId: string): Promise<boolean> {
+  return withLock(async () => {
+    const list = await getLeaves();
+    const cur = list.find(l => l.id === id);
+    if (!cur || cur.memberId !== memberId || cur.status !== 'pending') return false;
+    await writeJson('leaves.json', list.filter(l => l.id !== id));
+    return true;
+  });
+}
+
+/** 승인·반려. 대기 중인 신청만 처리하고, 처리된 신청을 돌려준다 (없거나 이미 처리됐으면 null) */
+export function decideLeave(id: string, status: 'approved' | 'rejected', by: string, note: string): Promise<LeaveRequest | null> {
+  return withLock(async () => {
+    const list = await getLeaves();
+    const cur = list.find(l => l.id === id);
+    if (!cur || cur.status !== 'pending') return null;
+    const next: LeaveRequest = { ...cur, status, decidedAt: new Date().toISOString(), decidedBy: by, decisionNote: note };
+    await writeJson('leaves.json', list.map(l => (l.id === id ? next : l)));
+    return next;
+  });
+}
+
+/** 회원의 기간 안 배치를 지운다 (휴가 승인 때). 지운 건수를 돌려준다. */
+export function removePlacementsRange(memberId: string, from: string, to: string, slots: Slot[]): Promise<number> {
+  return withLock(async () => {
+    const list = await readPlacements();
+    const next = list.filter(p => !(p.memberId === memberId && p.date >= from && p.date <= to && slots.includes(p.slot)));
+    if (next.length !== list.length) await writeJson('placements.json', next);
+    return list.length - next.length;
+  });
+}
+
+// ───────── 사무 연차 부여 (data/annual-leave.json) — { 연도: { 회원 id: 총 일수 } } ─────────
+export async function getAnnualLeave(): Promise<AnnualLeave> {
+  try {
+    const v = await readJson<unknown>('annual-leave.json');
+    return v && typeof v === 'object' ? (v as AnnualLeave) : {};
+  } catch {
+    return {};
+  }
+}
+/** 그 해 이 회원의 연차 총 일수를 정한다. days 가 null 이면 지운다(미설정). */
+export function setAnnualLeave(year: number, memberId: string, days: number | null): Promise<void> {
+  return withLock(async () => {
+    const all = await getAnnualLeave();
+    const y = { ...(all[String(year)] ?? {}) };
+    if (days === null) delete y[memberId];
+    else y[memberId] = days;
+    await writeJson('annual-leave.json', { ...all, [String(year)]: y });
+  });
+}
+
+// ───────── 구매관리 (data/purchases.json) — 구매하려는 품목의 링크·가격 ─────────
+export const getPurchases = () => readList<PurchaseItem>('purchases.json');
+
+export function addPurchase(i: PurchaseInput, by: string): Promise<PurchaseItem> {
+  return withLock(async () => {
+    const list = await getPurchases();
+    const now = new Date().toISOString();
+    const row: PurchaseItem = { id: crypto.randomBytes(6).toString('hex'), ...i, createdBy: by, createdAt: now, updatedAt: now };
+    await writeJson('purchases.json', [row, ...list]);
+    return row;
+  });
+}
+export function updatePurchase(id: string, i: PurchaseInput): Promise<boolean> {
+  return withLock(async () => {
+    const list = await getPurchases();
+    if (!list.some(p => p.id === id)) return false;
+    await writeJson('purchases.json', list.map(p => (p.id === id ? { ...p, ...i, updatedAt: new Date().toISOString() } : p)));
+    return true;
+  });
+}
+export function removePurchase(id: string): Promise<boolean> {
+  return withLock(async () => {
+    const list = await getPurchases();
+    if (!list.some(p => p.id === id)) return false;
+    await writeJson('purchases.json', list.filter(p => p.id !== id));
     return true;
   });
 }

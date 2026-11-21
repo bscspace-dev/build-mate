@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { generateLoginId, generatePassword, hashPassword, isReservedLoginId, normalizeLoginId, validLoginId, validPassword, verifyPassword } from './accounts';
 import { getCategoryTrades, getMember, getMembers, getTeams, insertMember, patchMember, removeMember } from './db';
 import { toPublic, type Actor, type Credentials } from './member-utils';
-import { canSurvey, GRANTABLE_MENUS, isStaffAdmin, MENU_ACTIONS, MENUS, roleMenus, type GrantedActions, type MenuKey, type RoleKey } from './roles';
+import { canSurvey, GRANTABLE_MENUS, isStaffAdmin, MENU_ACTIONS, MENUS, memberRoles, roleMenus, teamGroup, type GrantedActions, type MenuKey, type RoleKey, type RoleSpec, type Team } from './roles';
 import type { Member, MemberPatch, PublicMember } from './types';
 
 // 회원 규칙. 저장 방식(파일/Supabase)과 상관없이 같은 규칙을 쓰도록 db.ts 의 기본 동작 위에 얹는다.
@@ -27,7 +27,22 @@ const clipHandles = (v: unknown) => clip(v, 100);
 const clipPhone = (v: unknown) => clip(v, 30);
 const clipAddress = (v: unknown) => clip(v, 200);
 
-const isStaff = (a: Actor) => a.kind === 'root' || isStaffAdmin(a.member.role);
+const isStaff = (a: Actor) => a.kind === 'root' || isStaffAdmin(memberRoles(a.member));
+
+/** 겸직 팀: 사무실 팀과 현장 팀을 함께 가질 때만 — 주 팀이 사무실이면 현장 팀, 현장이면 사무실 팀. 없으면 빈 문자열. */
+function checkExtraRole(teams: Team[], role: RoleKey, raw: unknown): RoleKey | Err {
+  if (raw === undefined || raw === null || raw === '') return '';
+  if (typeof raw !== 'string') return { error: '겸직 팀을 확인해 주세요.' };
+  const a = teamGroup(teams, role);
+  const b = teamGroup(teams, raw);
+  if (b === null) return { error: '없는 팀이에요.' };
+  return (a === 'office' && b === 'field') || (a === 'field' && b === 'office') ? raw : { error: '겸직은 사무실 팀과 현장 팀을 함께 가질 때만 가능해요.' };
+}
+/** 급여 기준: '' 자동 · daily 일수제 · office 4대보험 사무직 기준 */
+function checkPayType(raw: unknown): '' | 'daily' | 'office' | Err {
+  if (raw === undefined || raw === null || raw === '') return '';
+  return raw === 'daily' || raw === 'office' ? raw : { error: '급여 기준을 확인해 주세요.' };
+}
 const isSelf = (a: Actor, id: string) => a.kind === 'member' && a.member.id === id;
 const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every(x => b.includes(x));
 
@@ -37,7 +52,7 @@ function checkName(raw: string): string | Err {
 }
 
 /** 부여할 메뉴 정리: 부여 가능한 메뉴만, 중복 없이, 직급 기본 메뉴와 겹치는 것은 뺀다. */
-function checkMenus(role: RoleKey, raw: unknown): MenuKey[] {
+function checkMenus(role: RoleSpec, raw: unknown): MenuKey[] {
   const list = Array.isArray(raw) ? raw : [];
   return GRANTABLE_MENUS.filter(k => list.includes(k) && !roleMenus(role).includes(k));
 }
@@ -101,24 +116,30 @@ function checkLoginId(raw: string): string | Err {
 
 /** 회원 생성(관리 권한 필요 — 호출하는 쪽에서 확인). 임시 비밀번호는 이 반환값으로 한 번만 알려준다. */
 export async function addMember(
-  input: { name: string; role: unknown; trades?: unknown; categories?: unknown; handles?: unknown; phone?: unknown; address?: unknown; menus?: unknown; actions?: unknown; loginId?: string; account?: boolean },
+  input: { name: string; role: unknown; extraRole?: unknown; payType?: unknown; trades?: unknown; categories?: unknown; handles?: unknown; phone?: unknown; address?: unknown; menus?: unknown; actions?: unknown; loginId?: string; account?: boolean },
   allowedTrades: string[],
 ): Promise<{ member: PublicMember; credentials: Credentials | null } | Err> {
   const name = checkName(input.name);
   if (typeof name !== 'string') return name;
   const role = input.role;
-  if (typeof role !== 'string' || !(await getTeams()).some(t => t.key === role)) return { error: '팀을 골라 주세요.' };
-  const menus = checkMenus(role, input.menus);
+  const teamList = await getTeams();
+  if (typeof role !== 'string' || !teamList.some(t => t.key === role)) return { error: '팀을 골라 주세요.' };
+  const extra = checkExtraRole(teamList, role, input.extraRole);
+  if (typeof extra !== 'string') return extra;
+  const pay = checkPayType(input.payType);
+  if (typeof pay === 'object') return pay;
+  const roles = [role, ...(extra ? [extra] : [])];
+  const menus = checkMenus(roles, input.menus);
   const actions = checkActions(menus, input.actions);
-  const trades = checkTrades(canSurvey(role, menus), input.trades, allowedTrades);
+  const trades = checkTrades(canSurvey(roles, menus), input.trades, allowedTrades);
   if (!Array.isArray(trades)) return trades;
-  const categories = canSurvey(role, menus) ? await checkCategories(input.categories, trades, true) : [];
+  const categories = canSurvey(roles, menus) ? await checkCategories(input.categories, trades, true) : [];
   if (!Array.isArray(categories)) return categories;
 
   // account=false: 아이디·비밀번호 없이 정보만 등록한다(거래처). 필요할 때 목록에서 '아이디 생성'으로 만든다.
   if (input.account === false) {
     const bare: Member = {
-      id: crypto.randomBytes(9).toString('base64url'), name, role, trades, categories, handles: clipHandles(input.handles), phone: clipPhone(input.phone), address: clipAddress(input.address), menus, actions, createdAt: new Date().toISOString(),
+      id: crypto.randomBytes(9).toString('base64url'), name, role, trades, categories, handles: clipHandles(input.handles), phone: clipPhone(input.phone), address: clipAddress(input.address), menus, actions, extraRole: extra, payType: pay, createdAt: new Date().toISOString(),
       mustChangePassword: false, idChanged: false,
     };
     const r0 = await insertMember(bare);
@@ -137,7 +158,7 @@ export async function addMember(
 
   const password = generatePassword();
   const member: Member = {
-    id: crypto.randomBytes(9).toString('base64url'), name, role, trades, categories, handles: clipHandles(input.handles), phone: clipPhone(input.phone), address: clipAddress(input.address), menus, actions, createdAt: new Date().toISOString(),
+    id: crypto.randomBytes(9).toString('base64url'), name, role, trades, categories, handles: clipHandles(input.handles), phone: clipPhone(input.phone), address: clipAddress(input.address), menus, actions, extraRole: extra, payType: pay, createdAt: new Date().toISOString(),
     loginId, passHash: await hashPassword(password), mustChangePassword: true, idChanged: false,
   };
   const r = await insertMember(member);
@@ -153,7 +174,7 @@ export async function addMember(
 export async function updateMember(
   actor: Actor,
   id: string,
-  patch: { name?: string; role?: unknown; menus?: unknown; actions?: unknown; trades?: unknown; categories?: unknown; handles?: unknown; phone?: unknown; address?: unknown; loginId?: string },
+  patch: { name?: string; role?: unknown; extraRole?: unknown; payType?: unknown; menus?: unknown; actions?: unknown; trades?: unknown; categories?: unknown; handles?: unknown; phone?: unknown; address?: unknown; loginId?: string },
   allowedTrades: string[],
 ): Promise<PublicMember | Err> {
   const target = await getMember(id);
@@ -184,17 +205,41 @@ export async function updateMember(
     next.role = role;
   }
 
+  // 겸직 팀: 관리 권한자만. 주 팀이 바뀌어 짝이 안 맞게 되면(같은 부서) 겸직 팀은 빠진다.
+  let extra = target.extraRole;
+  const teamList = await getTeams();
+  if (patch.extraRole !== undefined) {
+    const e = checkExtraRole(teamList, role, patch.extraRole);
+    if (typeof e !== 'string') return e;
+    if (e !== target.extraRole && !staff) return { error: '겸직 팀은 최고 관리자·개발팀만 바꿀 수 있어요.' };
+    extra = e;
+  } else if (next.role !== undefined) {
+    const e = checkExtraRole(teamList, role, extra);
+    extra = typeof e === 'string' ? e : '';
+  }
+  if (extra !== target.extraRole) next.extraRole = extra;
+  // 급여 기준: 관리 권한자만
+  if (patch.payType !== undefined) {
+    const p = checkPayType(patch.payType);
+    if (typeof p === 'object') return p;
+    if (p !== target.payType) {
+      if (!staff) return { error: '급여 기준은 최고 관리자·개발팀만 바꿀 수 있어요.' };
+      next.payType = p;
+    }
+  }
+  const roles = [role, ...(extra ? [extra] : [])];
+
   // 메뉴 부여: 관리 권한자만. 직급이 바뀌면 새 직급의 기본 메뉴와 겹치는 부여는 정리한다.
   let menus = target.menus;
   if (patch.menus !== undefined) {
-    const m = checkMenus(role, patch.menus);
+    const m = checkMenus(roles, patch.menus);
     if (!sameSet(m, target.menus)) {
       if (!staff) return { error: '메뉴는 최고 관리자·개발팀만 부여할 수 있어요.' };
       menus = m;
       next.menus = m;
     }
-  } else if (role !== target.role) {
-    const m = checkMenus(role, target.menus);
+  } else if (role !== target.role || extra !== target.extraRole) {
+    const m = checkMenus(roles, target.menus);
     if (!sameSet(m, target.menus)) {
       menus = m;
       next.menus = m;
@@ -202,7 +247,7 @@ export async function updateMember(
   }
 
   // 동작 권한(등록/수정/삭제): 관리 권한자만. 메뉴를 회수하거나 직급이 바뀌어 기본 메뉴와 겹치면 그 메뉴의 권한은 정리된다.
-  if (patch.actions !== undefined || next.menus !== undefined || next.role !== undefined) {
+  if (patch.actions !== undefined || next.menus !== undefined || next.role !== undefined || next.extraRole !== undefined) {
     const a = checkActions(menus, patch.actions !== undefined ? patch.actions : target.actions);
     if (actionsKey(a) !== actionsKey(target.actions)) {
       if (!staff) return { error: '권한은 최고 관리자·개발팀만 부여할 수 있어요.' };
@@ -211,9 +256,9 @@ export async function updateMember(
   }
 
   // 공정: 설문에 참여하는 회원만 1~3개. 새로 설문에 참여하게 되면 공정을 반드시 같이 정한다.
-  const survey = canSurvey(role, menus);
+  const survey = canSurvey(roles, menus);
   if (survey) {
-    if (patch.trades !== undefined || !canSurvey(target.role, target.menus)) {
+    if (patch.trades !== undefined || !canSurvey(memberRoles(target), target.menus)) {
       const t = checkTrades(true, patch.trades, allowedTrades);
       if (!Array.isArray(t)) return t;
       next.trades = t;

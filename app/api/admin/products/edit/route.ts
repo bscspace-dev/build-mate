@@ -1,5 +1,6 @@
 import { actorCan, getActor } from '@/lib/auth';
 import { updateProduct } from '@/lib/db';
+import { asKind, KINDS } from '@/lib/types';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { removeImage, saveImage } from '@/lib/images';
 
@@ -30,6 +31,8 @@ export async function POST(req: Request) {
   const sub = text(form.get('sub'), 100);
   const brand = text(form.get('brand'), 50);
   const price = whole(form.get('price'), 99_999_999);
+  const rawKind = form.get('kind');
+  const kind = (KINDS as readonly unknown[]).includes(rawKind) ? asKind(rawKind) : undefined;
   if (!key) return json({ error: 'bad key' }, 400);
   if (!name) return json({ error: '품목 이름을 적어 주세요.' }, 400);
   if (Number.isNaN(price)) return json({ error: '가격은 0 이상의 숫자로 적어 주세요.' }, 400);
@@ -44,7 +47,7 @@ export async function POST(req: Request) {
   const image = hasPhoto ? await saveImage(key, new Uint8Array(await photo.arrayBuffer()), photo.type) : undefined;
   let r: { prevImage: string } | null;
   try {
-    r = await updateProduct(key, { name, sub, brand, price, image });
+    r = await updateProduct(key, { name, sub, brand, price, kind, image });
   } catch (e) {
     if (image) await removeImage(image).catch(() => undefined);
     throw e;
@@ -55,5 +58,5 @@ export async function POST(req: Request) {
   }
   // 사진을 바꿨으면 예전 사진 파일은 지운다 (같은 파일 이름에 덮어쓴 경우는 그대로 둔다)
   if (image && r.prevImage && r.prevImage !== image) await removeImage(r.prevImage).catch(() => undefined);
-  return json({ ok: true, name, sub, brand, price, ...(image ? { image } : {}) });
+  return json({ ok: true, name, sub, brand, price, ...(kind ? { kind } : {}), ...(image ? { image } : {}) });
 }

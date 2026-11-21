@@ -1,6 +1,9 @@
 import 'server-only';
-import type { MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct } from './types';
-import type { GrantedActions, GroupKey, MenuKey, RoleKey, Team } from './roles';
+import { asIcon, asKind } from './types';
+import { toEntries, type CycleEntry } from './attendance-cycle';
+import type { AnnualLeave } from './leave';
+import type { Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, PurchaseItem, PurchaseInput } from './types';
+import { withFieldWorkerTeams, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type Team } from './roles';
 import { removeImage } from './images';
 import { supabase } from './supabase';
 import type { CatResult, TradeResult } from './db-file';
@@ -33,12 +36,12 @@ async function fetchAll<Row>(build: (from: number, to: number) => PromiseLike<{ 
 // ───────── 자재 ─────────
 type ProductRow = {
   key: string; seq: number; category: string; sub: string; name: string; brand: string;
-  price: number | null; price_incl_vat: number | null; vat_basis: string | null; soldout: boolean; stock: number | null; image: string; trades: string[];
+  price: number | null; price_incl_vat: number | null; vat_basis: string | null; soldout: boolean; stock: number | null; kind: string | null; image: string; trades: string[];
   deleted_at: string | null;
 };
 const toProduct = (r: ProductRow): Product => ({
   seq: r.seq, key: r.key, category: r.category, sub: r.sub, name: r.name, brand: r.brand,
-  price: r.price ?? 0, priceInclVat: r.price_incl_vat, vatBasis: r.vat_basis ?? '', soldout: r.soldout, stock: r.stock ?? 0, image: r.image, trades: r.trades ?? [],
+  price: r.price ?? 0, priceInclVat: r.price_incl_vat, vatBasis: r.vat_basis ?? '', soldout: r.soldout, stock: r.stock ?? 0, kind: asKind(r.kind), image: r.image, trades: r.trades ?? [],
 });
 
 export async function getProducts(): Promise<Product[]> {
@@ -124,21 +127,23 @@ export async function getSubmissions(): Promise<Record<string, Record<string, st
 
 // ───────── 회원 ─────────
 type MemberRow = {
-  id: string; name: string; role: string; trades: string[]; categories: string[] | null; handles: string | null; phone: string | null; address: string | null; menus: string[] | null; actions: GrantedActions | null; login_id: string | null; pass_hash: string | null;
+  id: string; name: string; role: string; extra_role: string | null; pay_type: string | null; trades: string[]; categories: string[] | null; handles: string | null; phone: string | null; address: string | null; menus: string[] | null; actions: GrantedActions | null; login_id: string | null; pass_hash: string | null;
   must_change_password: boolean; id_changed: boolean; created_at: string;
 };
 const toMember = (r: MemberRow): Member => ({
-  id: r.id, name: r.name, role: r.role as RoleKey, trades: r.trades ?? [], categories: r.categories ?? [], handles: r.handles ?? '', phone: r.phone ?? '', address: r.address ?? '', menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
+  id: r.id, name: r.name, role: r.role as RoleKey, extraRole: (r.extra_role ?? '') as RoleKey | '', payType: (r.pay_type ?? '') as PayType, trades: r.trades ?? [], categories: r.categories ?? [], handles: r.handles ?? '', phone: r.phone ?? '', address: r.address ?? '', menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
   loginId: r.login_id ?? undefined, passHash: r.pass_hash ?? undefined, mustChangePassword: r.must_change_password, idChanged: r.id_changed,
 });
 const toRow = (m: Member) => ({
-  id: m.id, name: m.name, role: m.role, trades: m.trades, categories: m.categories, handles: m.handles, phone: m.phone, address: m.address, menus: m.menus, actions: m.actions, login_id: m.loginId ?? null, pass_hash: m.passHash ?? null,
+  id: m.id, name: m.name, role: m.role, extra_role: m.extraRole || null, pay_type: m.payType || null, trades: m.trades, categories: m.categories, handles: m.handles, phone: m.phone, address: m.address, menus: m.menus, actions: m.actions, login_id: m.loginId ?? null, pass_hash: m.passHash ?? null,
   must_change_password: m.mustChangePassword, id_changed: m.idChanged, created_at: m.createdAt,
 });
 function toPatchRow(p: MemberPatch): Record<string, unknown> {
   const o: Record<string, unknown> = {};
   if (p.name !== undefined) o.name = p.name;
   if (p.role !== undefined) o.role = p.role;
+  if (p.extraRole !== undefined) o.extra_role = p.extraRole || null;
+  if (p.payType !== undefined) o.pay_type = p.payType || null;
   if (p.trades !== undefined) o.trades = p.trades;
   if (p.categories !== undefined) o.categories = p.categories;
   if (p.handles !== undefined) o.handles = p.handles;
@@ -206,8 +211,20 @@ type TeamRow = { key: string; label: string; grp: string; locked: boolean };
 const toTeam = (r: TeamRow): Team => ({ key: r.key, label: r.label, group: r.grp as GroupKey, locked: r.locked });
 
 export async function getTeams(): Promise<Team[]> {
-  const rows = await fetchAll<TeamRow>((a, b) => supabase().from('teams').select('*').order('sort').order('created_at').range(a, b), '팀 조회');
-  return rows.map(toTeam);
+  const load = async () => (await fetchAll<TeamRow>((a, b) => supabase().from('teams').select('*').order('sort').order('created_at').range(a, b), '팀 조회')).map(toTeam);
+  const list = await load();
+  // 현장작업자(정/부) 분리: 아직 없으면 한 번 만들어 둔다 (supabase/add-worker-sub.sql 을 실행하지 않았어도 동작)
+  if (withFieldWorkerTeams(list)) {
+    try {
+      await supabase().from('teams').update({ label: '현장작업자(정)' }).eq('key', 'worker').eq('label', '현장작업자');
+      await supabase().from('teams').update({ sort: 8 }).eq('key', 'pm');
+      await supabase().from('teams').upsert({ key: 'worker_sub', label: '현장작업자(부)', grp: 'field', locked: true, sort: 7 }, { onConflict: 'key', ignoreDuplicates: true });
+      return await load();
+    } catch {
+      return list;
+    }
+  }
+  return list;
 }
 
 export async function insertTeam(t: Team): Promise<{ team: Team } | { conflict: 'label' }> {
@@ -409,6 +426,16 @@ export async function moveProducts(keys: string[], category: string): Promise<Ca
   return { ok: true, count: n };
 }
 
+/** 품목의 장비운용 분류(연장/소모품/자재)를 바꾼다 (휴지통 포함). 바뀐 개수를 돌려준다. */
+export async function setKind(keys: string[], kind: Kind): Promise<number> {
+  let n = 0;
+  for (const part of chunks(keys)) {
+    const rows = must(await supabase().from('products').update({ kind }).in('key', part).neq('kind', kind).select('key'), '분류 변경') as { key: string }[];
+    n += rows.length;
+  }
+  return n;
+}
+
 /** 다음에 쓸 자재 번호 (p0001 형식, 휴지통 포함해서 가장 큰 번호 다음) */
 export async function nextProductKey(): Promise<string> {
   const rows = must(await supabase().from('products').select('key').like('key', 'p%').order('key', { ascending: false }).limit(50), '자재 번호 조회') as { key: string }[];
@@ -427,7 +454,7 @@ export async function addProduct(p: Omit<Product, 'seq'>): Promise<Product> {
   const row = must(
     await supabase().from('products').insert({
       key: p.key, seq, category: p.category, sub: p.sub, name: p.name, brand: p.brand, price: p.price, price_incl_vat: null, vat_basis: null,
-      soldout: false, stock: p.stock, image: p.image, trades: p.trades,
+      soldout: false, stock: p.stock, kind: p.kind, image: p.image, trades: p.trades,
     }).select('*').single(),
     '자재 등록',
   ) as ProductRow;
@@ -490,10 +517,11 @@ export async function renameProduct(key: string, name: string): Promise<number> 
   return rows.length;
 }
 
-export async function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; image?: string }): Promise<{ prevImage: string } | null> {
+export async function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string }): Promise<{ prevImage: string } | null> {
   const cur = must(await supabase().from('products').select('image,price').eq('key', key).maybeSingle(), '소모품 조회') as { image: string; price: number | null } | null;
   if (!cur) return null;
   const patch: Record<string, unknown> = { name: e.name, sub: e.sub, brand: e.brand, price: e.price };
+  if (e.kind) patch.kind = e.kind;
   if (e.price !== (cur.price ?? 0)) patch.price_incl_vat = null;
   if (e.image) patch.image = e.image;
   must(await supabase().from('products').update(patch).eq('key', key), '소모품 수정');
@@ -526,4 +554,289 @@ export async function swapProducts(a: string, b: string): Promise<boolean> {
   must(await supabase().from('products').update({ seq: rb.seq }).eq('key', a), '순서 변경');
   must(await supabase().from('products').update({ seq: ra.seq }).eq('key', b), '순서 변경');
   return true;
+}
+
+// ───────── 차량운용 ─────────
+type VehicleRow = { id: number; name: string; nickname: string | null; icon: string | null; memo: string; driver_id: string | null; created_at: string };
+type VehicleItemRow = { id: number; vehicle_id: number; product_key: string; qty: number; note: string; at: string };
+const toVehicle = (r: VehicleRow): Vehicle => ({ id: String(r.id), name: r.name, nickname: r.nickname ?? '', icon: asIcon(r.icon), memo: r.memo, driverId: r.driver_id ?? '', createdAt: new Date(r.created_at).toISOString() });
+const toVehicleItem = (r: VehicleItemRow): VehicleItem => ({ id: String(r.id), vehicleId: String(r.vehicle_id), key: r.product_key, qty: r.qty, note: r.note, at: new Date(r.at).toISOString() });
+const numId = (s: string) => (/^\d{1,15}$/.test(s) ? Number(s) : -1);
+const DUP = '같은 차량 번호나 별칭이 이미 있어요.';
+
+export async function getVehicles(): Promise<Vehicle[]> {
+  return (await fetchAll<VehicleRow>((a, b) => supabase().from('vehicles').select('*').order('id').range(a, b), '차량 조회')).map(toVehicle);
+}
+export async function getVehicleItems(): Promise<VehicleItem[]> {
+  return (await fetchAll<VehicleItemRow>((a, b) => supabase().from('vehicle_items').select('*').order('id').range(a, b), '차량 품목 조회')).map(toVehicleItem);
+}
+
+export async function addVehicle(name: string, nickname: string, icon: string, memo: string, driverId: string): Promise<VehicleResult<{ vehicle: Vehicle }>> {
+  const res = await supabase().from('vehicles').insert({ name, nickname, icon, memo, driver_id: driverId || null }).select('*').single();
+  if (res.error) {
+    if (res.error.code === '23505') return { error: DUP };
+    throw new Error('Supabase 차량 등록 실패: ' + res.error.message);
+  }
+  return { ok: true, vehicle: toVehicle(res.data as VehicleRow) };
+}
+
+export async function updateVehicle(id: string, name: string, nickname: string, icon: string, memo: string, driverId: string): Promise<VehicleResult> {
+  const res = await supabase().from('vehicles').update({ name, nickname, icon, memo, driver_id: driverId || null }).eq('id', numId(id)).select('id');
+  if (res.error) {
+    if (res.error.code === '23505') return { error: DUP };
+    throw new Error('Supabase 차량 수정 실패: ' + res.error.message);
+  }
+  return (res.data ?? []).length ? { ok: true } : { error: '없는 차량이에요.' };
+}
+
+export async function removeVehicle(id: string): Promise<VehicleResult> {
+  const n = numId(id);
+  const used = must(await supabase().from('vehicle_items').select('id').eq('vehicle_id', n).limit(1), '차량 품목 조회') as { id: number }[];
+  if (used.length) return { error: '배치된 품목이 남아 있어요. 먼저 모두 회수해 주세요.' };
+  const rows = must(await supabase().from('vehicles').delete().eq('id', n).select('id'), '차량 삭제') as { id: number }[];
+  return rows.length ? { ok: true } : { error: '없는 차량이에요.' };
+}
+
+/** 재고를 읽은 값 그대로일 때만 바꾼다 (그 사이 바뀌었으면 다시 읽어서 시도). 바꾼 뒤 재고, 못 바꾸면 null */
+async function adjustStock(key: string, delta: number): Promise<number | null> {
+  for (let tries = 0; tries < 5; tries++) {
+    const r = must(await supabase().from('products').select('stock').eq('key', key).maybeSingle(), '재고 조회') as { stock: number | null } | null;
+    if (!r) return null;
+    const from = r.stock ?? 0;
+    const to = Math.max(0, from + delta);
+    const upd = must(await supabase().from('products').update({ stock: to }).eq('key', key).eq('stock', from).select('key'), '재고 변경') as { key: string }[];
+    if (upd.length) return to;
+  }
+  return null;
+}
+
+/** 연장은 배정한 수량만큼 창고 재고에서 뺀다. 상비품은 차량 수량만 따로 센다(재고는 그대로). */
+export async function assignItem(vehicleId: string, key: string, qty: number, note: string): Promise<VehicleResult> {
+  const vid = numId(vehicleId);
+  const veh = must(await supabase().from('vehicles').select('id').eq('id', vid).maybeSingle(), '차량 조회') as { id: number } | null;
+  if (!veh) return { error: '없는 차량이에요.' };
+  const p = must(await supabase().from('products').select('kind').eq('key', key).is('deleted_at', null).maybeSingle(), '품목 조회') as { kind: string | null } | null;
+  if (!p) return { error: '없는 품목이에요.' };
+  const kind = asKind(p.kind);
+  if (kind === '자재') return { error: '자재는 차량에 싣지 않아요. 연장이나 상비품만 가능해요.' };
+  const n = qty;
+  const now = new Date().toISOString();
+  const memo = kind === '연장' ? note : '';
+  if (kind === '연장') {
+    // 먼저 재고에서 뺀다. 읽은 값 그대로일 때만 바뀌므로 같은 재고를 동시에 두 번 쓰지 못한다.
+    let took = false;
+    for (let tries = 0; tries < 5 && !took; tries++) {
+      const r = must(await supabase().from('products').select('stock').eq('key', key).is('deleted_at', null).maybeSingle(), '재고 조회') as { stock: number | null } | null;
+      const from = r?.stock ?? 0;
+      if (from < n) return { error: '창고 재고가 부족해요. (현재 ' + from + '개)' };
+      took = (must(await supabase().from('products').update({ stock: from - n }).eq('key', key).eq('stock', from).select('key'), '재고 차감') as { key: string }[]).length > 0;
+    }
+    if (!took) return { error: '요청이 몰려서 처리하지 못했어요. 잠시 후 다시 해 주세요.' };
+  }
+  try {
+    // 같은 품목·같은 메모는 수량을 합친다
+    for (let tries = 0; tries < 5; tries++) {
+      const same = (must(await supabase().from('vehicle_items').select('*').eq('vehicle_id', vid).eq('product_key', key).eq('note', memo).limit(1), '차량 품목 조회') as VehicleItemRow[])[0];
+      if (!same) break;
+      const upd = must(await supabase().from('vehicle_items').update({ qty: same.qty + n, at: now }).eq('id', same.id).eq('qty', same.qty).select('id'), '수량 변경') as { id: number }[];
+      if (upd.length) return { ok: true };
+    }
+    must(await supabase().from('vehicle_items').insert({ vehicle_id: vid, product_key: key, qty: n, note: memo, at: now }), '차량 적재');
+  } catch (e) {
+    if (kind === '연장') await adjustStock(key, n); // 저장에 실패하면 뺀 재고를 되돌린다
+    throw e;
+  }
+  return { ok: true };
+}
+
+export async function returnItem(itemId: string, qty: number): Promise<VehicleResult> {
+  const id = numId(itemId);
+  const it = must(await supabase().from('vehicle_items').select('*').eq('id', id).maybeSingle(), '차량 품목 조회') as VehicleItemRow | null;
+  if (!it) return { error: '이미 처리됐거나 없는 항목이에요.' };
+  if (qty > it.qty) return { error: '차량에는 ' + it.qty + '개만 있어요.' };
+  const done = qty === it.qty
+    ? (must(await supabase().from('vehicle_items').delete().eq('id', id).eq('qty', it.qty).select('id'), '차량 품목 빼기') as { id: number }[])
+    : (must(await supabase().from('vehicle_items').update({ qty: it.qty - qty }).eq('id', id).eq('qty', it.qty).select('id'), '차량 품목 빼기') as { id: number }[]);
+  if (!done.length) return { error: '다른 곳에서 먼저 바뀌었어요. 새로고침해 주세요.' };
+  // 연장을 내리면 창고 재고로 돌아온다
+  const p = must(await supabase().from('products').select('kind').eq('key', it.product_key).maybeSingle(), '품목 조회') as { kind: string | null } | null;
+  if (p && asKind(p.kind) === '연장') await adjustStock(it.product_key, qty);
+  return { ok: true };
+}
+
+// ───────── 상단 메뉴 순서 (app_settings.menu_order) ─────────
+export async function getMenuOrder(): Promise<string[]> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'menu_order').maybeSingle(), '메뉴 순서 조회') as { value: unknown } | null;
+  return Array.isArray(row?.value) ? (row!.value as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+}
+export async function saveMenuOrder(order: string[]): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'menu_order', value: order }, { onConflict: 'key' }), '메뉴 순서 저장');
+}
+
+// ───────── 현장 (sites) — 자재 요청에서 고르는 등록된 현장 ─────────
+// photos(여러 장)가 비어 있고 예전 photo(한 장)만 있으면 그것을 첫 장으로 읽는다.
+type SiteRow = { id: number; name: string; address: string | null; pm_id: string | null; start_date: string | null; end_date: string | null; memo: string; photo: string | null; photos: string[] | null; extensions: SiteExtension[] | null; created_at: string };
+const sitePhotos = (r: { photo: string | null; photos: string[] | null }): string[] => (r.photos && r.photos.length ? r.photos : r.photo ? [r.photo] : []);
+const toSite = (r: SiteRow): Site => ({ id: String(r.id), name: r.name, address: r.address ?? '', pmId: r.pm_id ?? '', startDate: r.start_date ?? '', endDate: r.end_date ?? '', memo: r.memo, photos: sitePhotos(r), extensions: r.extensions ?? [], createdAt: new Date(r.created_at).toISOString() });
+const siteCols = (i: SiteInput) => ({ name: i.name, address: i.address, pm_id: i.pmId || null, start_date: i.startDate || null, end_date: i.endDate || null, memo: i.memo, ...(i.photos === undefined ? {} : { photos: i.photos, photo: '' }) });
+const SITE_DUP = '같은 이름의 현장이 이미 있어요.';
+
+export async function getSites(): Promise<Site[]> {
+  return (await fetchAll<SiteRow>((a, b) => supabase().from('sites').select('*').order('id').range(a, b), '현장 조회')).map(toSite);
+}
+
+export async function addSite(i: SiteInput): Promise<VehicleResult<{ site: Site }>> {
+  const res = await supabase().from('sites').insert(siteCols({ ...i, photos: i.photos ?? [] })).select('*').single();
+  if (res.error) {
+    if (res.error.code === '23505') return { error: SITE_DUP };
+    throw new Error('Supabase 현장 등록 실패: ' + res.error.message);
+  }
+  return { ok: true, site: toSite(res.data as SiteRow) };
+}
+
+export async function updateSite(id: string, i: SiteInput): Promise<VehicleResult<{ removed: string[] }>> {
+  const cur = must(await supabase().from('sites').select('photo,photos,end_date,extensions').eq('id', numId(id)).maybeSingle(), '현장 조회') as { photo: string | null; photos: string[] | null; end_date: string | null; extensions: SiteExtension[] | null } | null;
+  if (!cur) return { error: '없는 현장이에요.' };
+  // 마감일을 바꾸면 이력에 남긴다 (바꾸기 전 마감일이 있을 때만 연장·단축으로 센다)
+  const ext = cur.end_date && i.endDate && cur.end_date !== i.endDate ? { extensions: [...(cur.extensions ?? []), { from: cur.end_date, to: i.endDate, at: new Date().toISOString() }] } : {};
+  const res = await supabase().from('sites').update({ ...siteCols(i), ...ext }).eq('id', numId(id)).select('id');
+  if (res.error) {
+    if (res.error.code === '23505') return { error: SITE_DUP };
+    throw new Error('Supabase 현장 수정 실패: ' + res.error.message);
+  }
+  if (!(res.data ?? []).length) return { error: '없는 현장이에요.' };
+  const prev = sitePhotos(cur);
+  return { ok: true, removed: i.photos === undefined ? [] : prev.filter(p => !i.photos!.includes(p)) };
+}
+
+export async function removeSite(id: string): Promise<VehicleResult<{ photos: string[] }>> {
+  const rows = must(await supabase().from('sites').delete().eq('id', numId(id)).select('photo,photos'), '현장 삭제') as { photo: string | null; photos: string[] | null }[];
+  if (!rows.length) return { error: '없는 현장이에요.' };
+  await supabase().from('placements').delete().eq('site_id', id); // 그 현장의 배치도 함께 지운다 (테이블이 아직 없으면 무시)
+  await supabase().from('placement_notes').delete().eq('site_id', id); // 작업 내용 메모도
+  return { ok: true, photos: sitePhotos(rows[0]) };
+}
+
+// ───────── 현장 배치 (placements) — 날짜·시간대(오전/오후)별로 누가 어느 현장에 가는지 ─────────
+// 한 사람은 같은 날 같은 시간대에 한 현장에만 배치된다 (date + slot + member_id 가 유일). 종일 = 오전·오후 두 행.
+type PlacementRow = { date: string; slot: Slot; site_id: string; member_id: string };
+const toPlacement = (r: PlacementRow): Placement => ({ date: r.date, slot: r.slot, siteId: r.site_id, memberId: r.member_id });
+
+export async function getPlacements(from: string, to: string): Promise<Placement[]> {
+  const rows = await fetchAll<PlacementRow>((a, b) => supabase().from('placements').select('date,slot,site_id,member_id').gte('date', from).lte('date', to).order('date').order('id').range(a, b), '현장 배치 조회');
+  return rows.map(toPlacement);
+}
+
+/** 날짜 하루의 이 시간대(들)에 이 현장으로 사람들을 배치한다. 같은 시간대에 다른 현장에 있던 사람은 옮겨진다. */
+export async function assignPlacements(date: string, siteId: string, memberIds: string[], slots: Slot[]): Promise<number> {
+  if (!memberIds.length || !slots.length) return 0;
+  const rows = memberIds.flatMap(m => slots.map(slot => ({ date, slot, site_id: siteId, member_id: m })));
+  must(await supabase().from('placements').upsert(rows, { onConflict: 'date,slot,member_id' }), '현장 배치 저장');
+  // 야간(오후 5~8시)과 심야(오후 8~10시)는 하루에 하나만: 새로 넣은 쪽이 이기고 반대쪽은 빠진다 (1.5일이 아니라 새로 체크한 것만 센다)
+  const opposite: Slot[] = [...(slots.includes('nt') && !slots.includes('ot') ? ['ot' as const] : []), ...(slots.includes('ot') && !slots.includes('nt') ? ['nt' as const] : [])];
+  if (opposite.length) must(await supabase().from('placements').delete().eq('date', date).in('member_id', memberIds).in('slot', opposite), '야간·심야 정리');
+  return memberIds.length;
+}
+
+export async function removePlacement(date: string, memberId: string, slots: Slot[]): Promise<boolean> {
+  const rows = must(await supabase().from('placements').delete().eq('date', date).eq('member_id', memberId).in('slot', slots).select('id'), '현장 배치 삭제') as { id: number }[];
+  return rows.length > 0;
+}
+
+/** fromDate 의 배치(오전·오후 모두)를 toDate 로 복사한다 (같은 시간대가 이미 있는 사람은 건너뛴다). allow 에 없는 현장·회원도 건너뛴다. */
+export async function copyPlacements(fromDate: string, toDate: string, allow: { sites: string[]; members: string[] }): Promise<number> {
+  const src = must(await supabase().from('placements').select('date,slot,site_id,member_id').eq('date', fromDate), '현장 배치 조회') as PlacementRow[];
+  const rows = src.filter(r => allow.sites.includes(r.site_id) && allow.members.includes(r.member_id)).map(r => ({ date: toDate, slot: r.slot, site_id: r.site_id, member_id: r.member_id }));
+  if (!rows.length) return 0;
+  const done = must(await supabase().from('placements').upsert(rows, { onConflict: 'date,slot,member_id', ignoreDuplicates: true }).select('member_id'), '현장 배치 복사') as { member_id: string }[];
+  return new Set(done.map(d => d.member_id)).size;
+}
+
+// ───────── 현장 작업 내용 (placement_notes) — 현장·날짜별 메모 ─────────
+export async function getPlacementNotes(from: string, to: string): Promise<PlacementNote[]> {
+  const rows = await fetchAll<{ date: string; site_id: string; note: string }>((a, b) => supabase().from('placement_notes').select('date,site_id,note').gte('date', from).lte('date', to).order('date').order('id').range(a, b), '작업 내용 조회');
+  return rows.map(r => ({ date: r.date, siteId: r.site_id, note: r.note }));
+}
+
+/** 그날 이 현장의 작업 내용을 저장한다. 비우면 지운다. */
+export async function setPlacementNote(date: string, siteId: string, note: string): Promise<void> {
+  if (!note) {
+    must(await supabase().from('placement_notes').delete().eq('date', date).eq('site_id', siteId), '작업 내용 삭제');
+    return;
+  }
+  must(await supabase().from('placement_notes').upsert({ date, site_id: siteId, note }, { onConflict: 'date,site_id' }), '작업 내용 저장');
+}
+
+// ───────── 출근 조회 기준 이력 (app_settings.attendance_cycle) — 매달 며칠부터 며칠까지, 적용 시작 월별로 ─────────
+export async function getAttendanceCycles(): Promise<CycleEntry[]> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'attendance_cycle').maybeSingle(), '출근 조회 기준 조회') as { value: unknown } | null;
+  return toEntries(row?.value);
+}
+export async function saveAttendanceCycles(list: CycleEntry[]): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'attendance_cycle', value: list }, { onConflict: 'key' }), '출근 조회 기준 저장');
+}
+
+// ───────── 휴가 신청 (leave_requests) ─────────
+type LeaveRow = { id: number; member_id: string; start_date: string; end_date: string; kind: string; reason: string; status: string; created_at: string; decided_at: string | null; decided_by: string | null; decision_note: string | null };
+const toLeave = (r: LeaveRow): LeaveRequest => ({ id: String(r.id), memberId: r.member_id, startDate: r.start_date, endDate: r.end_date, kind: r.kind as LeaveRequest['kind'], reason: r.reason, status: r.status as LeaveRequest['status'], createdAt: new Date(r.created_at).toISOString(), decidedAt: r.decided_at ? new Date(r.decided_at).toISOString() : '', decidedBy: r.decided_by ?? '', decisionNote: r.decision_note ?? '' });
+
+export async function getLeaves(): Promise<LeaveRequest[]> {
+  return (await fetchAll<LeaveRow>((a, b) => supabase().from('leave_requests').select('*').order('id', { ascending: false }).range(a, b), '휴가 신청 조회')).map(toLeave);
+}
+
+export async function addLeave(i: LeaveInput): Promise<LeaveRequest> {
+  const row = must(await supabase().from('leave_requests').insert({ member_id: i.memberId, start_date: i.startDate, end_date: i.endDate, kind: i.kind, reason: i.reason }).select('*').single(), '휴가 신청') as LeaveRow;
+  return toLeave(row);
+}
+
+/** 본인이 낸 '승인 대기' 신청만 취소(삭제)할 수 있다 */
+export async function cancelLeave(id: string, memberId: string): Promise<boolean> {
+  const rows = must(await supabase().from('leave_requests').delete().eq('id', numId(id)).eq('member_id', memberId).eq('status', 'pending').select('id'), '휴가 신청 취소') as { id: number }[];
+  return rows.length > 0;
+}
+
+/** 승인·반려. 대기 중인 신청만 처리하고, 처리된 신청을 돌려준다 (없거나 이미 처리됐으면 null) */
+export async function decideLeave(id: string, status: 'approved' | 'rejected', by: string, note: string): Promise<LeaveRequest | null> {
+  const rows = must(await supabase().from('leave_requests').update({ status, decided_at: new Date().toISOString(), decided_by: by, decision_note: note }).eq('id', numId(id)).eq('status', 'pending').select('*'), '휴가 승인') as LeaveRow[];
+  return rows.length ? toLeave(rows[0]) : null;
+}
+
+/** 회원의 기간 안 배치를 지운다 (휴가 승인 때). 지운 건수를 돌려준다. */
+export async function removePlacementsRange(memberId: string, from: string, to: string, slots: Slot[]): Promise<number> {
+  const rows = must(await supabase().from('placements').delete().eq('member_id', memberId).gte('date', from).lte('date', to).in('slot', slots).select('id'), '휴가 기간 배치 삭제') as { id: number }[];
+  return rows.length;
+}
+
+// ───────── 사무 연차 부여 (app_settings.annual_leave) — { 연도: { 회원 id: 총 일수 } } ─────────
+export async function getAnnualLeave(): Promise<AnnualLeave> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'annual_leave').maybeSingle(), '연차 부여 조회') as { value: unknown } | null;
+  return row?.value && typeof row.value === 'object' ? (row.value as AnnualLeave) : {};
+}
+/** 그 해 이 회원의 연차 총 일수를 정한다. days 가 null 이면 지운다(미설정). */
+export async function setAnnualLeave(year: number, memberId: string, days: number | null): Promise<void> {
+  const all = await getAnnualLeave();
+  const y = { ...(all[String(year)] ?? {}) };
+  if (days === null) delete y[memberId];
+  else y[memberId] = days;
+  must(await supabase().from('app_settings').upsert({ key: 'annual_leave', value: { ...all, [String(year)]: y } }, { onConflict: 'key' }), '연차 부여 저장');
+}
+
+// ───────── 구매관리 (purchases) — 구매하려는 품목의 링크·가격 ─────────
+type PurchaseRow = { id: number; name: string; url: string; price: number; qty: number; memo: string; status: string; created_by: string; created_at: string; updated_at: string };
+const toPurchase = (r: PurchaseRow): PurchaseItem => ({ id: String(r.id), name: r.name, url: r.url, price: r.price, qty: r.qty, memo: r.memo, status: r.status as PurchaseItem['status'], createdBy: r.created_by, createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString() });
+const purchaseCols = (i: PurchaseInput) => ({ name: i.name, url: i.url, price: i.price, qty: i.qty, memo: i.memo, status: i.status });
+
+export async function getPurchases(): Promise<PurchaseItem[]> {
+  return (await fetchAll<PurchaseRow>((a, b) => supabase().from('purchases').select('*').order('id', { ascending: false }).range(a, b), '구매 품목 조회')).map(toPurchase);
+}
+export async function addPurchase(i: PurchaseInput, by: string): Promise<PurchaseItem> {
+  return toPurchase(must(await supabase().from('purchases').insert({ ...purchaseCols(i), created_by: by }).select('*').single(), '구매 품목 등록') as PurchaseRow);
+}
+export async function updatePurchase(id: string, i: PurchaseInput): Promise<boolean> {
+  const rows = must(await supabase().from('purchases').update({ ...purchaseCols(i), updated_at: new Date().toISOString() }).eq('id', numId(id)).select('id'), '구매 품목 수정') as { id: number }[];
+  return rows.length > 0;
+}
+export async function removePurchase(id: string): Promise<boolean> {
+  const rows = must(await supabase().from('purchases').delete().eq('id', numId(id)).select('id'), '구매 품목 삭제') as { id: number }[];
+  return rows.length > 0;
 }

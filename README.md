@@ -57,3 +57,14 @@ npm install        # 처음 한 번만
 node aggregate.js  # 기본값: ..\data\responses 를 읽음
 ```
 응답의 `items` 는 "최종으로 필요하다고 남긴 자재"입니다.
+
+## (보류) 예약 작업: 겸직 인원 자동 사무실 배치
+
+**지금은 꺼져 있고, 사무실 배치는 직접 합니다.** 나중에 켜려면 아래 순서로 합니다. (코드는 `lib/office-auto.ts`, `app/api/cron/office-auto/route.ts`, `worker.ts`, `scripts/run-office-auto.mjs`에 준비되어 있습니다.)
+
+사무실·현장 팀을 모두 가진 인원이 그날 현장에 배치되지 않았으면 **밤 12시(한국 시간)가 지난 뒤 자동으로 사무실에 배치**하는 기능입니다.
+
+1. **켜기**: 서버 환경 변수 `OFFICE_AUTO=on` 을 넣습니다. (없으면 아무것도 하지 않습니다.) 이 상태에서는 현장배치·출근관리 화면을 열 때 채워집니다.
+2. **아무도 화면을 열지 않아도 되게 하려면 예약 작업**: `CRON_SECRET` (16자 이상)을 정하고 `npx wrangler secret put CRON_SECRET` 으로 올립니다.
+   `wrangler.jsonc` 에서 `"main": "worker.ts"` 로 바꾸고 `"triggers": { "crons": ["5 15 * * *"] }` (15:05 UTC = 한국 시간 00:05)를 넣은 뒤 `npm run cf:deploy`.
+3. **PC 에서 직접 돌릴 때**: `.env.local` 에 `CRON_SECRET=...` 을 넣고, Windows 작업 스케줄러에서 매일 00:05 에 `node scripts/run-office-auto.mjs` 를 실행합니다.

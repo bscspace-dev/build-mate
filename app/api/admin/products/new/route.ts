@@ -2,6 +2,7 @@ import { actorCan, getActor } from '@/lib/auth';
 import { addProduct, getCategories, getCategoryTrades, nextProductKey, getTrades } from '@/lib/db';
 import { headOf, rewriteSub } from '@/lib/sub-path';
 import { json, limited, sameOrigin } from '@/lib/guard';
+import { asKind } from '@/lib/types';
 import { removeImage, saveImage } from '@/lib/images';
 
 // 새 소모품(품목) 등록: 사진 + 정보. '등록' 권한이 있어야 한다.
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
   const sub = text(form.get('sub'), 100);
   const brand = text(form.get('brand'), 50);
   const price = whole(form.get('price'), 99_999_999);
+  const kind = asKind(form.get('kind'));
   const stock = whole(form.get('stock'), 9_999_999);
   if (!name) return json({ error: '품목 이름을 적어 주세요.' }, 400);
   if (Number.isNaN(price)) return json({ error: '가격은 0 이상의 숫자로 적어 주세요.' }, 400);
@@ -49,7 +51,7 @@ export async function POST(req: Request) {
   const image = await saveImage(key, new Uint8Array(await photo.arrayBuffer()), photo.type);
   try {
     // 카테고리가 속한 공정을 자재의 공정으로 정해 둔다(현장 요청 화면에서 그 공정 작업자에게 보이도록)
-    const product = await addProduct({ key, category, sub: subPath, name, brand, price, priceInclVat: null, vatBasis: '', soldout: false, stock, image, trades: trade ? [trade] : [] });
+    const product = await addProduct({ key, kind, category, sub: subPath, name, brand, price, priceInclVat: null, vatBasis: '', soldout: false, stock, image, trades: trade ? [trade] : [] });
     return json({ ok: true, product });
   } catch (e) {
     await removeImage(image).catch(() => undefined); // 등록에 실패하면 올린 사진도 지운다

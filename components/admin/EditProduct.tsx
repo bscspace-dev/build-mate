@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/Sheet";
 import { shrink } from "@/components/admin/AddProduct";
-import type { Product, TrashedProduct } from "@/lib/types";
+import { KINDS, type Kind, type Product, type TrashedProduct } from "@/lib/types";
 
 const inputCls = "mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15";
 
-export type ProductEdited = { name: string; sub: string; brand: string; price: number; image?: string };
+export type ProductEdited = { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string };
 
 // 등록한 품목의 정보 수정: 이름·세부분류·브랜드·가격·사진 (카테고리는 '이동', 재고는 재고 칸에서 바꾼다)
 export default function EditProduct({
@@ -33,6 +33,7 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
   const [sub, setSub] = useState(product.sub ?? "");
   const [brand, setBrand] = useState(product.brand ?? "");
   const [price, setPrice] = useState(product.price ? String(product.price) : "");
+  const [kind, setKind] = useState<Kind>(product.kind);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -54,6 +55,7 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
       const fd = new FormData();
       fd.set("key", product.key);
       fd.set("name", name);
+      fd.set("kind", kind);
       fd.set("sub", sub);
       fd.set("brand", brand);
       fd.set("price", price);
@@ -65,7 +67,7 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
       if (r.status === 401) { router.replace("/"); return; }
       const j = (await r.json().catch(() => ({}))) as ProductEdited & { error?: string };
       if (!r.ok) throw new Error(j.error ?? "수정하지 못했어요.");
-      onSaved(product.key, { name: j.name, sub: j.sub, brand: j.brand, price: j.price, image: j.image });
+      onSaved(product.key, { name: j.name, sub: j.sub, brand: j.brand, price: j.price, kind: j.kind, image: j.image });
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "수정하지 못했어요.");
     }
@@ -92,6 +94,13 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
 
       <label htmlFor="ep-name" className="mt-4 block text-sm font-bold">품목 이름</label>
       <input id="ep-name" autoFocus value={name} onChange={e => setName(e.target.value)} maxLength={100} autoComplete="off" className={inputCls} />
+
+      <div className="mt-4 text-sm font-bold">분류</div>
+      <div className="mt-1.5 flex gap-2" role="group" aria-label="분류">
+        {KINDS.map(k => (
+          <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)} className={`flex-1 rounded-xl py-2.5 text-sm font-bold ${kind === k ? "bg-blue-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}>{k}</button>
+        ))}
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>

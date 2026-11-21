@@ -6,9 +6,10 @@ import { AnimatePresence, motion } from "motion/react";
 import type { SurveyItem } from "@/lib/catalog";
 import PasswordChangeButton from "@/components/PasswordChange";
 import LoginIdChangeButton from "@/components/LoginIdChange";
-import { Modal } from "@/components/Sheet";
+import { Modal, Sheet } from "@/components/Sheet";
+import { sitePeriod } from "@/lib/site-period";
 
-const PAGE = 60;
+const PAGE = 18; // 한 페이지 품목 수 (2열·3열 모두 줄이 딱 떨어지는 수)
 const MAX_QTY = 99999;
 const SITES_KEY = "bm_recent_sites";
 
@@ -79,8 +80,7 @@ const Card = memo(function Card({ item, qty, starred, onToggle, onQty, onStar }:
         ) : (
           <div className="aspect-square w-full bg-zinc-100 dark:bg-zinc-800" />
         )}
-        <span className="absolute left-2 top-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-bold text-white">재고 {item.q}</span>
-        <span className={`absolute right-2 top-2 rounded-full px-2 py-0.5 text-[11px] font-bold ${on ? "bg-blue-600 text-white" : "bg-black/55 text-white"}`}>{on ? "✓ 선택됨" : "+ 선택"}</span>
+        <span className={`absolute right-2 top-2 rounded-full px-2 py-0.5 text-[11px] font-bold ${on ? "bg-blue-600 text-white" : "bg-black/55 text-white"}`}>{on ? "✓ 담김" : "🛒 담기"}</span>
         <div className="p-2.5 pb-1.5">
           <b className="line-clamp-3 min-h-[3.9em] text-[13px] font-semibold leading-snug break-keep">{item.n}</b>
         </div>
@@ -106,19 +106,20 @@ const Card = memo(function Card({ item, qty, starred, onToggle, onQty, onStar }:
         ) : (
           <div className="h-9" aria-hidden />
         )}
-        {on && !!qty && qty > item.q && <p className="mt-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400">재고 {item.q}개 · {qty - item.q}개 부족해도 요청돼요</p>}
       </div>
     </div>
   );
 });
 
 export default function RequestForm({
-  items, allTrades, workerName, myTrades, otherLinks, idChange, temp,
+  items, sites, allTrades, workerName, myTrades, myCategories, otherLinks, idChange, temp,
 }: {
   items: SurveyItem[];
+  sites: { name: string; startDate: string; endDate: string }[]; // 관리자가 등록한 현장 (요청할 때 이 중에서 고른다)
   allTrades: string[]; // 자재의 공정 비트마스크 기준이 되는 전체 공정 목록
   workerName: string;
   myTrades: string[]; // 관리자가 등록한 공정 (1~3개)
+  myCategories: string[]; // 관리자가 정해 준 내 카테고리 (이 순서대로 먼저 보인다)
   otherLinks: { label: string; href: string }[];
   idChange: false | "once" | "unlimited";
   temp: boolean;
@@ -130,13 +131,16 @@ export default function RequestForm({
   const [cat, setCat] = useState("전체");
   const [onlyStar, setOnlyStar] = useState(false);
   const [q, setQ] = useState("");
-  const [shown, setShown] = useState(PAGE);
+  const [page, setPage] = useState(1);
+  const [cartOpen, setCartOpen] = useState(false); // 장바구니
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [siteOpen, setSiteOpen] = useState(false); // 현장 확인 창
   const [site, setSite] = useState("");
   const [recent, setRecent] = useState<string[]>([]);
   const [siteErr, setSiteErr] = useState("");
+  const [siteQ, setSiteQ] = useState(""); // 현장 목록이 길 때 찾기
+  const siteNames = useMemo(() => sites.map(s => s.name), [sites]);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
 
   const toastId = toast?.id;
@@ -155,18 +159,22 @@ export default function RequestForm({
   }, [workerName]);
 
   const bit = allTrades.indexOf(trade);
-  const base = useMemo(() => (bit < 0 ? [] : items.filter(i => i.t & (1 << bit))), [items, bit]);
+  // 내 카테고리(관리자가 정한 순서)의 품목과 칩이 먼저 나오고, 나머지는 원래 순서대로 뒤에 붙는다
+  const catRank = useMemo(() => new Map(myCategories.map((c, i) => [c, i])), [myCategories]);
+  const base = useMemo(() => (bit < 0 ? [] : items.filter(i => i.t & (1 << bit)).sort((a, b) => (catRank.get(a.c) ?? 1e6) - (catRank.get(b.c) ?? 1e6))), [items, bit, catRank]);
   const cats = useMemo(() => {
     const m = new Map<string, number>();
     base.forEach(i => m.set(i.c, (m.get(i.c) ?? 0) + 1));
     return m;
   }, [base]);
-  const activeCat = cat === "전체" || cats.has(cat) ? cat : "전체";
+  // "전체" 탭은 없다: 고른 카테고리가 없거나 이 공정에 없으면 첫 번째(내 카테고리가 있으면 그것부터) 카테고리가 열린다
+  const activeCat = cats.has(cat) ? cat : (cats.keys().next().value ?? "");
   const starCount = useMemo(() => base.filter(i => starSet.has(i.k)).length, [base, starSet]);
   const starOnly = onlyStar && starCount > 0;
   const list = useMemo(() => {
     const kw = q.trim().replace(/\s+/g, "").toLowerCase();
-    return base.filter(i => (!starOnly || starSet.has(i.k)) && (activeCat === "전체" || i.c === activeCat) && (!kw || `${i.n}${i.b}${i.s}`.replace(/\s+/g, "").toLowerCase().includes(kw)));
+    const r = base.filter(i => (!starOnly || starSet.has(i.k)) && (kw !== "" || starOnly || i.c === activeCat) && (!kw || `${i.n}${i.b}${i.s}`.replace(/\s+/g, "").toLowerCase().includes(kw)));
+    return r.sort((x, y) => Number(starSet.has(y.k)) - Number(starSet.has(x.k))); // 별표한 품목은 항상 맨 앞 (나머지는 그대로의 순서)
   }, [base, activeCat, q, starOnly, starSet]);
 
   const sel = sels[trade] ?? {};
@@ -179,7 +187,7 @@ export default function RequestForm({
     setTrade(t);
     setCat("전체");
     setQ("");
-    setShown(PAGE);
+    setPage(1);
     setErr("");
   }
   const onToggle = (k: string) =>
@@ -191,7 +199,18 @@ export default function RequestForm({
     });
   const onQty = (k: string, n: number) => setSels(prev => ({ ...prev, [trade]: { ...(prev[trade] ?? {}), [k]: n } }));
   const nextId = () => Math.max(0, ...Object.values(customs).flat().map(c => c.id)) + 1;
-  const addCustom = () => setCustoms(prev => ({ ...prev, [trade]: [...(prev[trade] ?? []), { id: nextId(), n: "", q: 1 }] }));
+  const [draftN, setDraftN] = useState(""); // 목록에 없는 품목: 이름·수량을 적고 '담기'
+  const [draftQ, setDraftQ] = useState(1);
+  function addDraft() {
+    const n = draftN.trim().replace(/\s+/g, " ");
+    if (!n) return setErr("담을 품목의 이름을 적어 주세요.");
+    if (draftQ < 1) return setErr("수량을 적어 주세요.");
+    setErr("");
+    setCustoms(prev => ({ ...prev, [trade]: [...(prev[trade] ?? []), { id: nextId(), n, q: draftQ }] }));
+    setDraftN("");
+    setDraftQ(1);
+    setToast(prev => ({ id: (prev?.id ?? 0) + 1, text: `“${n}” ${draftQ}개를 장바구니에 담았어요` }));
+  }
   const setCustom = (id: number, patch: Partial<Custom>) => setCustoms(prev => ({ ...prev, [trade]: (prev[trade] ?? []).map(c => (c.id === id ? { ...c, ...patch } : c)) }));
   const dropCustom = (id: number) => setCustoms(prev => ({ ...prev, [trade]: (prev[trade] ?? []).filter(c => c.id !== id) }));
 
@@ -204,15 +223,16 @@ export default function RequestForm({
     if (badCustom) return setErr(!badCustom.n.trim() ? "직접 적는 품목의 이름을 적어 주세요." : `“${badCustom.n.trim()}”의 수량을 적어 주세요.`);
     setErr("");
     setSiteErr("");
-    const r = readSites();
+    const r = readSites().filter(x => siteNames.includes(x)); // 최근에 쓴 현장 중 아직 등록돼 있는 것만
     setRecent(r);
-    setSite(s => s || r[0] || "");
+    setSite(s => (siteNames.includes(s) ? s : r[0] ?? ""));
+    setSiteQ("");
     setSiteOpen(true);
   }
 
   async function submit() {
-    const name = site.trim().replace(/\s+/g, " ");
-    if (!name) return setSiteErr("현장 이름을 적어 주세요.");
+    const name = site;
+    if (!name || !siteNames.includes(name)) return setSiteErr("요청할 현장을 골라 주세요.");
     if (busy || !count) return;
     setBusy(true);
     setSiteErr("");
@@ -241,6 +261,12 @@ export default function RequestForm({
     router.refresh();
   }
 
+  // 페이지 나누기
+  const totalPages = Math.max(1, Math.ceil(list.length / PAGE));
+  const curPage = Math.min(page, totalPages);
+  const visible = list.slice((curPage - 1) * PAGE, curPage * PAGE);
+  const goPage = (n: number) => { setPage(Math.max(1, Math.min(totalPages, n))); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const pageNums = Array.from({ length: totalPages }, (_, i) => i + 1).filter(n => n === 1 || n === totalPages || Math.abs(n - curPage) <= 2);
   const totalQty = picked.reduce((n, k) => n + (sel[k] || 0), 0) + myCustoms.reduce((n, c) => n + (c.q || 0), 0);
 
   return (
@@ -257,7 +283,7 @@ export default function RequestForm({
       </div>
 
       <p className="mt-3 rounded-2xl bg-blue-50 p-4 text-sm leading-relaxed text-blue-900 dark:bg-blue-500/10 dark:text-blue-100">
-        필요한 자재를 <b>눌러서 고르고</b>, 자재마다 <b>수량</b>을 적은 뒤 <b>요청하기</b>를 눌러 주세요. 재고가 모자라도 요청할 수 있고, 목록에 없는 자재는 <b>직접 적어서</b> 요청할 수 있어요. 요청은 관리자의 “현장요청”으로 전달돼요.
+        필요한 자재를 <b>눌러서 고르고</b>, 자재마다 <b>수량</b>을 적은 뒤 <b>요청하기</b>를 눌러 주세요. 목록에 없는 자재는 <b>직접 적어서</b> 요청할 수 있어요. 요청은 관리자의 “현장요청”으로 전달돼요.
       </p>
 
       {myTrades.length === 0 ? (
@@ -279,54 +305,63 @@ export default function RequestForm({
           <input
             type="search"
             value={q}
-            onChange={e => { setQ(e.target.value); setShown(PAGE); }}
+            onChange={e => { setQ(e.target.value); setPage(1); }}
             placeholder="자재명 검색 (예: 합판, 피스)"
             aria-label="자재 검색"
             className="mt-3 w-full rounded-xl border border-black/15 bg-white px-3.5 py-2.5 text-base outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900"
           />
 
           <div className="no-scrollbar mt-3 flex gap-1.5 overflow-x-auto">
-            <button type="button" aria-pressed={starOnly} onClick={() => { setOnlyStar(v => !v); setShown(PAGE); }} className={`${chipBase} text-[13px] ${starOnly ? "border-amber-400 bg-amber-400 font-semibold text-white" : chipOff}`}>
+            <button type="button" aria-pressed={starOnly} onClick={() => { setOnlyStar(v => !v); setPage(1); }} className={`${chipBase} text-[13px] ${starOnly ? "border-amber-400 bg-amber-400 font-semibold text-white" : chipOff}`}>
               ★ 별표<small className="ml-1 opacity-70">{starCount}</small>
             </button>
-            {["전체", ...cats.keys()].map(c => (
-              <button key={c} type="button" onClick={() => { setCat(c); setShown(PAGE); }} className={`${chipBase} text-[13px] ${activeCat === c ? chipOn : chipOff}`}>
-                {c}<small className="ml-1 opacity-70">{c === "전체" ? base.length : cats.get(c)}</small>
+            {[...cats.keys()].map(c => (
+              <button key={c} type="button" onClick={() => { setCat(c); setPage(1); }} className={`${chipBase} text-[13px] ${activeCat === c && !starOnly && !q.trim() ? chipOn : chipOff}`}>
+                {catRank.has(c) && <span aria-hidden className="mr-1">📌</span>}{c}<small className="ml-1 opacity-70">{cats.get(c)}</small>
               </button>
             ))}
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-            {list.slice(0, shown).map(i => (
+            {visible.map(i => (
               <Card key={i.k} item={i} qty={sel[i.k]} starred={starSet.has(i.k)} onToggle={onToggle} onQty={onQty} onStar={onStar} />
             ))}
           </div>
           {list.length === 0 && <p className="py-10 text-center text-zinc-500">해당하는 자재가 없어요</p>}
-          <section className="mt-6 rounded-2xl border border-dashed border-amber-400 bg-amber-50/60 p-4 dark:bg-amber-500/5" aria-label="목록에 없는 품목">
-            <div className="flex flex-wrap items-center gap-2">
-              <b className="mr-auto text-[15px]">필요한 품목이 목록에 없나요?</b>
-              <button type="button" onClick={addCustom} className="rounded-xl bg-amber-500 px-3.5 py-2 text-sm font-bold text-white">+ 직접 적어서 요청</button>
-            </div>
-            {myCustoms.length === 0 && <p className="mt-1 text-sm text-zinc-500">품목 이름과 수량을 직접 적어 요청할 수 있어요.</p>}
-            <div className="mt-3 space-y-2">
-              {myCustoms.map(c => (
-                <div key={c.id} className="flex items-center gap-1.5">
-                  <input value={c.n} maxLength={100} onChange={e => setCustom(c.id, { n: e.target.value })} placeholder="품목 이름 (규격·용도도 같이 적어 주세요)" aria-label="품목 이름" className="h-10 min-w-0 flex-[3] rounded-lg border border-black/15 bg-white px-3 text-sm outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900" />
-                  <button type="button" aria-label="수량 줄이기" onClick={() => setCustom(c.id, { q: Math.max(1, (c.q || 1) - 1) })} className="h-10 w-9 shrink-0 rounded-lg bg-zinc-100 text-lg font-bold dark:bg-zinc-800">−</button>
-                  <input inputMode="numeric" value={c.q ? String(c.q) : ""} placeholder="수량" aria-label="수량" onChange={e => setCustom(c.id, { q: Math.min(MAX_QTY, parseInt(e.target.value.replace(/\D/g, ""), 10) || 0) })} className={`h-10 w-14 shrink-0 rounded-lg border bg-white text-center text-base font-bold outline-none focus:border-blue-500 dark:bg-zinc-900 ${c.q ? "border-black/15 dark:border-white/15" : "border-red-400"}`} />
-                  <button type="button" aria-label="수량 늘리기" onClick={() => setCustom(c.id, { q: Math.min(MAX_QTY, (c.q || 0) + 1) })} className="h-10 w-9 shrink-0 rounded-lg bg-zinc-100 text-lg font-bold dark:bg-zinc-800">+</button>
-                  <button type="button" aria-label="이 품목 빼기" onClick={() => dropCustom(c.id)} className="h-10 w-9 shrink-0 rounded-lg text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15">✕</button>
-                </div>
+          {totalPages > 1 && (
+            <nav className="mt-4 flex flex-wrap items-center justify-center gap-1.5" aria-label="페이지">
+              <button type="button" disabled={curPage <= 1} onClick={() => goPage(curPage - 1)} className={`${chipBase} ${chipOff} disabled:opacity-30`}>‹ 이전</button>
+              {pageNums.map((n, i) => (
+                <span key={n} className="flex items-center gap-1.5">
+                  {i > 0 && n - pageNums[i - 1] > 1 && <span className="text-zinc-400" aria-hidden>…</span>}
+                  <button type="button" aria-current={n === curPage ? "page" : undefined} onClick={() => goPage(n)} className={`${chipBase} min-w-9 px-2.5 ${n === curPage ? chipOn : chipOff}`}>{n}</button>
+                </span>
               ))}
-            </div>
-          </section>
-          {list.length > shown && (
-            <div className="py-6 text-center">
-              <button type="button" onClick={() => setShown(s => s + PAGE)} className="rounded-xl bg-blue-50 px-5 py-3 font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
-                더 보기 ({list.length - shown}개 남음)
-              </button>
-            </div>
+              <button type="button" disabled={curPage >= totalPages} onClick={() => goPage(curPage + 1)} className={`${chipBase} ${chipOff} disabled:opacity-30`}>다음 ›</button>
+              <span className="w-full text-center text-xs text-zinc-500">{list.length}개 중 {(curPage - 1) * PAGE + 1}–{Math.min(curPage * PAGE, list.length)}번</span>
+            </nav>
           )}
+          <section className="mt-6 rounded-2xl border border-dashed border-amber-400 bg-amber-50/60 p-4 dark:bg-amber-500/5" aria-label="목록에 없는 품목">
+            <b className="text-[15px]">필요한 품목이 목록에 없나요?</b>
+            <p className="mt-1 text-sm text-zinc-500">품목 이름(규격·용도 포함)과 수량을 적고 <b>🛒 담기</b>를 누르면 장바구니에 들어가요.</p>
+            <form className="mt-3 flex items-center gap-1.5" onSubmit={e => { e.preventDefault(); addDraft(); }}>
+              <input value={draftN} maxLength={100} onChange={e => setDraftN(e.target.value)} placeholder="품목 이름 (규격·용도도 같이)" aria-label="품목 이름" className="h-10 min-w-0 flex-[3] rounded-lg border border-black/15 bg-white px-3 text-sm outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900" />
+              <button type="button" aria-label="수량 줄이기" onClick={() => setDraftQ(q => Math.max(1, q - 1))} className="h-10 w-9 shrink-0 rounded-lg bg-zinc-100 text-lg font-bold dark:bg-zinc-800">−</button>
+              <input inputMode="numeric" value={draftQ ? String(draftQ) : ""} placeholder="수량" aria-label="수량" onChange={e => setDraftQ(Math.min(MAX_QTY, parseInt(e.target.value.replace(/\D/g, ""), 10) || 0))} className={`h-10 w-14 shrink-0 rounded-lg border bg-white text-center text-base font-bold outline-none focus:border-blue-500 dark:bg-zinc-900 ${draftQ ? "border-black/15 dark:border-white/15" : "border-red-400"}`} />
+              <button type="button" aria-label="수량 늘리기" onClick={() => setDraftQ(q => Math.min(MAX_QTY, q + 1))} className="h-10 w-9 shrink-0 rounded-lg bg-zinc-100 text-lg font-bold dark:bg-zinc-800">+</button>
+              <button className="h-10 shrink-0 rounded-lg bg-amber-500 px-3.5 text-sm font-bold text-white">🛒 담기</button>
+            </form>
+            {myCustoms.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5" aria-label="담은 직접 적은 품목">
+                {myCustoms.map(c => (
+                  <span key={c.id} className="flex items-center gap-1 rounded-full bg-white px-3 py-1 text-sm shadow-sm dark:bg-zinc-900">
+                    ✏️ {c.n} <b>×{c.q}</b>
+                    <button type="button" aria-label={`${c.n} 빼기`} onClick={() => dropCustom(c.id)} className="ml-0.5 text-zinc-400 hover:text-red-600">✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
         </>
       )}
 
@@ -336,38 +371,97 @@ export default function RequestForm({
             <b>{trade || "공정 없음"}</b> · 자재 {count}개{count > 0 && <> · 수량 합계 {totalQty}</>}
             {err && <p className="truncate text-xs text-red-500" role="alert">{err}</p>}
           </div>
+          <button type="button" onClick={() => setCartOpen(true)} className="relative shrink-0 rounded-xl border border-black/15 bg-white px-3.5 py-3 text-base font-bold dark:border-white/15 dark:bg-zinc-900" aria-label={`장바구니 ${count}개`}>
+            🛒 장바구니
+            {count > 0 && <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1 text-[11px] font-bold text-white">{count}</span>}
+          </button>
           <motion.button whileTap={{ scale: 0.97 }} type="button" disabled={busy || count === 0} onClick={askSite} className="shrink-0 rounded-xl bg-blue-600 px-6 py-3 font-bold text-white disabled:opacity-40">
             요청하기
           </motion.button>
         </div>
       </div>
 
+      <Sheet open={cartOpen} onClose={() => setCartOpen(false)}>
+        <div className="flex items-center gap-2">
+          <h2 className="mr-auto text-lg font-bold">🛒 장바구니 <span className="text-sm font-semibold text-zinc-500">· {trade} 공정</span></h2>
+          <button type="button" onClick={() => setCartOpen(false)} className="rounded-lg px-2 py-1 text-sm text-zinc-500">닫기</button>
+        </div>
+        {count === 0 ? (
+          <p className="py-10 text-center text-zinc-500">담은 자재가 없어요. 자재 카드를 눌러 담아 주세요.</p>
+        ) : (
+          <>
+            <ul className="mt-3 divide-y divide-black/5 dark:divide-white/10">
+              {picked.map(k => {
+                const it = byKey.get(k);
+                const q2 = sel[k];
+                return (
+                  <li key={k} className="flex items-center gap-2 py-2.5">
+                    {it?.i ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={it.i} alt="" className="h-12 w-12 shrink-0 rounded-lg bg-white object-contain" />
+                    ) : <span className="h-12 w-12 shrink-0 rounded-lg bg-zinc-100 dark:bg-zinc-800" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-2 text-sm font-semibold leading-snug break-keep">{it?.n ?? k}</span>
+                    </span>
+                    <button type="button" aria-label="수량 줄이기" onClick={() => onQty(k, Math.max(1, (q2 || 1) - 1))} className="h-9 w-8 shrink-0 rounded-lg bg-zinc-100 text-lg font-bold dark:bg-zinc-800">−</button>
+                    <input inputMode="numeric" aria-label={`${it?.n ?? k} 수량`} value={q2 ? String(q2) : ""} placeholder="수량" onChange={e => onQty(k, Math.min(MAX_QTY, parseInt(e.target.value.replace(/\D/g, ""), 10) || 0))} className={`h-9 w-12 shrink-0 rounded-lg border bg-transparent text-center text-base font-bold outline-none focus:border-blue-500 ${q2 ? "border-black/15 dark:border-white/15" : "border-red-400"}`} />
+                    <button type="button" aria-label="수량 늘리기" onClick={() => onQty(k, Math.min(MAX_QTY, (q2 || 0) + 1))} className="h-9 w-8 shrink-0 rounded-lg bg-zinc-100 text-lg font-bold dark:bg-zinc-800">+</button>
+                    <button type="button" aria-label="장바구니에서 빼기" onClick={() => onToggle(k)} className="h-9 w-8 shrink-0 rounded-lg text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15">✕</button>
+                  </li>
+                );
+              })}
+              {myCustoms.map(c => (
+                <li key={c.id} className="flex items-center gap-2 py-2.5">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-xl dark:bg-amber-500/20" aria-hidden>✏️</span>
+                  <span className="min-w-0 flex-1 text-sm font-semibold leading-snug break-keep">{c.n}<small className="block text-[11px] font-normal text-zinc-500">직접 적은 품목</small></span>
+                  <button type="button" aria-label="수량 줄이기" onClick={() => setCustom(c.id, { q: Math.max(1, (c.q || 1) - 1) })} className="h-9 w-8 shrink-0 rounded-lg bg-zinc-100 text-lg font-bold dark:bg-zinc-800">−</button>
+                  <input inputMode="numeric" aria-label={`${c.n} 수량`} value={c.q ? String(c.q) : ""} placeholder="수량" onChange={e => setCustom(c.id, { q: Math.min(MAX_QTY, parseInt(e.target.value.replace(/\D/g, ""), 10) || 0) })} className={`h-9 w-12 shrink-0 rounded-lg border bg-transparent text-center text-base font-bold outline-none focus:border-blue-500 ${c.q ? "border-black/15 dark:border-white/15" : "border-red-400"}`} />
+                  <button type="button" aria-label="수량 늘리기" onClick={() => setCustom(c.id, { q: Math.min(MAX_QTY, (c.q || 0) + 1) })} className="h-9 w-8 shrink-0 rounded-lg bg-zinc-100 text-lg font-bold dark:bg-zinc-800">+</button>
+                  <button type="button" aria-label="장바구니에서 빼기" onClick={() => dropCustom(c.id)} className="h-9 w-8 shrink-0 rounded-lg text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/15">✕</button>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-right text-sm">자재 <b>{count}개</b> · 수량 합계 <b>{totalQty}</b></p>
+          </>
+        )}
+        <div className="mt-4 flex gap-2">
+          <button type="button" onClick={() => setCartOpen(false)} className="flex-1 rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">계속 담기</button>
+          <button type="button" disabled={busy || count === 0} onClick={() => { setCartOpen(false); askSite(); }} className="flex-1 rounded-xl bg-blue-600 py-3 font-bold text-white disabled:opacity-50">요청하기</button>
+        </div>
+      </Sheet>
+
       <Modal open={siteOpen} onClose={() => !busy && setSiteOpen(false)}>
         <h2 className="text-lg font-bold">어떤 현장의 요청인가요?</h2>
         <p className="mt-1 text-sm text-zinc-500">{trade} 공정 · 자재 {count}개 · 수량 합계 {totalQty}</p>
-        <label htmlFor="req-site" className="mt-4 block text-sm font-bold">현장 이름</label>
-        <input
-          id="req-site"
-          autoFocus
-          value={site}
-          maxLength={50}
-          onChange={e => setSite(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") submit(); }}
-          placeholder="예: 강남 ○○빌딩 신축"
-          autoComplete="off"
-          className="mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15"
-        />
-        {recent.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {recent.map(s => (
-              <button key={s} type="button" onClick={() => setSite(s)} className={`${chipBase} text-[13px] ${site === s ? chipOn : chipOff}`}>{s}</button>
-            ))}
-          </div>
+        {sites.length === 0 ? (
+          <p className="mt-4 rounded-xl bg-amber-50 p-3.5 text-sm text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">등록된 현장이 없어요. 관리자에게 현장 등록을 요청해 주세요.</p>
+        ) : (
+          <>
+            <div className="mt-4 text-sm font-bold">현장 선택</div>
+            {sites.length > 6 && <input value={siteQ} onChange={e => setSiteQ(e.target.value)} placeholder="현장 찾기" aria-label="현장 찾기" className="mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-white/15" />}
+            <div className="mt-2 max-h-[40vh] space-y-1.5 overflow-y-auto pr-0.5" role="radiogroup" aria-label="현장">
+              {sites.filter(x => !siteQ.trim() || x.name.replace(/\s+/g, "").toLowerCase().includes(siteQ.trim().replace(/\s+/g, "").toLowerCase())).map(x => {
+                const p = sitePeriod(x.startDate, x.endDate);
+                const on = site === x.name;
+                return (
+                  <button key={x.name} type="button" role="radio" aria-checked={on} onClick={() => setSite(x.name)} className={`flex w-full items-center gap-2.5 rounded-xl border px-3.5 py-3 text-left text-[15px] ${on ? "border-blue-600 bg-blue-50 font-bold ring-2 ring-blue-600/30 dark:bg-blue-500/15" : p.urgent ? "border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10" : "border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900"}`}>
+                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 text-[11px] text-white ${on ? "border-blue-600 bg-blue-600" : "border-zinc-300 dark:border-zinc-600"}`} aria-hidden>{on ? "✓" : ""}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{x.name}</span>
+                      {(x.startDate || x.endDate) && <small className={`block text-xs font-normal ${p.urgent ? "font-bold text-red-600 dark:text-red-300" : "text-zinc-500"}`}>{p.text}</small>}
+                    </span>
+                    {p.urgent && p.badge && <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${p.badge.cls}`}>{p.badge.label}</span>}
+                    {recent[0] === x.name && <small className="shrink-0 text-xs font-normal text-zinc-500">최근 사용</small>}
+                  </button>
+                );
+              })}
+            </div>
+          </>
         )}
         {siteErr && <p className="mt-3 text-sm text-red-500" role="alert">{siteErr}</p>}
         <div className="mt-5 flex gap-2">
           <button type="button" disabled={busy} onClick={() => setSiteOpen(false)} className="flex-1 rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">취소</button>
-          <button type="button" disabled={busy || !site.trim()} onClick={submit} className="flex-1 rounded-xl bg-blue-600 py-3 font-bold text-white disabled:opacity-40">{busy ? "보내는 중…" : "요청 보내기"}</button>
+          <button type="button" disabled={busy || !siteNames.includes(site)} onClick={submit} className="flex-1 rounded-xl bg-blue-600 py-3 font-bold text-white disabled:opacity-40">{busy ? "보내는 중…" : "요청 보내기"}</button>
         </div>
       </Modal>
 
