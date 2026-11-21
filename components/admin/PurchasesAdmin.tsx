@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/Sheet";
-import type { PurchaseItem, PurchaseStatus } from "@/lib/types";
+import type { PurchaseItem, PurchaseShipping, PurchaseStatus } from "@/lib/types";
 
 const inputCls = "mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15";
 const STATUS: { v: PurchaseStatus; label: string; cls: string }[] = [
@@ -12,13 +12,14 @@ const STATUS: { v: PurchaseStatus; label: string; cls: string }[] = [
   { v: "done", label: "구매 완료", cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200" },
 ];
 const won = (n: number) => n.toLocaleString("ko-KR") + "원";
-const total = (p: { price: number; qty: number }) => p.price * p.qty;
+// 품목 합계 = 가격 × 수량 (+ 배송비가 별도면 배송비를 품목당 한 번 더한다)
+const total = (p: { price: number; qty: number; shipping?: PurchaseShipping; shippingFee?: number }) => p.price * p.qty + (p.shipping === "separate" ? p.shippingFee ?? 0 : 0);
 // 링크에서 쇼핑몰 이름(도메인)만 뽑아 보여 준다. 예: https://www.coupang.com/vp/... → coupang.com
 const shopOf = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, "").replace(/^m\./, ""); } catch { return ""; } };
 const safeHref = (url: string) => (/^https?:\/\//i.test(url) ? url : "");
 
-type Form = { name: string; brand: string; url: string; price: string; qty: string; memo: string; tags: string[]; status: PurchaseStatus };
-const EMPTY: Form = { name: "", brand: "", url: "", price: "", qty: "1", memo: "", tags: [], status: "want" };
+type Form = { name: string; brand: string; url: string; price: string; qty: string; shipping: PurchaseShipping; shippingFee: string; memo: string; tags: string[]; status: PurchaseStatus };
+const EMPTY: Form = { name: "", brand: "", url: "", price: "", qty: "1", shipping: "included", shippingFee: "", memo: "", tags: [], status: "want" };
 const MAX_TAGS = 5;
 const cleanTag = (t: string) => t.replace(/[,#]/g, " ").trim().replace(/\s+/g, " ").slice(0, 20);
 
@@ -73,15 +74,15 @@ export default function PurchasesAdmin({ items, canRegister, canEdit, canDelete 
   }
   const openForm = (p: PurchaseItem | null) => {
     setErr("");
-    setF(p ? { name: p.name, brand: p.brand, url: p.url, price: p.price ? String(p.price) : "", qty: String(p.qty), memo: p.memo, tags: p.tags, status: p.status } : { ...EMPTY, tags: tagSel ? [tagSel] : [], status: tab === "all" ? "want" : tab });
+    setF(p ? { name: p.name, brand: p.brand, url: p.url, price: p.price ? String(p.price) : "", qty: String(p.qty), shipping: p.shipping, shippingFee: p.shippingFee ? String(p.shippingFee) : "", memo: p.memo, tags: p.tags, status: p.status } : { ...EMPTY, tags: tagSel ? [tagSel] : [], status: tab === "all" ? "want" : tab });
     setTagDraft("");
     setDlg({ t: "form", id: p?.id ?? null });
   };
   const close = () => { if (!busy) setDlg(null); };
   const formId = dlg?.t === "form" ? dlg.id : null;
   const addTag = (raw: string) => { const t = cleanTag(raw); if (t && !f.tags.includes(t) && f.tags.length < MAX_TAGS) setF({ ...f, tags: [...f.tags, t] }); setTagDraft(""); };
-  const body = () => ({ name: f.name, brand: f.brand, url: f.url, price: Number(f.price || 0), qty: Number(f.qty || 1), memo: f.memo, tags: f.tags, status: f.status });
-  const setStatus = (p: PurchaseItem, status: PurchaseStatus) => call({ action: "status", id: p.id, name: p.name, brand: p.brand, url: p.url, price: p.price, qty: p.qty, memo: p.memo, tags: p.tags, status }, `“${p.name}” ${STATUS.find(s => s.v === status)!.label}(으)로 바꿨어요`);
+  const body = () => ({ name: f.name, brand: f.brand, url: f.url, price: Number(f.price || 0), qty: Number(f.qty || 1), shipping: f.shipping, shippingFee: f.shipping === "separate" ? Number(f.shippingFee || 0) : 0, memo: f.memo, tags: f.tags, status: f.status });
+  const setStatus = (p: PurchaseItem, status: PurchaseStatus) => call({ action: "status", id: p.id, name: p.name, brand: p.brand, url: p.url, price: p.price, qty: p.qty, shipping: p.shipping, shippingFee: p.shippingFee, memo: p.memo, tags: p.tags, status }, `“${p.name}” ${STATUS.find(s => s.v === status)!.label}(으)로 바꿨어요`);
 
   const renderCard = (p: PurchaseItem) => {
           const st = STATUS.find(s => s.v === p.status)!;
@@ -98,6 +99,7 @@ export default function PurchasesAdmin({ items, canRegister, canEdit, canDelete 
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
                 <span className="text-sm">개당 <b>{won(p.price)}</b> × {p.qty}개 = <b className="text-lg font-extrabold text-blue-700 dark:text-blue-300">{won(total(p))}</b></span>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${p.shipping === "included" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200" : "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200"}`}>{p.shipping === "included" ? "배송비 포함" : p.shippingFee > 0 ? `배송비 별도 +${won(p.shippingFee)}` : "배송비 별도 (무료)"}</span>
                 {href && <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-zinc-100 px-3 py-1 text-xs font-bold text-blue-700 hover:bg-blue-50 dark:bg-zinc-800 dark:text-blue-300" title={p.url}>🔗 {shopOf(p.url) || "링크"} 열기</a>}
               </div>
               {p.tags.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{p.tags.map(t => <button key={t} type="button" onClick={() => setTagSel(tagSel === t ? null : t)} className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${tagSel === t ? "bg-violet-600 text-white" : "bg-violet-100 text-violet-800 hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-200"}`}>#{t}</button>)}</div>}
@@ -207,7 +209,17 @@ export default function PurchasesAdmin({ items, canRegister, canEdit, canDelete 
               <input id="pc-qty" inputMode="numeric" value={f.qty} onChange={e => setF({ ...f, qty: e.target.value.replace(/\D/g, "").slice(0, 4) })} onFocus={e => e.target.select()} autoComplete="off" className={inputCls + " text-right"} />
             </div>
           </div>
-          <p className="mt-1.5 text-sm font-bold text-blue-700 dark:text-blue-300">합계 {won(Number(f.price || 0) * Math.max(1, Number(f.qty || 1)))}</p>
+          <div className="mt-3 text-sm font-bold">배송비</div>
+          <div className="mt-1.5 flex gap-1.5" role="radiogroup" aria-label="배송비">
+            {([["included", "배송비 포함"], ["separate", "배송비 별도"]] as const).map(([v, l]) => <button key={v} type="button" role="radio" aria-checked={f.shipping === v} onClick={() => setF({ ...f, shipping: v })} className={`flex-1 rounded-xl border py-2 text-sm font-extrabold ${f.shipping === v ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white dark:border-white/15 dark:bg-zinc-900"}`}>{l}</button>)}
+          </div>
+          {f.shipping === "separate" && (
+            <div className="mt-2 flex items-center gap-2">
+              <input aria-label="배송비(원)" inputMode="numeric" value={f.shippingFee ? Number(f.shippingFee).toLocaleString("ko-KR") : ""} onChange={e => setF({ ...f, shippingFee: e.target.value.replace(/\D/g, "").slice(0, 7) })} placeholder="배송비 (0이면 무료)" autoComplete="off" className="w-44 rounded-xl border border-black/15 bg-transparent px-3.5 py-2.5 text-right text-base outline-none focus:border-blue-500 dark:border-white/15" />
+              <span className="text-sm font-bold">원</span>
+            </div>
+          )}
+          <p className="mt-2 text-sm font-bold text-blue-700 dark:text-blue-300">합계 {won(total({ price: Number(f.price || 0), qty: Math.max(1, Number(f.qty || 1)), shipping: f.shipping, shippingFee: Number(f.shippingFee || 0) }))}{f.shipping === "separate" && Number(f.shippingFee || 0) > 0 && <span className="font-normal text-zinc-500"> (배송비 {won(Number(f.shippingFee))} 포함)</span>}</p>
           <div className="mt-3 flex gap-1.5" role="radiogroup" aria-label="상태">
             {STATUS.map(s => <button key={s.v} type="button" role="radio" aria-checked={f.status === s.v} onClick={() => setF({ ...f, status: s.v })} className={`flex-1 rounded-xl border py-2 text-sm font-extrabold ${f.status === s.v ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white dark:border-white/15 dark:bg-zinc-900"}`}>{s.label}</button>)}
           </div>

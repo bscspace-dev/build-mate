@@ -822,9 +822,9 @@ export async function setAnnualLeave(year: number, memberId: string, days: numbe
 }
 
 // ───────── 구매관리 (purchases) — 구매하려는 품목의 링크·가격 ─────────
-type PurchaseRow = { id: number; name: string; brand: string | null; url: string; price: number; qty: number; memo: string; tags: string[] | null; status: string; created_by: string; created_at: string; updated_at: string };
-const toPurchase = (r: PurchaseRow): PurchaseItem => ({ id: String(r.id), name: r.name, brand: r.brand ?? '', url: r.url, price: r.price, qty: r.qty, memo: r.memo, tags: r.tags ?? [], status: r.status as PurchaseItem['status'], createdBy: r.created_by, createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString() });
-const purchaseCols = (i: PurchaseInput) => ({ name: i.name, brand: i.brand, url: i.url, price: i.price, qty: i.qty, memo: i.memo, tags: i.tags, status: i.status });
+type PurchaseRow = { id: number; name: string; brand: string | null; url: string; price: number; qty: number; shipping: string | null; shipping_fee: number | null; memo: string; tags: string[] | null; status: string; created_by: string; created_at: string; updated_at: string };
+const toPurchase = (r: PurchaseRow): PurchaseItem => ({ id: String(r.id), name: r.name, brand: r.brand ?? '', url: r.url, price: r.price, qty: r.qty, shipping: (r.shipping === 'separate' ? 'separate' : 'included') as PurchaseItem['shipping'], shippingFee: r.shipping_fee ?? 0, memo: r.memo, tags: r.tags ?? [], status: r.status as PurchaseItem['status'], createdBy: r.created_by, createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString() });
+const purchaseCols = (i: PurchaseInput) => ({ name: i.name, brand: i.brand, url: i.url, price: i.price, qty: i.qty, shipping: i.shipping, shipping_fee: i.shippingFee, memo: i.memo, tags: i.tags, status: i.status });
 
 export async function getPurchases(): Promise<PurchaseItem[]> {
   return (await fetchAll<PurchaseRow>((a, b) => supabase().from('purchases').select('*').order('id', { ascending: false }).range(a, b), '구매 품목 조회')).map(toPurchase);

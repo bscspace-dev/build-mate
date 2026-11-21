@@ -221,6 +221,8 @@ create table if not exists public.purchases (
   url        text not null default '',               -- 구매 링크
   price      integer not null default 0 check (price >= 0),   -- 개당 가격(원)
   qty        integer not null default 1 check (qty >= 1),     -- 수량
+  shipping     text not null default 'included' check (shipping in ('included','separate')),   -- 배송비 포함 여부
+  shipping_fee integer not null default 0 check (shipping_fee >= 0),                          -- 배송비 별도일 때 금액(원)
   memo       text not null default '',
   tags       text[] not null default '{}',           -- 묶어 보기용 태그
   status     text not null default 'want' check (status in ('want','ordered','done')),   -- 구매 예정 / 주문함 / 구매 완료

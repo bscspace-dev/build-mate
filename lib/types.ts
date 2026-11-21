@@ -84,6 +84,9 @@ export type LeaveInput = { memberId: string; startDate: string; endDate: string;
 
 /** 구매관리 품목 상태: 구매 예정 → 주문함 → 구매 완료 */
 export type PurchaseStatus = 'want' | 'ordered' | 'done';
+/** 배송비: included = 가격에 포함(무료배송 포함) · separate = 따로 낸다(배송비 금액을 적는다) */
+export type PurchaseShipping = 'included' | 'separate';
+
 /** 구매하려는 품목 (링크·가격 정리) */
 export type PurchaseItem = {
   id: string;
@@ -92,6 +95,8 @@ export type PurchaseItem = {
   url: string; // 구매 링크 (없으면 빈 문자열)
   price: number; // 개당 가격(원)
   qty: number; // 수량
+  shipping: PurchaseShipping; // 배송비 포함 여부
+  shippingFee: number; // 배송비 별도일 때 배송비(원, 품목당 한 번). 포함이면 0
   memo: string;
   tags: string[]; // 묶어 보기용 태그 (최대 5개)
   status: PurchaseStatus;
@@ -99,7 +104,7 @@ export type PurchaseItem = {
   createdAt: string;
   updatedAt: string;
 };
-export type PurchaseInput = { name: string; brand: string; url: string; price: number; qty: number; memo: string; tags: string[]; status: PurchaseStatus };
+export type PurchaseInput = { name: string; brand: string; url: string; price: number; qty: number; shipping: PurchaseShipping; shippingFee: number; memo: string; tags: string[]; status: PurchaseStatus };
 
 /** 마감일 변경 한 번: from(바꾸기 전 마감일) → to(새 마감일). to 가 늦으면 연장, 빠르면 단축 */
 export type SiteExtension = { from: string; to: string; at: string };

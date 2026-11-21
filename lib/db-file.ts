@@ -924,7 +924,7 @@ export function setAnnualLeave(year: number, memberId: string, days: number | nu
 }
 
 // ───────── 구매관리 (data/purchases.json) — 구매하려는 품목의 링크·가격 ─────────
-export const getPurchases = async () => (await readList<PurchaseItem>('purchases.json')).map(p => ({ ...p, brand: p.brand ?? '', tags: p.tags ?? [] }));
+export const getPurchases = async () => (await readList<PurchaseItem>('purchases.json')).map(p => ({ ...p, brand: p.brand ?? '', tags: p.tags ?? [], shipping: p.shipping ?? 'included', shippingFee: p.shippingFee ?? 0 }));
 
 export function addPurchase(i: PurchaseInput, by: string): Promise<PurchaseItem> {
   return withLock(async () => {
