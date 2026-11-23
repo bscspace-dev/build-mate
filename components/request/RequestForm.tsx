@@ -4,8 +4,6 @@ import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore }
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import type { SurveyItem } from "@/lib/catalog";
-import PasswordChangeButton from "@/components/PasswordChange";
-import LoginIdChangeButton from "@/components/LoginIdChange";
 import { Modal, Sheet } from "@/components/Sheet";
 import { sitePeriod } from "@/lib/site-period";
 
@@ -112,7 +110,7 @@ const Card = memo(function Card({ item, qty, starred, onToggle, onQty, onStar }:
 });
 
 export default function RequestForm({
-  items, sites, allTrades, workerName, myTrades, myCategories, otherLinks, idChange, temp,
+  items, sites, allTrades, workerName, myTrades, myCategories,
 }: {
   items: SurveyItem[];
   sites: { name: string; startDate: string; endDate: string }[]; // 관리자가 등록한 현장 (요청할 때 이 중에서 고른다)
@@ -120,9 +118,6 @@ export default function RequestForm({
   workerName: string;
   myTrades: string[]; // 관리자가 등록한 공정 (1~3개)
   myCategories: string[]; // 관리자가 정해 준 내 카테고리 (이 순서대로 먼저 보인다)
-  otherLinks: { label: string; href: string }[];
-  idChange: false | "once" | "unlimited";
-  temp: boolean;
 }) {
   const router = useRouter();
   const [trade, setTrade] = useState(myTrades[0] ?? "");
@@ -255,12 +250,6 @@ export default function RequestForm({
     setBusy(false);
   }
 
-  async function logout() {
-    await fetch("/api/logout", { method: "POST" }).catch(() => undefined);
-    router.replace("/");
-    router.refresh();
-  }
-
   // 페이지 나누기
   const totalPages = Math.max(1, Math.ceil(list.length / PAGE));
   const curPage = Math.min(page, totalPages);
@@ -273,17 +262,10 @@ export default function RequestForm({
     <main className="mx-auto w-full max-w-3xl flex-1 px-4 pb-32">
       <div className="mt-6 flex flex-wrap items-center gap-2">
         <h1 className="mr-auto text-2xl font-extrabold">{workerName}님, 자재 요청</h1>
-        <button type="button" onClick={() => router.push("/")} className={`${chipBase} ${chipOff}`}>메뉴</button>
-        {otherLinks.map(l => (
-          <button key={l.href} type="button" onClick={() => router.push(l.href)} className={`${chipBase} ${chipOff}`}>{l.label}</button>
-        ))}
-        {idChange && <LoginIdChangeButton temp={temp} unlimited={idChange === "unlimited"} className={`${chipBase} ${chipOff}`} />}
-        <PasswordChangeButton temp={temp} className={`${chipBase} ${chipOff}`} />
-        <button type="button" onClick={logout} className={`${chipBase} ${chipOff}`}>로그아웃</button>
       </div>
 
       <p className="mt-3 rounded-2xl bg-blue-50 p-4 text-sm leading-relaxed text-blue-900 dark:bg-blue-500/10 dark:text-blue-100">
-        필요한 자재를 <b>눌러서 고르고</b>, 자재마다 <b>수량</b>을 적은 뒤 <b>요청하기</b>를 눌러 주세요. 목록에 없는 자재는 <b>직접 적어서</b> 요청할 수 있어요. 요청은 관리자의 “현장요청”으로 전달돼요.
+        필요한 자재를 <b>눌러서 고르고</b>, 자재마다 <b>수량</b>을 적은 뒤 <b>요청하기</b>를 눌러 주세요. 목록에 없는 자재는 <b>직접 적어서</b> 요청할 수 있어요. 요청은 관리자의 “자재요청 현황”으로 전달돼요.
       </p>
 
       {myTrades.length === 0 ? (

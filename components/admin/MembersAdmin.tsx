@@ -577,7 +577,7 @@ export default function MembersAdmin({
   return (
     <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24">
       <header className="flex flex-wrap items-center gap-3 py-5">
-        <h1 className="mr-auto text-xl font-extrabold">{scope === "coop" ? "거래처 관리" : "회원 관리"}</h1>
+        <h1 className="mr-auto text-xl font-extrabold">{scope === "coop" ? "거래처 관리" : "회원관리"}</h1>
         <span className="text-sm text-zinc-500">총 {scoped.length}명</span>
       </header>
 

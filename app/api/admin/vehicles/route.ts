@@ -2,17 +2,19 @@ import { actorCan, getActor } from '@/lib/auth';
 import { addVehicle, assignItem, getMembers, getTeams, removeVehicle, returnItem, updateVehicle } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { sideOf, teamGroup } from '@/lib/roles';
-import { asIcon } from '@/lib/types';
+import { asIcon, type VehicleOwnership, type VehicleSpec } from '@/lib/types';
 
-// 차량운용: 차량 등록(등록 권한) · 이름/메모 수정 · 연장/상비품 싣기·빼기(수정 권한) · 차량 삭제(삭제 권한)
-type Body = { action?: unknown; id?: unknown; name?: unknown; nickname?: unknown; icon?: unknown; memo?: unknown; driverId?: unknown; key?: unknown; qty?: unknown; note?: unknown; restock?: unknown };
+// 차량정보: 차량 등록(등록 권한) · 이름/메모 수정 · 연장/상비품 싣기·빼기(수정 권한) · 차량 삭제(삭제 권한)
+type Body = { action?: unknown; id?: unknown; name?: unknown; nickname?: unknown; icon?: unknown; memo?: unknown; driverId?: unknown; key?: unknown; qty?: unknown; note?: unknown; restock?: unknown; model?: unknown; year?: unknown; vin?: unknown; ownership?: unknown; mileage?: unknown; oilDate?: unknown; oilKm?: unknown; inspectionDate?: unknown; insurer?: unknown; policyNo?: unknown; insuranceExpiry?: unknown; premium?: unknown; insurancePhone?: unknown; insuranceNote?: unknown };
+const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
+const kmOf = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 9_999_999 ? v : NaN);
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 const qtyOf = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 99_999 ? v : 0);
 
 export async function POST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('vehicles');
-  if (!actor) return json({ error: '차량운용 메뉴 권한이 필요해요.' }, 401);
+  if (!actor) return json({ error: '차량정보 메뉴 권한이 필요해요.' }, 401);
   if (limited(req, 'vehicles', 300, 10 * 60 * 1000)) return json({ error: '잠시 후 다시 해 주세요.' }, 429);
 
   const b = (await req.json().catch(() => null)) as Body | null;
@@ -27,7 +29,8 @@ export async function POST(req: Request) {
     const name = str(b.name, 40);
     const nickname = str(b.nickname, 20);
     const icon = asIcon(b.icon);
-    const memo = str(b.memo, 200);
+    // 비고는 여러 줄로 적을 수 있다 (줄바꿈은 그대로 두고 앞뒤 공백만 정리)
+    const memo = typeof b.memo === 'string' ? b.memo.replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, 1000) : '';
     const driverId = str(b.driverId, 64);
     if (driverId) {
       // 배차는 사내 회원(사무실·현장)만 가능하다
@@ -38,7 +41,18 @@ export async function POST(req: Request) {
       if (g === null || sideOf(g) !== 'inhouse') return json({ error: '배차는 사내 회원만 할 수 있어요.' }, 400);
     }
     if (!name) return json({ error: '차량 번호를 적어 주세요.' }, 400);
-    const r = a === 'add' ? await addVehicle(name, nickname, icon, memo, driverId) : id ? await updateVehicle(id, name, nickname, icon, memo, driverId) : { error: 'bad id' };
+    // 차량 관리 정보 (모두 선택): 차종·연식·차대번호·소유 형태·주행거리·엔진오일·검사일
+    const oilDate = str(b.oilDate, 10);
+    const inspectionDate = str(b.inspectionDate, 10);
+    const insuranceExpiry = str(b.insuranceExpiry, 10);
+    if ((oilDate && !isDate(oilDate)) || (inspectionDate && !isDate(inspectionDate)) || (insuranceExpiry && !isDate(insuranceExpiry))) return json({ error: '엔진오일 교환일·검사일·보험 만기일 날짜가 올바르지 않아요.' }, 400);
+    const premium = b.premium === undefined || b.premium === '' ? 0 : typeof b.premium === 'number' && Number.isInteger(b.premium) && b.premium >= 0 && b.premium <= 99_999_999 ? b.premium : NaN;
+    if (Number.isNaN(premium)) return json({ error: '보험료는 0 이상의 숫자(원)로 적어 주세요.' }, 400);
+    const mileage = b.mileage === undefined || b.mileage === '' ? 0 : kmOf(b.mileage);
+    const oilKm = b.oilKm === undefined || b.oilKm === '' ? 0 : kmOf(b.oilKm);
+    if (Number.isNaN(mileage) || Number.isNaN(oilKm)) return json({ error: '주행거리(km)는 0 이상의 숫자로 적어 주세요.' }, 400);
+    const spec: VehicleSpec = { model: str(b.model, 30), year: str(b.year, 10), vin: str(b.vin, 30).toUpperCase(), ownership: (['owned', 'lease', 'rent'].includes(b.ownership as string) ? b.ownership : '') as VehicleOwnership, mileage, oilDate, oilKm, inspectionDate, insurer: str(b.insurer, 30), policyNo: str(b.policyNo, 40), insuranceExpiry, premium, insurancePhone: str(b.insurancePhone, 30), insuranceNote: str(b.insuranceNote, 200) };
+    const r = a === 'add' ? await addVehicle(name, nickname, icon, memo, driverId, spec) : id ? await updateVehicle(id, name, nickname, icon, memo, driverId, spec) : { error: 'bad id' };
     return 'error' in r ? json(r, 400) : json(r);
   }
   if (a === 'remove') {

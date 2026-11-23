@@ -231,7 +231,7 @@ export default function PlacementsAdmin({
       {err && !m && !noteEdit && <p className="mt-2 text-sm text-red-500" role="alert">{err}</p>}
 
       {sites.length === 0 ? (
-        <p className="mt-4 rounded-2xl bg-white p-8 text-center text-zinc-500 dark:bg-zinc-900">등록된 현장이 없어요. 현장일정에서 먼저 현장을 등록해 주세요.</p>
+        <p className="mt-4 rounded-2xl bg-white p-8 text-center text-zinc-500 dark:bg-zinc-900">등록된 현장이 없어요. 현장정보에서 먼저 현장을 등록해 주세요.</p>
       ) : view === "week" ? (
         <>
           {/* 주간 일정표: 세로 = 현장(착공·준공일), 가로 = 날짜. 칸은 왼쪽 오전 · 오른쪽 오후, 현장 아래 줄은 그날 작업 내용 */}

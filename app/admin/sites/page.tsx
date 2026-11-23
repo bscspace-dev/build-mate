@@ -5,7 +5,7 @@ import { actorCan, getActor } from "@/lib/auth";
 import { getMembers, getSites, getTeams } from "@/lib/db";
 import { memberHasRole, teamsLabel } from "@/lib/roles";
 
-export const metadata = { title: "현장일정 · 빌드메이트" };
+export const metadata = { title: "현장정보 · 빌드메이트" };
 
 export default function SitesPage() {
   return (
@@ -17,7 +17,7 @@ export default function SitesPage() {
 
 async function Loader() {
   const actor = await getActor("sites");
-  if (!actor) redirect("/"); // '현장일정' 메뉴를 쓸 수 없으면 메인으로
+  if (!actor) redirect("/"); // '현장정보' 메뉴를 쓸 수 없으면 메인으로
   const [sites, members, teams] = await Promise.all([getSites(), getMembers(), getTeams()]);
   // 담당 PM 후보: 현장관리자(PM) 팀 회원만
   const pms = members

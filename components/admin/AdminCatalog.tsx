@@ -259,7 +259,7 @@ export default function AdminCatalog({
   canDelete: boolean; // 소모품의 "삭제" 권한 (없으면 보기 전용)
 }) {
   const router = useRouter();
-  // 차량운용에서 배정·재고가 바뀐 채로 돌아와도 옛 화면이 남지 않게, 열릴 때 서버 데이터를 한 번 새로 받는다
+  // 차량정보에서 배정·재고가 바뀐 채로 돌아와도 옛 화면이 남지 않게, 열릴 때 서버 데이터를 한 번 새로 받는다
   useEffect(() => { router.refresh(); }, [router]);
   const [products, setProducts] = useState(initialProducts);
   const [trash, setTrash] = useState(initialTrash);
@@ -919,13 +919,16 @@ export default function AdminCatalog({
         </p>
       )}
 
-      <div className="flex gap-2">
-        {([["catalog", `장비운용 ${products.length}`], ["trash", `휴지통 ${trash.length}`]] as const).map(([v, label]) => (
-          <button key={v} type="button" onClick={() => switchView(v)} className={`relative rounded-xl px-4 py-2.5 text-sm font-bold ${view === v ? "text-white" : "bg-white text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"}`}>
-            {view === v && <motion.span layoutId="viewTab" className="absolute inset-0 rounded-xl bg-blue-600" transition={{ type: "spring", stiffness: 400, damping: 34 }} />}
-            <span className="relative">{label}</span>
-          </button>
-        ))}
+      {/* 장비 목록은 항상 기본 화면이라 따로 탭이 필요 없다. 휴지통은 작은 버튼으로 들어가고, 안에서 목록으로 돌아온다. */}
+      <div className="flex items-center gap-2">
+        {trashMode ? (
+          <>
+            <button type="button" onClick={() => switchView("catalog")} className="rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">← 장비 목록으로</button>
+            <span className="text-sm font-extrabold">휴지통 <span className="text-zinc-500">{trash.length}</span></span>
+          </>
+        ) : (
+          <button type="button" onClick={() => switchView("trash")} className="ml-auto rounded-xl bg-white px-3.5 py-2 text-sm font-bold text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">🗑 휴지통 {trash.length}</button>
+        )}
       </div>
 
       <div className="mt-3 flex gap-2" role="tablist" aria-label="장비운용 분류">

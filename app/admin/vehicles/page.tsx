@@ -2,10 +2,10 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import VehiclesAdmin, { type CatalogLite } from "@/components/admin/VehiclesAdmin";
 import { actorCan, getActor } from "@/lib/auth";
-import { getMembers, getProducts, getTeams, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
+import { getLoadPackages, getMembers, getProducts, getTeams, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
 import { sideOf, teamGroup, teamLabel } from "@/lib/roles";
 
-export const metadata = { title: "차량운용 · 빌드메이트" };
+export const metadata = { title: "차량정보 · 빌드메이트" };
 
 export default function VehiclesPage() {
   return (
@@ -17,7 +17,7 @@ export default function VehiclesPage() {
 
 async function Loader() {
   const actor = await getActor("vehicles");
-  if (!actor) redirect("/"); // '차량운용' 메뉴를 쓸 수 없으면 메인으로
+  if (!actor) redirect("/"); // '차량정보' 메뉴를 쓸 수 없으면 메인으로
   const [vehicles, items, products, trash, memberList, teams] = await Promise.all([getVehicles(), getVehicleItems(), getProducts(), getTrash(), getMembers(), getTeams()]);
   // 배차는 사내 회원(사무실·현장)만 — 거래처 회원은 제외한다
   const members = memberList.filter(m => { const g = teamGroup(teams, m.role); return g !== null && sideOf(g) === "inhouse"; }).map(m => ({ id: m.id, name: m.name, roleLabel: teamLabel(teams, m.role) })).sort((a, b) => a.name.localeCompare(b.name, "ko"));
@@ -31,6 +31,7 @@ async function Loader() {
       items={items}
       members={members}
       catalog={catalog}
+      packages={await getLoadPackages()}
       canRegister={actorCan(actor, "vehicles", "register")}
       canEdit={actorCan(actor, "vehicles", "edit")}
       canDelete={actorCan(actor, "vehicles", "delete")}

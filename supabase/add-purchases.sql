@@ -10,7 +10,10 @@ create table if not exists public.purchases (
   shipping_fee integer not null default 0 check (shipping_fee >= 0),                          -- 배송비 별도일 때 금액(원)
   memo       text not null default '',
   tags       text[] not null default '{}',           -- 묶어 보기용 태그
-  status     text not null default 'want' check (status in ('want','ordered','done')),   -- 구매 예정 / 주문함 / 구매 완료
+  status     text not null default 'requested' check (status in ('requested','rejected','done')),   -- 요청 / 반려 / 완료
+  site       text not null default '',               -- 이 물품이 필요한 현장 이름
+  requested_at timestamptz,                          -- 요청한 시각
+  handled_by text not null default '',               -- 확인·구매한 담당자 이름
   created_by text not null default '',               -- 등록한 사람 이름
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -19,6 +22,16 @@ alter table public.purchases add column if not exists shipping     text not null
 alter table public.purchases add column if not exists shipping_fee integer not null default 0;
 alter table public.purchases add column if not exists brand text not null default '';   -- 이미 테이블을 만들었다면 이 줄이 브랜드 칸을 추가한다
 alter table public.purchases add column if not exists tags text[] not null default '{}';   -- 이미 테이블을 만들었다면 이 줄이 태그 칸을 추가한다
+alter table public.purchases add column if not exists site text not null default '';   -- 요청 흐름(현장 선택 → 요청 → 담당자 확인 → 구매 완료)용 칸
+alter table public.purchases add column if not exists requested_at timestamptz;
+alter table public.purchases add column if not exists handled_by text not null default '';
+alter table public.purchases add column if not exists photos text[] not null default '{}';          -- 요청 사진 주소들
+alter table public.purchases add column if not exists decision_note text not null default '';       -- 반려 사유
+alter table public.purchases add column if not exists category text not null default 'supplies';      -- 분류 (경비관리 분류와 같은 값: materials 자재구매 / supplies 공구·소모품 / other 기타 …)
+alter table public.purchases drop constraint if exists purchases_status_check;
+update public.purchases set status = 'requested' where status in ('want', 'ordered');               -- 예전 상태(등록·확인함)는 요청으로
+alter table public.purchases alter column status set default 'requested';
+alter table public.purchases add constraint purchases_status_check check (status in ('requested','rejected','done'));
 create index if not exists purchases_status on public.purchases (status);
 alter table public.purchases enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
 

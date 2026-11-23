@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { Group, type CatalogLite } from "@/components/admin/VehiclesAdmin";
+import VehiclePhotos from "@/components/VehiclePhotos";
 import type { Vehicle, VehicleItem } from "@/lib/types";
 
 // 배차받은 담당자가 자기 차량에 실린 연장·상비품을 확인하는 화면 (보기 전용)
-export default function MyVehicles({ vehicles, items, catalog, name }: { vehicles: Vehicle[]; items: VehicleItem[]; catalog: CatalogLite[]; name: string }) {
+export default function MyVehicles({ vehicles, items, catalog, name, myId }: { vehicles: Vehicle[]; items: VehicleItem[]; catalog: CatalogLite[]; name: string; myId: string }) {
   const prod = new Map(catalog.map(p => [p.key, p]));
   const nameOf = (k: string) => prod.get(k)?.name ?? "삭제된 품목";
   return (
@@ -24,12 +25,13 @@ export default function MyVehicles({ vehicles, items, catalog, name }: { vehicle
           return (
             <section key={v.id} className="rounded-2xl border border-black/10 bg-white p-4 dark:border-white/10 dark:bg-zinc-900">
               <div className="flex items-center gap-3">
-                <span className="text-3xl" aria-hidden>{v.icon}</span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-lg font-extrabold">{v.nickname || v.name}{v.nickname && <span className="ml-2 text-sm font-semibold text-zinc-500">{v.name}</span>}</div>
+                  <div className="truncate text-xl font-extrabold tracking-wide">{v.name}{v.nickname && <span className="ml-2 text-sm font-semibold text-zinc-500">{v.nickname}</span>}</div>
+                  {(v.model || v.year) && <div className="truncate text-sm text-zinc-600 dark:text-zinc-300">{[v.model, v.year && `${v.year}년식`].filter(Boolean).join(" · ")}</div>}
                   {v.memo && <div className="truncate text-xs text-zinc-500">{v.memo}</div>}
                 </div>
               </div>
+              <VehiclePhotos vehicle={v} canAdd canRemoveAny={false} myId={myId} />
               <Group title="연장" tone="tool" rows={tools} nameOf={nameOf} prod={prod} canEdit={false} onBack={() => undefined} />
               <Group title="상비품" tone="supply" rows={supplies} nameOf={nameOf} prod={prod} canEdit={false} onBack={() => undefined} />
             </section>

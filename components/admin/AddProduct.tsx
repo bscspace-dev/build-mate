@@ -9,9 +9,9 @@ const inputCls = "mt-1.5 w-full rounded-xl border border-black/15 bg-transparent
 const MAX_SIDE = 1000; // 사진은 긴 변을 이 크기로 줄여서 올린다
 
 // 사진을 줄이고 webp 로 바꾼다 (webp 를 못 만드는 브라우저는 jpg)
-export async function shrink(file: File): Promise<Blob> {
+export async function shrink(file: File, maxSide = MAX_SIDE): Promise<Blob> {
   const bmp = await createImageBitmap(file);
-  const scale = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
+  const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(bmp.width * scale));
   canvas.height = Math.max(1, Math.round(bmp.height * scale));

@@ -4,7 +4,7 @@ import { json, limited, sameOrigin } from '@/lib/guard';
 import { memberHasRole } from '@/lib/roles';
 import { removeImage, saveImage } from '@/lib/images';
 
-// 현장일정: 등록(등록 권한) · 수정(수정 권한) · 삭제(삭제 권한). 자재 요청에서 고르는 현장 목록이다.
+// 현장정보: 등록(등록 권한) · 수정(수정 권한) · 삭제(삭제 권한). 자재 요청에서 고르는 현장 목록이다.
 // 항목: 현장명(필수) · 공사기간(시작·종료일) · 담당 PM(현장관리자 PM 팀 회원) · 현장 주소 · 특이사항 · 현장 사진(여러 장)
 // 등록·수정은 사진 때문에 multipart(FormData), 삭제는 JSON 으로 받는다.
 const MAX_IMAGE = 3 * 1024 * 1024;
@@ -16,7 +16,7 @@ const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Dat
 export async function POST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('sites');
-  if (!actor) return json({ error: '현장일정 메뉴 권한이 필요해요.' }, 401);
+  if (!actor) return json({ error: '현장정보 메뉴 권한이 필요해요.' }, 401);
   if (limited(req, 'sites', 120, 10 * 60 * 1000)) return json({ error: '잠시 후 다시 해 주세요.' }, 429);
 
   const multipart = (req.headers.get('content-type') ?? '').includes('multipart/form-data');

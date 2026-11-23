@@ -1,10 +1,11 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import RequestForm from "@/components/request/RequestForm";
+import AdminNav from "@/components/admin/AdminNav";
 import { toSurveyItems } from "@/lib/catalog";
-import { getProducts, getSites, getTrades, getVehicles } from "@/lib/db";
+import { getProducts, getSites, getTrades } from "@/lib/db";
 import { getSessionMember } from "@/lib/member-session";
-import { canSurvey, effectiveMenus, isStaffAdmin, memberRoles, menuHref, menuLabel } from "@/lib/roles";
+import { canSurvey, memberRoles } from "@/lib/roles";
 
 export const metadata = { title: "자재 요청 · 빌드메이트", robots: { index: false, follow: false } };
 
@@ -27,12 +28,9 @@ async function SurveyLoader() {
   // 공정 탭은 어느 공정의 요청인지 나누는 용도라서, 모든 공정 탭에서 같은 자재 목록이 보인다.
   const everyTrade = allTrades.reduce((m, _t, i) => m | (1 << i), 0);
   const surveyItems = toSurveyItems(products.filter(p => p.kind === "자재"), allTrades).map(i => ({ ...i, t: everyTrade }));
-  // 자재 요청 말고 다른 메뉴(소모품·현장요청·회원 관리)도 있으면 이 화면에서 오갈 수 있게 링크를 준다
-  const otherLinks = effectiveMenus(memberRoles(member), member.menus, member.actions)
-    .filter(k => k !== "survey")
-    .map(k => ({ label: menuLabel(k), href: menuHref(k) }));
-  if ((await getVehicles()).some(v => v.driverId === member.id)) otherLinks.push({ label: "내 차량", href: "/my-vehicle" }); // 배차받은 회원
   return (
+    <>
+    <AdminNav />
     <RequestForm
       items={surveyItems}
       sites={sites.map(s => ({ name: s.name, startDate: s.startDate, endDate: s.endDate }))}
@@ -40,9 +38,7 @@ async function SurveyLoader() {
       workerName={member.name}
       myTrades={member.trades}
       myCategories={member.categories}
-      otherLinks={otherLinks}
-      idChange={isStaffAdmin(memberRoles(member)) ? "unlimited" : member.idChanged ? false : "once"}
-      temp={member.mustChangePassword}
     />
+    </>
   );
 }

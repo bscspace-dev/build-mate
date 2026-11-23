@@ -2,12 +2,12 @@ import 'server-only';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { asIcon, asKind } from './types';
+import { asIcon, asKind, EMPTY_SPEC, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PurchaseItem, PurchaseInput } from './types';
+import type { Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput } from './types';
 import { removeImage } from './images';
-import { DEFAULT_TEAMS, withFieldWorkerTeams, type Team } from './roles';
+import { DEFAULT_TEAMS, withAccountingTeam, withFieldWorkerTeams, type Team } from './roles';
 
 // 파일 기반 저장소 (data/*.json). 쓰기는 한 번에 하나씩, 임시파일 → rename 으로 안전하게 저장한다.
 const DIR = path.join(process.cwd(), 'data');
@@ -176,7 +176,7 @@ export function patchMember(id: string, patch: MemberPatch): Promise<{ member: M
 async function loadTeams(): Promise<Team[]> {
   try {
     const list = await readJson<Team[]>('teams.json');
-    const fixed = withFieldWorkerTeams(list); // 현장작업자(정/부) 분리 반영
+    const fixed = withAccountingTeam(withFieldWorkerTeams(list) ?? list) ?? withFieldWorkerTeams(list); // 현장작업자(정/부) 분리, 경리팀 추가 반영
     if (fixed) await writeJson('teams.json', fixed);
     return fixed ?? list;
   } catch (e) {
@@ -627,7 +627,7 @@ export function swapProducts(a: string, b: string): Promise<boolean> {
   });
 }
 
-// ───────── 차량운용 (data/vehicles.json · data/vehicle-items.json) ─────────
+// ───────── 차량정보 (data/vehicles.json · data/vehicle-items.json) ─────────
 async function readList<T>(file: string): Promise<T[]> {
   try {
     return await readJson<T[]>(file);
@@ -635,37 +635,65 @@ async function readList<T>(file: string): Promise<T[]> {
     return [];
   }
 }
-export const getVehicles = async () => (await readList<Vehicle>('vehicles.json')).map(v => ({ ...v, nickname: v.nickname ?? '', icon: asIcon(v.icon), driverId: v.driverId ?? '' }));
+export const getVehicles = async () => (await readList<Vehicle>('vehicles.json')).map(v => ({ ...EMPTY_SPEC, ...v, photos: v.photos ?? [], nickname: v.nickname ?? '', icon: asIcon(v.icon), driverId: v.driverId ?? '' }));
 export const getVehicleItems = () => readList<VehicleItem>('vehicle-items.json');
 
-export function addVehicle(name: string, nickname: string, icon: string, memo: string, driverId: string): Promise<VehicleResult<{ vehicle: Vehicle }>> {
+export function addVehicle(name: string, nickname: string, icon: string, memo: string, driverId: string, spec: VehicleSpec): Promise<VehicleResult<{ vehicle: Vehicle }>> {
   return withLock(async () => {
     const list = await getVehicles();
     if (list.some(v => v.name === name)) return { error: '같은 차량 번호가 이미 있어요.' };
     if (nickname && list.some(v => v.nickname === nickname)) return { error: '같은 별칭이 이미 있어요.' };
-    const vehicle: Vehicle = { id: crypto.randomBytes(6).toString('hex'), name, nickname, icon, memo, driverId, createdAt: new Date().toISOString() };
+    const vehicle: Vehicle = { id: crypto.randomBytes(6).toString('hex'), name, nickname, icon, memo, driverId, photos: [], ...spec, createdAt: new Date().toISOString() };
     await writeJson('vehicles.json', [...list, vehicle]);
     return { ok: true, vehicle };
   });
 }
 
-export function updateVehicle(id: string, name: string, nickname: string, icon: string, memo: string, driverId: string): Promise<VehicleResult> {
+export function updateVehicle(id: string, name: string, nickname: string, icon: string, memo: string, driverId: string, spec: VehicleSpec): Promise<VehicleResult> {
   return withLock(async () => {
     const list = await getVehicles();
     if (!list.some(v => v.id === id)) return { error: '없는 차량이에요.' };
     if (list.some(v => v.id !== id && v.name === name)) return { error: '같은 차량 번호가 이미 있어요.' };
     if (nickname && list.some(v => v.id !== id && v.nickname === nickname)) return { error: '같은 별칭이 이미 있어요.' };
-    await writeJson('vehicles.json', list.map(v => (v.id === id ? { ...v, name, nickname, icon, memo, driverId } : v)));
+    await writeJson('vehicles.json', list.map(v => (v.id === id ? { ...v, name, nickname, icon, memo, driverId, ...spec } : v)));
     return { ok: true };
   });
 }
 
-/** 차량 삭제: 배치된 품목이 남아 있으면 먼저 회수해야 한다 (재고가 어긋나지 않게) */
+/** 차량 현황 사진 추가. 한도를 넘으면 가장 오래된 사진부터 빠지고, 빠진 사진 주소를 돌려준다(파일 정리용). */
+export function addVehiclePhoto(id: string, photo: VehiclePhoto): Promise<VehicleResult<{ removed: string[] }>> {
+  return withLock(async () => {
+    const list = await getVehicles();
+    const v = list.find(x => x.id === id);
+    if (!v) return { error: '없는 차량이에요.' };
+    const all = [photo, ...v.photos];
+    const photos = all.slice(0, MAX_VEHICLE_PHOTOS);
+    await writeJson('vehicles.json', list.map(x => (x.id === id ? { ...x, photos } : x)));
+    return { ok: true, removed: all.slice(MAX_VEHICLE_PHOTOS).map(p => p.url) };
+  });
+}
+export function removeVehiclePhoto(id: string, url: string): Promise<VehicleResult> {
+  return withLock(async () => {
+    const list = await getVehicles();
+    const v = list.find(x => x.id === id);
+    if (!v || !v.photos.some(p => p.url === url)) return { error: '없는 사진이에요.' };
+    await writeJson('vehicles.json', list.map(x => (x.id === id ? { ...x, photos: x.photos.filter(p => p.url !== url) } : x)));
+    return { ok: true };
+  });
+}
+
+/** 차량 삭제: 차량에 배치된 품목은 모두 되돌린 뒤 삭제한다 (연장은 창고 재고로 돌아오고, 상비품은 차량에서 빠진다 — 내리기와 같은 규칙) */
 export function removeVehicle(id: string): Promise<VehicleResult> {
   return withLock(async () => {
     const list = await getVehicles();
     if (!list.some(v => v.id === id)) return { error: '없는 차량이에요.' };
-    if ((await getVehicleItems()).some(i => i.vehicleId === id)) return { error: '배치된 품목이 남아 있어요. 먼저 모두 회수해 주세요.' };
+    const items = await getVehicleItems();
+    const mine = items.filter(i => i.vehicleId === id);
+    if (mine.length) {
+      const known = [...(await getProducts()), ...(await getTrash())];
+      await writeJson('vehicle-items.json', items.filter(i => i.vehicleId !== id));
+      for (const it of mine) if (known.find(x => x.key === it.key)?.kind === '연장') await addStock(it.key, it.qty);
+    }
     await writeJson('vehicles.json', list.filter(v => v.id !== id));
     return { ok: true };
   });
@@ -923,31 +951,55 @@ export function setAnnualLeave(year: number, memberId: string, days: number | nu
   });
 }
 
-// ───────── 구매관리 (data/purchases.json) — 구매하려는 품목의 링크·가격 ─────────
-export const getPurchases = async () => (await readList<PurchaseItem>('purchases.json')).map(p => ({ ...p, brand: p.brand ?? '', tags: p.tags ?? [], shipping: p.shipping ?? 'included', shippingFee: p.shippingFee ?? 0 }));
+// ───────── 현장경비 (data/expenses.json) — 현장에서 쓴 식비·음료 영수증 ─────────
+export const getExpenses = async () => (await readList<Expense>('expenses.json')).map(e => ({ ...e, photos: e.photos ?? [], memo: e.memo ?? '', docType: e.docType ?? 'receipt', vendor: e.vendor ?? '', payMethod: e.payMethod ?? 'card', booked: !!e.booked, bookedBy: e.bookedBy ?? '', bookedAt: e.bookedAt ?? '', purchaseId: e.purchaseId ?? '', status: (e.status === 'requested' ? 'requested' : 'done') as 'requested' | 'done', link: e.link ?? '', account: e.account ?? '' }));
 
-export function addPurchase(i: PurchaseInput, by: string): Promise<PurchaseItem> {
+export function addExpense(i: ExpenseInput, by: { id: string; name: string }): Promise<Expense> {
   return withLock(async () => {
-    const list = await getPurchases();
-    const now = new Date().toISOString();
-    const row: PurchaseItem = { id: crypto.randomBytes(6).toString('hex'), ...i, createdBy: by, createdAt: now, updatedAt: now };
-    await writeJson('purchases.json', [row, ...list]);
+    const list = await getExpenses();
+    const row: Expense = { id: crypto.randomBytes(6).toString('hex'), ...i, memberId: by.id, memberName: by.name, createdAt: new Date().toISOString() };
+    await writeJson('expenses.json', [row, ...list]);
     return row;
   });
 }
-export function updatePurchase(id: string, i: PurchaseInput): Promise<boolean> {
+export function updateExpense(id: string, i: ExpenseInput): Promise<boolean> {
   return withLock(async () => {
-    const list = await getPurchases();
-    if (!list.some(p => p.id === id)) return false;
-    await writeJson('purchases.json', list.map(p => (p.id === id ? { ...p, ...i, updatedAt: new Date().toISOString() } : p)));
+    const list = await getExpenses();
+    if (!list.some(e => e.id === id)) return false;
+    await writeJson('expenses.json', list.map(e => (e.id === id ? { ...e, ...i } : e)));
     return true;
   });
 }
-export function removePurchase(id: string): Promise<boolean> {
+export function removeExpense(id: string): Promise<boolean> {
   return withLock(async () => {
-    const list = await getPurchases();
-    if (!list.some(p => p.id === id)) return false;
-    await writeJson('purchases.json', list.filter(p => p.id !== id));
+    const list = await getExpenses();
+    if (!list.some(e => e.id === id)) return false;
+    await writeJson('expenses.json', list.filter(e => e.id !== id));
     return true;
   });
 }
+
+// ───────── 적재 패키지 (data/load-packages.json) — 자주 싣는 연장·상비품 묶음 ─────────
+export const getLoadPackages = async () => (await readList<LoadPackage>('load-packages.json')).map(p => ({ ...p, items: p.items ?? [] }));
+export function saveLoadPackage(i: LoadPackageInput, id: string | null): Promise<VehicleResult> {
+  return withLock(async () => {
+    const list = await getLoadPackages();
+    if (list.some(p => p.id !== id && p.name === i.name)) return { error: '같은 이름의 패키지가 이미 있어요.' };
+    if (id) {
+      if (!list.some(p => p.id === id)) return { error: '없는 패키지예요.' };
+      await writeJson('load-packages.json', list.map(p => (p.id === id ? { ...p, ...i } : p)));
+    } else {
+      await writeJson('load-packages.json', [...list, { id: crypto.randomBytes(6).toString('hex'), ...i, createdAt: new Date().toISOString() }]);
+    }
+    return { ok: true };
+  });
+}
+export function removeLoadPackage(id: string): Promise<VehicleResult> {
+  return withLock(async () => {
+    const list = await getLoadPackages();
+    if (!list.some(p => p.id === id)) return { error: '없는 패키지예요.' };
+    await writeJson('load-packages.json', list.filter(p => p.id !== id));
+    return { ok: true };
+  });
+}
+

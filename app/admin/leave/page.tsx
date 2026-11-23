@@ -6,7 +6,7 @@ import { getAnnualLeave, getLeaves, getMembers, getTeams } from "@/lib/db";
 import { leaveUsage } from "@/lib/leave";
 import { isOfficePay, teamsLabel } from "@/lib/roles";
 
-export const metadata = { title: "휴가신청 · 빌드메이트" };
+export const metadata = { title: "휴가관리 · 빌드메이트" };
 
 export default function LeavePage() {
   return (
@@ -16,11 +16,11 @@ export default function LeavePage() {
   );
 }
 
-// 휴가신청: 본인은 신청·내 내역, '승인·반려' 권한자는 전체 신청을 보고 승인·반려한다.
+// 휴가관리: 본인은 신청·내 내역, '승인·반려' 권한자는 전체 신청을 보고 승인·반려한다.
 // 승인 권한이 없으면 남의 신청은 화면으로 보내지 않는다.
 async function Loader() {
   const actor = await getActor("leave");
-  if (!actor) redirect("/"); // '휴가신청' 메뉴를 쓸 수 없으면 메인으로
+  if (!actor) redirect("/"); // '휴가관리' 메뉴를 쓸 수 없으면 메인으로
   const canDecide = actorCan(actor, "leave", "edit");
   const me = actor.kind === "member" ? { id: actor.member.id, name: actor.member.name } : null;
   const [all, members, teams, annual] = await Promise.all([getLeaves(), getMembers(), getTeams(), getAnnualLeave()]);

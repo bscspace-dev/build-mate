@@ -54,6 +54,7 @@ insert into public.teams (key, label, grp, locked, sort) values
   ('super',     '최고 관리자',    'office',    true,  3),
   ('dev',       '개발팀',         'office',    true,  4),
   ('sales',     '영업팀',         'office',    false, 5),
+  ('accounting','경리팀',         'office',    true,  10),
   ('worker',    '현장작업자(정)', 'field',     true,  6),
   ('worker_sub','현장작업자(부)', 'field',     true,  7),
   ('pm',        '현장관리자(PM)', 'field',     true,  8),
@@ -76,7 +77,7 @@ create table if not exists public.members (
   handles              text   not null default '',   -- 거래처 취급품목
   phone                text   not null default '',   -- 연락처
   address              text   not null default '',   -- 주소
-  menus                text[] not null default '{}' check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases']),
+  menus                text[] not null default '{}' check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses']),
   actions              jsonb  not null default '{}',
   login_id             text,
   pass_hash            text,                  -- 비밀번호 원문은 저장하지 않는다 (scrypt 해시)
@@ -141,7 +142,22 @@ create table if not exists public.vehicles (
   nickname   text not null default '',             -- 별칭 (예: 1호차)
   icon       text not null default '🚚',            -- 차량 아이콘
   driver_id  text,                                  -- 배차된 회원 (members.id)
-  memo       text not null default '',
+  memo       text not null default '',                 -- 비고
+  model      text not null default '',                 -- 차종 (포터, 봉고, K3)
+  year       text not null default '',                 -- 연식
+  vin        text not null default '',                 -- 차대번호
+  ownership  text not null default '',                 -- 소유 형태: owned 소유 / lease 리스 / rent 장기렌트
+  mileage    integer not null default 0,               -- 현재 주행거리(km)
+  oil_date   date,                                     -- 엔진오일 마지막 교환일
+  oil_km     integer not null default 0,               -- 마지막 교환 때 주행거리(km)
+  inspection_date date,                                -- 차량 검사 만료·예정일
+  insurer    text not null default '',                 -- 보험사
+  policy_no  text not null default '',                 -- 증권번호
+  insurance_expiry date,                               -- 보험 만기일
+  premium    integer not null default 0,               -- 연 보험료(원)
+  insurance_phone text not null default '',            -- 보험 연락처
+  insurance_note text not null default '',             -- 보험 특이사항
+  photos     jsonb not null default '[]'::jsonb,       -- 현황 사진 [{url, at, by, byId, note}] (새 사진이 앞)
   created_at timestamptz not null default now()
 );
 create unique index if not exists vehicles_nickname on public.vehicles (nickname) where nickname <> '';
@@ -213,6 +229,15 @@ create index if not exists leave_requests_member on public.leave_requests (membe
 create index if not exists leave_requests_status on public.leave_requests (status);
 alter table public.leave_requests enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
 
+-- ───────── 적재 패키지 ─────────
+create table if not exists public.load_packages (
+  id         bigint generated always as identity primary key,
+  name       text not null unique,                      -- 패키지 이름 (예: 기본 용접 세트)
+  items      jsonb not null default '[]'::jsonb,        -- [{key, qty}] 담긴 연장·상비품과 수량
+  created_at timestamptz not null default now()
+);
+alter table public.load_packages enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
+
 -- ───────── 구매관리 ─────────
 create table if not exists public.purchases (
   id         bigint generated always as identity primary key,
@@ -225,10 +250,43 @@ create table if not exists public.purchases (
   shipping_fee integer not null default 0 check (shipping_fee >= 0),                          -- 배송비 별도일 때 금액(원)
   memo       text not null default '',
   tags       text[] not null default '{}',           -- 묶어 보기용 태그
-  status     text not null default 'want' check (status in ('want','ordered','done')),   -- 구매 예정 / 주문함 / 구매 완료
+  status     text not null default 'requested' check (status in ('requested','rejected','done')),   -- 요청 / 반려 / 완료
+  photos     text[] not null default '{}',           -- 요청 사진 주소들
+  decision_note text not null default '',            -- 반려 사유
+  category   text not null default 'supplies',       -- 분류 (경비관리 분류와 같은 값)
+  site       text not null default '',               -- 이 물품이 필요한 현장 이름
+  requested_at timestamptz,                          -- 요청한 시각
+  handled_by text not null default '',               -- 확인·구매한 담당자 이름
   created_by text not null default '',               -- 등록한 사람 이름
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index if not exists purchases_status on public.purchases (status);
 alter table public.purchases enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
+
+-- ───────── 경비관리 ─────────
+create table if not exists public.expenses (
+  id          bigint generated always as identity primary key,
+  spent_on    date not null,                          -- 쓴 날짜
+  site        text not null default '',               -- 현장 이름
+  category    text not null default 'meal' check (category in ('meal','drink','materials','fuel','parking','supplies','other')),   -- 식사 / 음료 / 자재구매 / 유류비 / 주차·통행 / 공구·소모품 / 기타
+  doc_type    text not null default 'receipt',        -- 영수증 / 세금계산서
+  vendor      text not null default '',               -- 상호·거래처
+  pay_method  text not null default 'card',           -- 카드 / 현금 / 계좌이체
+  booked      boolean not null default false,         -- 경리가 정리했는가
+  booked_by   text not null default '',
+  booked_at   timestamptz,
+  purchase_id text not null default '',               -- 예전 구매관리에서 넘어온 건의 옛 번호
+  status      text not null default 'done',           -- 구매요청의 진행: requested 대기 / done 완료
+  link        text not null default '',               -- 구매요청의 구매 링크
+  account     text not null default '',               -- 세금계산서의 입금할 계좌번호
+  amount      integer not null default 0 check (amount >= 0),   -- 금액(원)
+  memo        text not null default '',               -- 무엇을 먹었는지·샀는지
+  photos      text[] not null default '{}',           -- 영수증 사진 주소들
+  member_id   text not null default '',               -- 올린 회원
+  member_name text not null default '',
+  created_at  timestamptz not null default now()
+);
+create index if not exists expenses_spent_on on public.expenses (spent_on);
+create index if not exists expenses_member on public.expenses (member_id);
+alter table public.expenses enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근

@@ -11,7 +11,7 @@ const badge = (s: LeaveStatus) => ({ pending: "bg-amber-100 text-amber-800 dark:
 const fmtDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 const period = (l: { startDate: string; endDate: string }) => (l.startDate === l.endDate ? fmtDate(l.startDate) : `${fmtDate(l.startDate)} ~ ${fmtDate(l.endDate)}`);
 
-// 휴가신청: 사유를 적어 신청하면 관리자가 승인·반려한다. 승인하면 그 기간 배치가 빠지고 현장배치·출근관리에 휴가로 표시된다.
+// 휴가관리: 사유를 적어 신청하면 관리자가 승인·반려한다. 승인하면 그 기간 배치가 빠지고 현장배치·출근관리에 휴가로 표시된다.
 export default function LeaveAdmin({
   me, canApply, canDecide, leaves, people, year, balances, roster,
 }: {
@@ -118,7 +118,7 @@ export default function LeaveAdmin({
   return (
     <div className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24">
       <header className="flex flex-wrap items-center gap-3 py-5">
-        <h1 className="mr-auto text-xl font-extrabold">휴가신청</h1>
+        <h1 className="mr-auto text-xl font-extrabold">휴가관리</h1>
         {canDecide && pending.length > 0 && <span className="rounded-full bg-amber-500 px-2.5 py-1 text-xs font-bold text-white">승인 대기 {pending.length}건</span>}
       </header>
 

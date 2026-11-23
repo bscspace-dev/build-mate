@@ -48,7 +48,7 @@ export function Modal({ open, onClose, children, wide = false }: { open: boolean
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96 }}
             transition={{ type: "spring", stiffness: 380, damping: 30 }}
-            className={`w-full ${wide ? "max-h-[90vh] max-w-xl overflow-auto" : "max-w-sm"} rounded-2xl bg-white p-5 shadow-2xl dark:bg-zinc-900`}
+            className={`w-full max-h-[90vh] overflow-y-auto overscroll-contain ${wide ? "max-w-xl" : "max-w-sm"} rounded-2xl bg-white p-5 shadow-2xl dark:bg-zinc-900`}
             role="dialog"
             aria-modal="true"
           >

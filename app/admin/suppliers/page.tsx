@@ -5,7 +5,7 @@ import { actorCan, getActor } from "@/lib/auth";
 import { getMembers, getTeams } from "@/lib/db";
 import { sideOf, teamGroup } from "@/lib/roles";
 
-export const metadata = { title: "거래처 · 빌드메이트" };
+export const metadata = { title: "거래처관리 · 빌드메이트" };
 
 export default function SuppliersPage() {
   return (

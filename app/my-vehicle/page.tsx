@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import MyVehicles from "@/components/MyVehicles";
+import AdminNav from "@/components/admin/AdminNav";
 import type { CatalogLite } from "@/components/admin/VehiclesAdmin";
 import { getSessionMember } from "@/lib/member-session";
 import { getProducts, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
@@ -25,5 +26,10 @@ async function Loader() {
   const lite = (trashed: boolean) => (p: { key: string; name: string; kind: CatalogLite["kind"]; stock: number; image: string; brand: string }): CatalogLite =>
     ({ key: p.key, name: p.name, kind: p.kind, stock: p.stock, image: p.image, brand: p.brand, trashed });
   const catalog = [...products.map(lite(false)), ...trash.map(lite(true))];
-  return <MyVehicles name={member.name} vehicles={vehicles} items={items.filter(i => ids.has(i.vehicleId))} catalog={catalog} />;
+  return (
+    <>
+      <AdminNav />
+      <MyVehicles name={member.name} myId={member.id} vehicles={vehicles} items={items.filter(i => ids.has(i.vehicleId))} catalog={catalog} />
+    </>
+  );
 }

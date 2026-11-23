@@ -10,7 +10,7 @@ import type { MaterialRequest } from "@/lib/types";
 const POLL_MS = 8000;
 const fmt = (iso: string) => new Date(iso).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-// 새 현장 요청 알림. '현장요청'의 처리 권한이 있는 사람 화면 아래에, 아직 '준비 완료'를 누르지 않은 요청이 팝업으로 쌓인다.
+// 새 현장 요청 알림. '자재요청 현황'의 처리 권한이 있는 사람 화면 아래에, 아직 '준비 완료'를 누르지 않은 요청이 팝업으로 쌓인다.
 // 준비해서 '준비 완료'를 누를 때까지 새로고침하거나 다른 화면으로 가도 계속 남는다 (서버에 저장된 처리 상태를 주기적으로 확인한다).
 export default function RequestAlerts() {
   const router = useRouter();
@@ -55,7 +55,7 @@ export default function RequestAlerts() {
       const j = (await r.json().catch(() => ({}))) as { error?: string };
       if (!r.ok) throw new Error(j.error ?? "처리하지 못했어요.");
       setList(prev => prev.filter(x => x.id !== id));
-      router.refresh(); // 현장요청 화면이 열려 있으면 완료 표시도 바꾼다
+      router.refresh(); // 자재요청 현황 화면이 열려 있으면 완료 표시도 바꾼다
     } catch (e) {
       setErr(e instanceof Error ? e.message : "처리하지 못했어요.");
     }

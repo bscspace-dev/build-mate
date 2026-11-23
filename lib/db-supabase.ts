@@ -1,9 +1,9 @@
 import 'server-only';
-import { asIcon, asKind } from './types';
+import { asIcon, asKind, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, PurchaseItem, PurchaseInput } from './types';
-import { withFieldWorkerTeams, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type Team } from './roles';
+import type { Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput } from './types';
+import { withAccountingTeam, withFieldWorkerTeams, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type Team } from './roles';
 import { removeImage } from './images';
 import { supabase } from './supabase';
 import type { CatResult, TradeResult } from './db-file';
@@ -212,7 +212,16 @@ const toTeam = (r: TeamRow): Team => ({ key: r.key, label: r.label, group: r.grp
 
 export async function getTeams(): Promise<Team[]> {
   const load = async () => (await fetchAll<TeamRow>((a, b) => supabase().from('teams').select('*').order('sort').order('created_at').range(a, b), '팀 조회')).map(toTeam);
-  const list = await load();
+  let list = await load();
+  // 경리팀: 아직 없으면 한 번 만들어 둔다 (supabase/add-expenses.sql 을 실행하지 않았어도 동작)
+  if (withAccountingTeam(list)) {
+    try {
+      await supabase().from('teams').upsert({ key: 'accounting', label: '경리팀', grp: 'office', locked: true, sort: 10 }, { onConflict: 'key', ignoreDuplicates: true });
+      list = await load();
+    } catch {
+      // 같은 이름의 팀이 이미 있으면 그대로 쓴다
+    }
+  }
   // 현장작업자(정/부) 분리: 아직 없으면 한 번 만들어 둔다 (supabase/add-worker-sub.sql 을 실행하지 않았어도 동작)
   if (withFieldWorkerTeams(list)) {
     try {
@@ -556,10 +565,11 @@ export async function swapProducts(a: string, b: string): Promise<boolean> {
   return true;
 }
 
-// ───────── 차량운용 ─────────
-type VehicleRow = { id: number; name: string; nickname: string | null; icon: string | null; memo: string; driver_id: string | null; created_at: string };
+// ───────── 차량정보 ─────────
+type VehicleRow = { id: number; name: string; nickname: string | null; icon: string | null; memo: string; driver_id: string | null; created_at: string; model: string | null; year: string | null; vin: string | null; ownership: string | null; mileage: number | null; oil_date: string | null; oil_km: number | null; inspection_date: string | null; photos: VehiclePhoto[] | null; insurer: string | null; policy_no: string | null; insurance_expiry: string | null; premium: number | null; insurance_phone: string | null; insurance_note: string | null };
 type VehicleItemRow = { id: number; vehicle_id: number; product_key: string; qty: number; note: string; at: string };
-const toVehicle = (r: VehicleRow): Vehicle => ({ id: String(r.id), name: r.name, nickname: r.nickname ?? '', icon: asIcon(r.icon), memo: r.memo, driverId: r.driver_id ?? '', createdAt: new Date(r.created_at).toISOString() });
+const toVehicle = (r: VehicleRow): Vehicle => ({ id: String(r.id), name: r.name, nickname: r.nickname ?? '', icon: asIcon(r.icon), memo: r.memo, driverId: r.driver_id ?? '', createdAt: new Date(r.created_at).toISOString(), model: r.model ?? '', year: r.year ?? '', vin: r.vin ?? '', ownership: (['owned', 'lease', 'rent'].includes(r.ownership ?? '') ? r.ownership : '') as VehicleSpec['ownership'], mileage: r.mileage ?? 0, oilDate: r.oil_date ?? '', oilKm: r.oil_km ?? 0, inspectionDate: r.inspection_date ?? '', photos: Array.isArray(r.photos) ? r.photos : [], insurer: r.insurer ?? '', policyNo: r.policy_no ?? '', insuranceExpiry: r.insurance_expiry ?? '', premium: r.premium ?? 0, insurancePhone: r.insurance_phone ?? '', insuranceNote: r.insurance_note ?? '' });
+const specCols = (s: VehicleSpec) => ({ model: s.model, year: s.year, vin: s.vin, ownership: s.ownership, mileage: s.mileage, oil_date: s.oilDate || null, oil_km: s.oilKm, inspection_date: s.inspectionDate || null, insurer: s.insurer, policy_no: s.policyNo, insurance_expiry: s.insuranceExpiry || null, premium: s.premium, insurance_phone: s.insurancePhone, insurance_note: s.insuranceNote });
 const toVehicleItem = (r: VehicleItemRow): VehicleItem => ({ id: String(r.id), vehicleId: String(r.vehicle_id), key: r.product_key, qty: r.qty, note: r.note, at: new Date(r.at).toISOString() });
 const numId = (s: string) => (/^\d{1,15}$/.test(s) ? Number(s) : -1);
 const DUP = '같은 차량 번호나 별칭이 이미 있어요.';
@@ -571,8 +581,8 @@ export async function getVehicleItems(): Promise<VehicleItem[]> {
   return (await fetchAll<VehicleItemRow>((a, b) => supabase().from('vehicle_items').select('*').order('id').range(a, b), '차량 품목 조회')).map(toVehicleItem);
 }
 
-export async function addVehicle(name: string, nickname: string, icon: string, memo: string, driverId: string): Promise<VehicleResult<{ vehicle: Vehicle }>> {
-  const res = await supabase().from('vehicles').insert({ name, nickname, icon, memo, driver_id: driverId || null }).select('*').single();
+export async function addVehicle(name: string, nickname: string, icon: string, memo: string, driverId: string, spec: VehicleSpec): Promise<VehicleResult<{ vehicle: Vehicle }>> {
+  const res = await supabase().from('vehicles').insert({ name, nickname, icon, memo, driver_id: driverId || null, ...specCols(spec) }).select('*').single();
   if (res.error) {
     if (res.error.code === '23505') return { error: DUP };
     throw new Error('Supabase 차량 등록 실패: ' + res.error.message);
@@ -580,8 +590,8 @@ export async function addVehicle(name: string, nickname: string, icon: string, m
   return { ok: true, vehicle: toVehicle(res.data as VehicleRow) };
 }
 
-export async function updateVehicle(id: string, name: string, nickname: string, icon: string, memo: string, driverId: string): Promise<VehicleResult> {
-  const res = await supabase().from('vehicles').update({ name, nickname, icon, memo, driver_id: driverId || null }).eq('id', numId(id)).select('id');
+export async function updateVehicle(id: string, name: string, nickname: string, icon: string, memo: string, driverId: string, spec: VehicleSpec): Promise<VehicleResult> {
+  const res = await supabase().from('vehicles').update({ name, nickname, icon, memo, driver_id: driverId || null, ...specCols(spec) }).eq('id', numId(id)).select('id');
   if (res.error) {
     if (res.error.code === '23505') return { error: DUP };
     throw new Error('Supabase 차량 수정 실패: ' + res.error.message);
@@ -589,10 +599,34 @@ export async function updateVehicle(id: string, name: string, nickname: string, 
   return (res.data ?? []).length ? { ok: true } : { error: '없는 차량이에요.' };
 }
 
+/** 차량 현황 사진 추가. 한도를 넘으면 가장 오래된 사진부터 빠지고, 빠진 사진 주소를 돌려준다(파일 정리용). */
+export async function addVehiclePhoto(id: string, photo: VehiclePhoto): Promise<VehicleResult<{ removed: string[] }>> {
+  const n = numId(id);
+  const row = must(await supabase().from('vehicles').select('photos').eq('id', n).maybeSingle(), '차량 조회') as { photos: VehiclePhoto[] | null } | null;
+  if (!row) return { error: '없는 차량이에요.' };
+  const all = [photo, ...(Array.isArray(row.photos) ? row.photos : [])];
+  must(await supabase().from('vehicles').update({ photos: all.slice(0, MAX_VEHICLE_PHOTOS) }).eq('id', n).select('id'), '차량 사진 저장');
+  return { ok: true, removed: all.slice(MAX_VEHICLE_PHOTOS).map(p => p.url) };
+}
+export async function removeVehiclePhoto(id: string, url: string): Promise<VehicleResult> {
+  const n = numId(id);
+  const row = must(await supabase().from('vehicles').select('photos').eq('id', n).maybeSingle(), '차량 조회') as { photos: VehiclePhoto[] | null } | null;
+  const cur = Array.isArray(row?.photos) ? row!.photos! : [];
+  if (!row || !cur.some(p => p.url === url)) return { error: '없는 사진이에요.' };
+  must(await supabase().from('vehicles').update({ photos: cur.filter(p => p.url !== url) }).eq('id', n).select('id'), '차량 사진 삭제');
+  return { ok: true };
+}
+
 export async function removeVehicle(id: string): Promise<VehicleResult> {
   const n = numId(id);
-  const used = must(await supabase().from('vehicle_items').select('id').eq('vehicle_id', n).limit(1), '차량 품목 조회') as { id: number }[];
-  if (used.length) return { error: '배치된 품목이 남아 있어요. 먼저 모두 회수해 주세요.' };
+  // 차량에 배치된 품목은 모두 되돌린 뒤 삭제한다 (연장은 창고 재고로 돌아오고, 상비품은 차량에서 빠진다 — 내리기와 같은 규칙)
+  const items = must(await supabase().from('vehicle_items').select('*').eq('vehicle_id', n), '차량 품목 조회') as VehicleItemRow[];
+  for (const it of items) {
+    const gone = must(await supabase().from('vehicle_items').delete().eq('id', it.id).eq('qty', it.qty).select('id'), '차량 품목 빼기') as { id: number }[];
+    if (!gone.length) return { error: '다른 곳에서 먼저 바뀌었어요. 새로고침한 뒤 다시 해 주세요.' };
+    const p = must(await supabase().from('products').select('kind').eq('key', it.product_key).maybeSingle(), '품목 조회') as { kind: string | null } | null;
+    if (p && asKind(p.kind) === '연장') await adjustStock(it.product_key, it.qty);
+  }
   const rows = must(await supabase().from('vehicles').delete().eq('id', n).select('id'), '차량 삭제') as { id: number }[];
   return rows.length ? { ok: true } : { error: '없는 차량이에요.' };
 }
@@ -821,22 +855,44 @@ export async function setAnnualLeave(year: number, memberId: string, days: numbe
   must(await supabase().from('app_settings').upsert({ key: 'annual_leave', value: { ...all, [String(year)]: y } }, { onConflict: 'key' }), '연차 부여 저장');
 }
 
-// ───────── 구매관리 (purchases) — 구매하려는 품목의 링크·가격 ─────────
-type PurchaseRow = { id: number; name: string; brand: string | null; url: string; price: number; qty: number; shipping: string | null; shipping_fee: number | null; memo: string; tags: string[] | null; status: string; created_by: string; created_at: string; updated_at: string };
-const toPurchase = (r: PurchaseRow): PurchaseItem => ({ id: String(r.id), name: r.name, brand: r.brand ?? '', url: r.url, price: r.price, qty: r.qty, shipping: (r.shipping === 'separate' ? 'separate' : 'included') as PurchaseItem['shipping'], shippingFee: r.shipping_fee ?? 0, memo: r.memo, tags: r.tags ?? [], status: r.status as PurchaseItem['status'], createdBy: r.created_by, createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString() });
-const purchaseCols = (i: PurchaseInput) => ({ name: i.name, brand: i.brand, url: i.url, price: i.price, qty: i.qty, shipping: i.shipping, shipping_fee: i.shippingFee, memo: i.memo, tags: i.tags, status: i.status });
+// ───────── 경비관리 (expenses) — 현장에서 쓴 경비 영수증 ─────────
+type ExpenseRow = { purchase_id?: string | null; status?: string | null; link?: string | null; account?: string | null; id: number; spent_on: string; site: string; category: string; amount: number; memo: string | null; photos: string[] | null; doc_type: string | null; vendor: string | null; pay_method: string | null; booked: boolean | null; booked_by: string | null; booked_at: string | null; member_id: string; member_name: string; created_at: string };
+const toExpense = (r: ExpenseRow): Expense => ({ id: String(r.id), date: r.spent_on, site: r.site, category: (['meal', 'drink', 'materials', 'fuel', 'parking', 'supplies'].includes(r.category) ? r.category : 'other') as Expense['category'], amount: r.amount, memo: r.memo ?? '', docType: (r.doc_type === 'invoice' || r.doc_type === 'request' ? r.doc_type : 'receipt') as Expense['docType'], vendor: r.vendor ?? '', payMethod: (['cash', 'transfer'].includes(r.pay_method ?? '') ? r.pay_method : 'card') as Expense['payMethod'], photos: r.photos ?? [], memberId: r.member_id, memberName: r.member_name, createdAt: new Date(r.created_at).toISOString(), booked: !!r.booked, bookedBy: r.booked_by ?? '', bookedAt: r.booked_at ? new Date(r.booked_at).toISOString() : '', purchaseId: r.purchase_id ?? '', status: r.status === 'requested' ? 'requested' : 'done', link: r.link ?? '', account: r.account ?? '' });
+const expenseCols = (i: ExpenseInput) => ({ spent_on: i.date, site: i.site, category: i.category, amount: i.amount, memo: i.memo, doc_type: i.docType, vendor: i.vendor, pay_method: i.payMethod, photos: i.photos, booked: i.booked, booked_by: i.bookedBy, booked_at: i.bookedAt || null, purchase_id: i.purchaseId, status: i.status, link: i.link, account: i.account });
 
-export async function getPurchases(): Promise<PurchaseItem[]> {
-  return (await fetchAll<PurchaseRow>((a, b) => supabase().from('purchases').select('*').order('id', { ascending: false }).range(a, b), '구매 품목 조회')).map(toPurchase);
+export async function getExpenses(): Promise<Expense[]> {
+  return (await fetchAll<ExpenseRow>((a, b) => supabase().from('expenses').select('*').order('spent_on', { ascending: false }).order('id', { ascending: false }).range(a, b), '경비 조회')).map(toExpense);
 }
-export async function addPurchase(i: PurchaseInput, by: string): Promise<PurchaseItem> {
-  return toPurchase(must(await supabase().from('purchases').insert({ ...purchaseCols(i), created_by: by }).select('*').single(), '구매 품목 등록') as PurchaseRow);
+export async function addExpense(i: ExpenseInput, by: { id: string; name: string }): Promise<Expense> {
+  return toExpense(must(await supabase().from('expenses').insert({ ...expenseCols(i), member_id: by.id, member_name: by.name }).select('*').single(), '경비 등록') as ExpenseRow);
 }
-export async function updatePurchase(id: string, i: PurchaseInput): Promise<boolean> {
-  const rows = must(await supabase().from('purchases').update({ ...purchaseCols(i), updated_at: new Date().toISOString() }).eq('id', numId(id)).select('id'), '구매 품목 수정') as { id: number }[];
+export async function updateExpense(id: string, i: ExpenseInput): Promise<boolean> {
+  const rows = must(await supabase().from('expenses').update(expenseCols(i)).eq('id', numId(id)).select('id'), '경비 수정') as { id: number }[];
   return rows.length > 0;
 }
-export async function removePurchase(id: string): Promise<boolean> {
-  const rows = must(await supabase().from('purchases').delete().eq('id', numId(id)).select('id'), '구매 품목 삭제') as { id: number }[];
+export async function removeExpense(id: string): Promise<boolean> {
+  const rows = must(await supabase().from('expenses').delete().eq('id', numId(id)).select('id'), '경비 삭제') as { id: number }[];
   return rows.length > 0;
 }
+
+// ───────── 적재 패키지 (load_packages) — 자주 싣는 연장·상비품 묶음 ─────────
+type PackageRow = { id: number; name: string; items: LoadPackageItem[] | null; created_at: string };
+const toPackage = (r: PackageRow): LoadPackage => ({ id: String(r.id), name: r.name, items: Array.isArray(r.items) ? r.items : [], createdAt: new Date(r.created_at).toISOString() });
+export async function getLoadPackages(): Promise<LoadPackage[]> {
+  return (await fetchAll<PackageRow>((a, b) => supabase().from('load_packages').select('*').order('id').range(a, b), '적재 패키지 조회')).map(toPackage);
+}
+export async function saveLoadPackage(i: LoadPackageInput, id: string | null): Promise<VehicleResult> {
+  const res = id
+    ? await supabase().from('load_packages').update({ name: i.name, items: i.items }).eq('id', numId(id)).select('id')
+    : await supabase().from('load_packages').insert({ name: i.name, items: i.items }).select('id');
+  if (res.error) {
+    if (res.error.code === '23505') return { error: '같은 이름의 패키지가 이미 있어요.' };
+    throw new Error('Supabase 적재 패키지 저장 실패: ' + res.error.message);
+  }
+  return (res.data ?? []).length ? { ok: true } : { error: '없는 패키지예요.' };
+}
+export async function removeLoadPackage(id: string): Promise<VehicleResult> {
+  const rows = must(await supabase().from('load_packages').delete().eq('id', numId(id)).select('id'), '적재 패키지 삭제') as { id: number }[];
+  return rows.length ? { ok: true } : { error: '없는 패키지예요.' };
+}
+

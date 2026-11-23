@@ -54,7 +54,7 @@ export default function RequestsAdmin({ initialRequests, canHandle }: { initialR
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 px-4 pb-24">
       <header className="flex flex-wrap items-center gap-3 py-5">
-        <h1 className="mr-auto text-xl font-extrabold">현장요청</h1>
+        <h1 className="mr-auto text-xl font-extrabold">자재요청 현황</h1>
         <span className="text-sm text-zinc-500">총 {initialRequests.length}건</span>
       </header>
 

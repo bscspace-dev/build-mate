@@ -21,7 +21,7 @@ function ExtBadge({ s }: { s: Site }) {
   return <span className={`ml-1.5 rounded-full px-2 py-0.5 align-middle text-[11px] font-bold ${t > 0 ? "bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200" : "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-200"}`}>{t > 0 ? `연장 +${t}일` : `단축 ${t}일`}</span>;
 }
 
-// 현장일정(현장관리 메뉴 아래): 자재 요청에서 고르는 현장을 등록·수정·삭제한다. 항목: 현장명 · 공사기간 · 담당 PM · 현장 주소 · 특이사항
+// 현장정보(현장관리 메뉴 아래): 자재 요청에서 고르는 현장을 등록·수정·삭제한다. 항목: 현장명 · 공사기간 · 담당 PM · 현장 주소 · 특이사항
 export default function SitesAdmin({
   sites, pms, canRegister, canEdit, canDelete,
 }: {
@@ -127,7 +127,7 @@ export default function SitesAdmin({
   return (
     <div className="mx-auto w-full max-w-5xl flex-1 px-4 pb-24">
       <header className="flex flex-wrap items-center gap-3 py-5">
-        <h1 className="mr-auto text-xl font-extrabold">현장일정</h1>
+        <h1 className="mr-auto text-xl font-extrabold">현장정보</h1>
         <span className="text-sm text-zinc-500">총 {sites.length}곳</span>
         <div className="flex overflow-hidden rounded-xl border border-black/15 text-sm font-bold dark:border-white/15" role="group" aria-label="보기 방식">
           {([["cal", "📅 달력"], ["list", "☰ 목록"]] as const).map(([v, label]) => (

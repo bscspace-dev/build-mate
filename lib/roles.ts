@@ -44,6 +44,7 @@ export const DEFAULT_TEAMS: Team[] = [
   { key: 'super', label: '최고 관리자', group: 'office', locked: true },
   { key: 'dev', label: '개발팀', group: 'office', locked: true },
   { key: 'sales', label: '영업팀', group: 'office', locked: false },
+  { key: 'accounting', label: '경리팀', group: 'office', locked: true },
   { key: 'worker', label: '현장작업자(정)', group: 'field', locked: true },
   { key: 'worker_sub', label: '현장작업자(부)', group: 'field', locked: true },
   { key: 'pm', label: '현장관리자(PM)', group: 'field', locked: true },
@@ -67,21 +68,30 @@ export function withFieldWorkerTeams(list: readonly Team[]): Team[] | null {
   return next;
 }
 
+/**
+ * 경리팀: 영수증·세금계산서를 보고 엑셀로 정리하는 사무실 직급. 아직 없으면 만든다 (같은 이름의 팀을 이미 만들어 두었으면 그대로 둔다).
+ * 바뀐 목록을 돌려주고, 바꿀 것이 없으면 null.
+ */
+export function withAccountingTeam(list: readonly Team[]): Team[] | null {
+  if (list.some(t => t.key === 'accounting' || t.label === '경리팀')) return null;
+  return [...list, { key: 'accounting', label: '경리팀', group: 'office', locked: true }];
+}
+
 export const teamLabel = (teams: readonly Team[], key: RoleKey): string => teams.find(t => t.key === key)?.label ?? key;
 export const teamGroup = (teams: readonly Team[], key: RoleKey): GroupKey | null => teams.find(t => t.key === key)?.group ?? null;
 export const teamsIn = (teams: readonly Team[], g: GroupKey): Team[] => teams.filter(t => t.group === g);
 
 export const MENUS = [
   { key: 'catalog', label: '장비운용', parent: '운영관리', href: '/admin', grantable: true, desc: '연장·상비품·자재를 보고, 필요 없는 품목을 삭제·복원해요' },
-  { key: 'purchases', label: '구매관리', parent: '운영관리', href: '/admin/purchases', grantable: true, desc: '구매하려는 품목의 링크와 가격을 정리해요' },
-  { key: 'suppliers', label: '거래처', parent: '현장관리', href: '/admin/suppliers', grantable: true, desc: '거래처 목록(취급품목·연락처·주소)을 보고, 거래처를 등록·수정·삭제해요' },
-  { key: 'sites', label: '현장일정', parent: '현장관리', href: '/admin/sites', grantable: true, desc: '자재 요청에서 고를 현장을 등록·수정·삭제해요' },
+  { key: 'vehicles', label: '차량정보', parent: '운영관리', href: '/admin/vehicles', grantable: true, desc: '차량마다 배치된 연장과 나간 상비품 수량을 보고 관리해요' },
+  { key: 'suppliers', label: '거래처관리', parent: '운영관리', href: '/admin/suppliers', grantable: true, desc: '거래처 목록(취급품목·연락처·주소)을 보고, 거래처를 등록·수정·삭제해요' },
+  { key: 'sites', label: '현장정보', parent: '현장관리', href: '/admin/sites', grantable: true, desc: '자재 요청에서 고를 현장을 등록·수정·삭제해요' },
   { key: 'placements', label: '현장배치', parent: '현장관리', href: '/admin/placements', grantable: true, desc: '날짜별로 현장작업자를 현장에 배치해요 (작업자는 "내 배치"에서 다음날 현장을 확인)' },
-  { key: 'attendance', label: '출근관리', parent: '현장관리', href: '/admin/attendance', grantable: true, desc: '현장배치를 바탕으로 출근 일수를 표로 조회해요 (보기만 부여하면 본인 출근만, 전체 인원 조회를 주면 모두)' },
-  { key: 'leave', label: '휴가신청', parent: '현장관리', href: '/admin/leave', grantable: true, desc: '휴가를 사유와 함께 신청하고, 관리자가 승인하면 휴가로 처리돼요' },
-  { key: 'requests', label: '현장요청', parent: '현장관리', href: '/admin/requests', grantable: true, desc: '현장에서 들어온 자재 요청(품목과 수량)을 확인해요' },
-  { key: 'vehicles', label: '차량운용', parent: '운영관리', href: '/admin/vehicles', grantable: true, desc: '차량마다 배치된 연장과 나간 상비품 수량을 보고 관리해요' },
-  { key: 'members', label: '회원 관리', href: '/admin/members', grantable: false, desc: '회원을 만들고 팀·메뉴를 부여하고 비밀번호를 다시 발급해요' },
+  { key: 'expenses', label: '경비관리', parent: '운영관리', href: '/admin/expenses', grantable: true, desc: '영수증·세금계산서를 올리거나 구매가 필요한 비품을 요청하면, 담당자가 구매하고 경리가 엑셀로 정리해요' },
+  { key: 'requests', label: '자재요청 현황', parent: '현장관리', href: '/admin/requests', grantable: true, desc: '현장에서 들어온 자재 요청(품목과 수량)을 확인해요' },
+  { key: 'attendance', label: '출근관리', parent: '인사관리', href: '/admin/attendance', grantable: true, desc: '현장배치를 바탕으로 출근 일수를 표로 조회해요 (보기만 부여하면 본인 출근만, 전체 인원 조회를 주면 모두)' },
+  { key: 'leave', label: '휴가관리', parent: '인사관리', href: '/admin/leave', grantable: true, desc: '휴가를 사유와 함께 신청하고, 관리자가 승인하면 휴가로 처리돼요' },
+  { key: 'members', label: '회원관리', href: '/admin/members', grantable: false, desc: '회원을 만들고 팀·메뉴를 부여하고 비밀번호를 다시 발급해요' },
   { key: 'survey', label: '자재 요청', href: '/survey', grantable: true, desc: '내 공정의 자재를 골라 수량과 함께 요청해요' },
 ] as const;
 
@@ -101,7 +111,7 @@ export const sortMenus = <T extends MenuKey>(keys: readonly T[], order: readonly
 };
 
 export const isMenu = (v: unknown): v is MenuKey => MENUS.some(m => m.key === v);
-/** 상단 메뉴에서 이 메뉴가 들어가는 상위 메뉴 이름 (없으면 null) — 예: 현장일정 → 현장관리 */
+/** 상단 메뉴에서 이 메뉴가 들어가는 상위 메뉴 이름 (없으면 null) — 예: 현장정보 → 현장관리 */
 export const menuParent = (k: MenuKey): string | null => {
   const m = MENUS.find(x => x.key === k);
   return m && 'parent' in m ? (m as { parent: string }).parent : null;
@@ -117,11 +127,12 @@ const TEAM_MENUS: Record<string, MenuKey[]> = {
   design: ['leave'], // 사무 팀: 휴가는 본인 신청까지 (연차에서 차감)
   marketing: ['leave'],
   sales: ['leave'],
-  worker: ['survey', 'suppliers', 'placements', 'leave'],
-  worker_sub: ['survey', 'suppliers', 'placements', 'leave'],
-  pm: ['survey', 'suppliers', 'placements', 'leave'],
-  super: ['catalog', 'vehicles', 'purchases', 'suppliers', 'sites', 'placements', 'attendance', 'leave', 'requests', 'members'],
-  dev: ['catalog', 'vehicles', 'purchases', 'suppliers', 'sites', 'placements', 'attendance', 'leave', 'requests', 'members'],
+  accounting: ['expenses', 'leave'], // 경리: 경비 서류를 모두 보고 엑셀로 정리
+  worker: ['survey', 'suppliers', 'placements', 'leave', 'expenses'],
+  worker_sub: ['survey', 'suppliers', 'placements', 'leave', 'expenses'],
+  pm: ['survey', 'suppliers', 'placements', 'leave', 'expenses'],
+  super: ['catalog', 'vehicles', 'suppliers', 'sites', 'placements', 'expenses', 'attendance', 'leave', 'requests', 'members'],
+  dev: ['catalog', 'vehicles', 'suppliers', 'sites', 'placements', 'expenses', 'attendance', 'leave', 'requests', 'members'],
 };
 
 /** 팀 기본 메뉴라도 동작을 줄여야 하는 팀: 여기 없으면 그 메뉴의 모든 동작이 허용된다. (현장 팀은 거래처를 보고 등록만 한다) */
@@ -129,9 +140,10 @@ const TEAM_ACTIONS: Record<string, Partial<Record<MenuKey, ActionKey[]>>> = {
   design: { leave: ['view', 'register'] },
   marketing: { leave: ['view', 'register'] },
   sales: { leave: ['view', 'register'] },
-  worker: { suppliers: ['view', 'register'], placements: ['view'], leave: ['view', 'register'] }, // 현장배치는 보기만, 휴가는 본인 신청까지
-  worker_sub: { suppliers: ['view', 'register'], placements: ['view'], leave: ['view', 'register'] },
-  pm: { suppliers: ['view', 'register'], placements: ['view'], leave: ['view', 'register'] },
+  accounting: { leave: ['view', 'register'] }, // 경비관리는 모든 동작 가능
+  worker: { suppliers: ['view', 'register'], placements: ['view'], leave: ['view', 'register'], expenses: ['view', 'register'] }, // 현장배치는 보기만, 휴가는 본인 신청까지, 현장경비는 내 영수증 등록까지
+  worker_sub: { suppliers: ['view', 'register'], placements: ['view'], leave: ['view', 'register'], expenses: ['view', 'register'] },
+  pm: { suppliers: ['view', 'register'], placements: ['view'], leave: ['view', 'register'], expenses: ['view', 'register'] },
 };
 
 /** 한 팀 또는 여러 팀(겸직). 여러 팀이면 기본 메뉴를 모두 합친다. */
@@ -185,19 +197,19 @@ export type ActionKey = (typeof ACTIONS)[number]['key'];
 export const isAction = (v: unknown): v is ActionKey => ACTIONS.some(a => a.key === v);
 export const actionLabel = (k: ActionKey): string => ACTIONS.find(a => a.key === k)?.label ?? k;
 /** 메뉴마다 동작 이름이 다르게 보여야 할 때 (예: 출근관리의 '수정' 칸은 '전체 조회') */
-const ACTION_LABELS: Partial<Record<MenuKey, Partial<Record<ActionKey, string>>>> = { attendance: { view: '본인 출근만 보기', register: '조회 기준 등록·수정', edit: '전체 인원 조회' }, leave: { view: '내 신청 보기', register: '휴가 신청', edit: '승인·반려 (전체 신청 조회)' } };
+const ACTION_LABELS: Partial<Record<MenuKey, Partial<Record<ActionKey, string>>>> = { attendance: { view: '본인 출근만 보기', register: '조회 기준 등록·수정', edit: '전체 인원 조회' }, leave: { view: '내 신청 보기', register: '휴가 신청', edit: '승인·반려 (전체 신청 조회)' }, expenses: { view: '내 서류 보기', register: '서류·구매요청 올리기 (내 것 수정·삭제)', edit: '전체 조회·구매 완료 처리·엑셀 (담당자·경리)', delete: '전체 삭제' } };
 export const menuActionLabel = (menu: MenuKey, k: ActionKey): string => ACTION_LABELS[menu]?.[k] ?? actionLabel(k);
 
 /** 그 메뉴에서 권한을 따로 줄 수 있는 동작. 설문 참여에는 등록/수정/삭제 개념이 없다. */
 export const MENU_ACTIONS: Record<MenuKey, ActionKey[]> = {
   catalog: ['view', 'register', 'edit', 'delete'],
   vehicles: ['view', 'register', 'edit', 'delete'], // 등록 = 차량 등록, 수정 = 연장·상비품 배치/회수, 삭제 = 차량 삭제
-  purchases: ['view', 'register', 'edit', 'delete'],
   leave: ['view', 'register', 'edit'], // 보기 = 내 신청 내역 · 등록 = 휴가 신청 · 수정 = 승인·반려(전체 신청 조회)
   attendance: ['view', 'register', 'edit'], // 보기 = 본인 출근만 · 등록 = 월 조회 기준(며칠부터 며칠) 등록·수정 · 전체 조회(edit) = 모든 인원의 출근
   placements: ['view', 'register', 'edit', 'delete'], // 등록 = 배치·복사, 삭제 = 배치 빼기
   sites: ['view', 'register', 'edit', 'delete'],
   suppliers: ['view', 'register', 'edit', 'delete'], // 거래처 정보 관리. 로그인 아이디 발급은 회원 관리의 '거래처 계정'(최고 관리자·개발팀)
+  expenses: ['view', 'register', 'edit', 'delete'], // 보기 = 내 영수증 · 등록 = 영수증 올리기(내 것 수정·삭제 포함) · 수정 = 모든 사람의 영수증 조회·수정(관리자) · 삭제 = 모두의 영수증 삭제
   requests: ['view', 'edit'], // 수정 = 요청을 '준비 완료'로 처리하고, 새 요청 알림을 받는 권한
   members: ['view', 'register', 'edit', 'delete'],
   survey: [],

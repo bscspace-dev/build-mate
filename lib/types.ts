@@ -27,7 +27,35 @@ export type Product = {
 export const VEHICLE_ICONS = ['🚚', '🚛', '🚐', '🛻', '🚗', '🚙', '🚜', '🏗️'] as const;
 export const asIcon = (v: unknown): string => ((VEHICLE_ICONS as readonly unknown[]).includes(v) ? (v as string) : VEHICLE_ICONS[0]);
 
-export type Vehicle = { id: string; name: string; nickname: string; icon: string; memo: string; driverId: string; createdAt: string }; // driverId = 배차된 회원(members.id), 없으면 빈 문자열. name = 차량 번호, nickname = 1호차 같은 별칭(없으면 빈 문자열)
+export type Vehicle = { id: string; name: string; nickname: string; icon: string; memo: string; driverId: string; createdAt: string; photos: VehiclePhoto[] } & VehicleSpec;
+/** 차량 현황 사진 한 장: 지금 차량 상태를 사진으로 남긴다 (외관, 계기판, 적재 상태 등). 새 사진이 위로 온다. */
+export type VehiclePhoto = { url: string; at: string; by: string; byId: string; note: string };
+export const MAX_VEHICLE_PHOTOS = 20; // 차량 한 대에 남기는 사진 수 (넘으면 가장 오래된 것부터 지운다)
+/** 차량 소유 형태: 소유 · 리스 · 장기렌트 (모르면 빈 값) */
+export type VehicleOwnership = '' | 'owned' | 'lease' | 'rent';
+/** 차량 관리 정보 (소유 차량 관리 표): 차종·연식·차대번호·소유 형태·주행거리·엔진오일 관리·검사일. memo 는 비고. */
+export type VehicleSpec = {
+  model: string; // 차종 (예: 포터, 봉고, K3)
+  year: string; // 연식 (예: 2017, 2022/11)
+  vin: string; // 차대번호
+  ownership: VehicleOwnership;
+  mileage: number; // 현재 주행거리(km), 모르면 0
+  oilDate: string; // 엔진오일 마지막 교환일 (YYYY-MM-DD), 없으면 빈 문자열
+  oilKm: number; // 마지막 교환 때 주행거리(km), 모르면 0
+  inspectionDate: string; // 차량 검사 만료·예정일 (YYYY-MM-DD), 없으면 빈 문자열
+  insurer: string; // 보험사
+  policyNo: string; // 증권번호
+  insuranceExpiry: string; // 보험 만기일 (YYYY-MM-DD), 없으면 빈 문자열
+  premium: number; // 연 보험료(원), 모르면 0
+  insurancePhone: string; // 보험 연락처 (담당자·긴급출동)
+  insuranceNote: string; // 보험 특이사항 (운전자 범위, 특약 등)
+};
+export const EMPTY_SPEC: VehicleSpec = { model: '', year: '', vin: '', ownership: '', mileage: 0, oilDate: '', oilKm: 0, inspectionDate: '', insurer: '', policyNo: '', insuranceExpiry: '', premium: 0, insurancePhone: '', insuranceNote: '' }; // driverId = 배차된 회원(members.id), 없으면 빈 문자열. name = 차량 번호, nickname = 1호차 같은 별칭(없으면 빈 문자열)
+
+/** 적재 패키지: 자주 싣는 연장·상비품 묶음. 차량에 한 번에 적재한다. */
+export type LoadPackageItem = { key: string; qty: number };
+export type LoadPackage = { id: string; name: string; items: LoadPackageItem[]; createdAt: string };
+export type LoadPackageInput = { name: string; items: LoadPackageItem[] };
 
 /** 차량에 배치된 품목. 연장은 1개씩(note = 일련번호·메모), 상비품은 품목마다 한 줄에 수량을 합친다. */
 export type VehicleItem = { id: string; vehicleId: string; key: string; qty: number; note: string; at: string };
@@ -82,29 +110,38 @@ export type LeaveRequest = {
 };
 export type LeaveInput = { memberId: string; startDate: string; endDate: string; kind: LeaveKind; reason: string };
 
-/** 구매관리 품목 상태: 구매 예정 → 주문함 → 구매 완료 */
-export type PurchaseStatus = 'want' | 'ordered' | 'done';
-/** 배송비: included = 가격에 포함(무료배송 포함) · separate = 따로 낸다(배송비 금액을 적는다) */
-export type PurchaseShipping = 'included' | 'separate';
-
-/** 구매하려는 품목 (링크·가격 정리) */
-export type PurchaseItem = {
+/** 경비 분류: 식사 · 음료 · 자재구매 · 유류비 · 주차·통행 · 공구·소모품 · 기타 */
+export type ExpenseCategory = 'meal' | 'drink' | 'materials' | 'fuel' | 'parking' | 'supplies' | 'other';
+/** 올리는 서류: 영수증 · 세금계산서 · 구매요청(인터넷으로 사야 하는 비품을 구매해 달라고 요청) */
+export type ExpenseDoc = 'receipt' | 'invoice' | 'request';
+/** 진행 상태: 구매요청은 구매 대기 → 구매 완료(담당자가 구매하고 영수증 사진을 올림), 세금계산서는 입금 요청 → 구매 완료(담당자가 입금하고 확인). 영수증은 언제나 완료. */
+export type ExpenseStatus = 'requested' | 'done';
+/** 결제수단: 카드 · 현금 · 계좌이체 */
+export type ExpensePay = 'card' | 'cash' | 'transfer';
+/** 현장에서 쓴 경비 서류(영수증·세금계산서) 한 건. 사무실 경리가 이걸 보고 엑셀로 정리한다. */
+export type Expense = {
   id: string;
-  name: string; // 품목명
-  brand: string; // 브랜드 (없으면 빈 문자열)
-  url: string; // 구매 링크 (없으면 빈 문자열)
-  price: number; // 개당 가격(원)
-  qty: number; // 수량
-  shipping: PurchaseShipping; // 배송비 포함 여부
-  shippingFee: number; // 배송비 별도일 때 배송비(원, 품목당 한 번). 포함이면 0
-  memo: string;
-  tags: string[]; // 묶어 보기용 태그 (최대 5개)
-  status: PurchaseStatus;
-  createdBy: string; // 등록한 사람 이름
+  date: string; // 쓴 날짜 (YYYY-MM-DD)
+  site: string; // 현장 이름
+  category: ExpenseCategory;
+  amount: number; // 금액(원)
+  memo: string; // 무엇에 썼는지
+  docType: ExpenseDoc; // 영수증 / 세금계산서
+  vendor: string; // 상호·거래처 (가게 이름, 세금계산서를 준 업체)
+  payMethod: ExpensePay; // 결제수단
+  photos: string[]; // 서류 사진 주소들
+  memberId: string; // 올린 회원
+  memberName: string;
   createdAt: string;
-  updatedAt: string;
+  booked: boolean; // 경리가 장부·엑셀에 정리했는가
+  bookedBy: string; // 정리한 사람 이름
+  bookedAt: string; // 정리한 시각
+  purchaseId: string; // 예전 구매관리 메뉴에서 넘어온 건의 옛 번호 (이제 쓰지 않는다)
+  status: ExpenseStatus; // 구매요청이면 대기·완료, 그 밖에는 언제나 done
+  link: string; // 구매요청의 구매 링크 (없으면 빈 문자열)
+  account: string; // 세금계산서의 입금할 계좌번호 (없으면 빈 문자열)
 };
-export type PurchaseInput = { name: string; brand: string; url: string; price: number; qty: number; shipping: PurchaseShipping; shippingFee: number; memo: string; tags: string[]; status: PurchaseStatus };
+export type ExpenseInput = { date: string; site: string; category: ExpenseCategory; amount: number; memo: string; docType: ExpenseDoc; vendor: string; payMethod: ExpensePay; photos: string[]; booked: boolean; bookedBy: string; bookedAt: string; purchaseId: string; status: ExpenseStatus; link: string; account: string };
 
 /** 마감일 변경 한 번: from(바꾸기 전 마감일) → to(새 마감일). to 가 늦으면 연장, 빠르면 단축 */
 export type SiteExtension = { from: string; to: string; at: string };
