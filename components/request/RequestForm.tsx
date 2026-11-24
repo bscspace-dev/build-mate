@@ -357,7 +357,7 @@ export default function RequestForm({
             🛒 장바구니
             {count > 0 && <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1 text-[11px] font-bold text-white">{count}</span>}
           </button>
-          <motion.button whileTap={{ scale: 0.97 }} type="button" disabled={busy || count === 0} onClick={askSite} className="shrink-0 rounded-xl bg-blue-600 px-6 py-3 font-bold text-white disabled:opacity-40">
+          <motion.button type="button" disabled={busy || count === 0} onClick={askSite} className="shrink-0 rounded-xl bg-blue-600 px-6 py-3 font-bold text-white disabled:opacity-40">
             요청하기
           </motion.button>
         </div>

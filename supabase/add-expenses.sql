@@ -57,5 +57,5 @@ alter table public.expenses enable row level security;   -- 정책을 만들지 
 insert into public.teams (key, label, grp, locked, sort) values ('accounting', '경리팀', 'office', true, 10) on conflict (key) do nothing;   -- 경리 직급(경비 서류를 보고 엑셀로 정리)
 
 alter table public.members drop constraint if exists members_menus_check;
-alter table public.members add constraint members_menus_check check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses']);
+alter table public.members add constraint members_menus_check check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses','equipment']);
 notify pgrst, 'reload schema';

@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/Sheet";
 import { printElement } from "@/lib/print-client";
+import { formatPhone } from "@/lib/member-utils";
+import { embedPostcode, loadPostcode } from "@/lib/postcode-client";
 
 export type SupplierLite = { id: string; name: string; handles: string; phone: string; address: string };
 
@@ -12,6 +14,14 @@ const inputCls = "mt-1.5 w-full rounded-xl border border-black/15 bg-transparent
 const NONE = "취급품목 미등록";
 const itemsOf = (handles: string): string[] => [...new Set(handles.split(/[,，、/·\n]+/).map(x => x.trim()).filter(Boolean))];
 const telHref = (p: string) => "tel:" + p.replace(/[^\d+]/g, "");
+// 등록된 주소를 네이버 지도에서 찾아 연다 (주소가 없으면 링크 없이 이름만)
+const naverMap = (addr: string) => "https://map.naver.com/p/search/" + encodeURIComponent(addr);
+function NameLink({ name, address, className }: { name: string; address: string; className?: string }) {
+  if (!address.trim()) return <span className={className}>{name}</span>;
+  return (
+    <a href={naverMap(address)} target="_blank" rel="noreferrer" title={`${address} — 네이버 지도에서 열기`} className={`${className ?? ""} underline decoration-zinc-300 decoration-dotted underline-offset-4 hover:text-blue-600 hover:decoration-blue-600 dark:decoration-zinc-600`}>{name}</a>
+  );
+}
 
 type Form = { name: string; handles: string; phone: string; address: string };
 
@@ -31,6 +41,28 @@ export default function SuppliersView({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [toast, setToast] = useState("");
+  const [addrOpen, setAddrOpen] = useState(false); // 도로명 주소 찾기 창
+  const [addrErr, setAddrErr] = useState("");
+  const addrBox = useRef<HTMLDivElement>(null);
+
+  // 주소 찾기 창이 열리면 검색 화면을 불러와 넣는다. 주소를 고르면 입력칸에 채운다.
+  useEffect(() => {
+    if (!addrOpen) return;
+    let dead = false;
+    loadPostcode()
+      .then(() => {
+        requestAnimationFrame(() => {
+          const box = addrBox.current;
+          if (dead || !box) return;
+          embedPostcode(box, addr => {
+            setF(prev => ({ ...prev, address: addr }));
+            setAddrOpen(false);
+          });
+        });
+      })
+      .catch(e => setAddrErr(e instanceof Error ? e.message : "주소 검색을 불러오지 못했어요."));
+    return () => { dead = true; };
+  }, [addrOpen]);
 
   const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
   const kw = norm(q);
@@ -81,28 +113,35 @@ export default function SuppliersView({
           <>
             {/* 넓은 화면: 한 줄에 거래처 한 곳 */}
             <div className="mt-4 hidden overflow-x-auto rounded-2xl border border-black/10 bg-white md:block dark:border-white/10 dark:bg-zinc-900">
-              <table className="w-full min-w-[40rem] text-left text-sm">
+              <table className="w-full min-w-[40rem] table-fixed text-left text-sm">
+                <colgroup>
+                  <col className="w-[22%]" />
+                  <col className="w-[24%]" />
+                  <col className="w-[17%]" />
+                  <col />
+                  {(canEdit || canDelete) && <col className="w-36" />}
+                </colgroup>
                 <thead className="bg-zinc-50 text-xs font-bold text-zinc-500 dark:bg-zinc-800/60">
                   <tr>
                     <th className="whitespace-nowrap px-4 py-2.5">거래처</th>
                     <th className="whitespace-nowrap px-3 py-2.5">취급품목</th>
                     <th className="whitespace-nowrap px-3 py-2.5">연락처</th>
                     <th className="whitespace-nowrap px-3 py-2.5">주소</th>
-                    {(canEdit || canDelete) && <th className="w-28" />}
+                    {(canEdit || canDelete) && <th />}
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map(s => (
                     <tr key={s.id} className="border-t border-black/10 align-middle hover:bg-zinc-50 dark:border-white/10 dark:hover:bg-zinc-800/50">
-                      <td className="whitespace-nowrap px-4 py-3 text-base font-extrabold">{s.name}</td>
-                      <td className="px-3 py-3">{s.handles || <span className="text-zinc-400">-</span>}</td>
-                      <td className="whitespace-nowrap px-3 py-3">{s.phone ? <a href={telHref(s.phone)} aria-label={s.name + " 연락하기 (전화 걸기)"} className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 active:scale-95">📞 연락하기</a> : <span className="text-zinc-400">-</span>}</td>
-                      <td className="px-3 py-3 text-zinc-700 dark:text-zinc-300">{s.address || <span className="text-zinc-400">-</span>}</td>
+                      <td className="break-words px-4 py-3 text-base font-extrabold"><NameLink name={s.name} address={s.address} /></td>
+                      <td className="break-words px-3 py-3">{s.handles || <span className="text-zinc-400">-</span>}</td>
+                      <td className="whitespace-nowrap px-3 py-3">{s.phone ? <a href={telHref(s.phone)} aria-label={s.name + " 연락하기 (전화 걸기)"} className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">📞 연락하기</a> : <span className="text-zinc-400">-</span>}</td>
+                      <td className="break-words px-3 py-3 text-zinc-700 dark:text-zinc-300">{s.address || <span className="text-zinc-400">-</span>}</td>
                       {(canEdit || canDelete) && (
                         <td className="px-3 py-3">
                           <span className="flex justify-end gap-1.5">
-                            {canEdit && <button type="button" onClick={() => openForm(s)} className="rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">수정</button>}
-                            {canDelete && <button type="button" onClick={() => { setErr(""); setDlg({ t: "del", s }); }} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 dark:bg-red-500/15 dark:text-red-300">삭제</button>}
+                            {canEdit && <button type="button" onClick={() => openForm(s)} className="whitespace-nowrap rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">수정</button>}
+                            {canDelete && <button type="button" onClick={() => { setErr(""); setDlg({ t: "del", s }); }} className="whitespace-nowrap rounded-lg bg-red-50 px-3 py-1.5 text-xs font-bold text-red-600 dark:bg-red-500/15 dark:text-red-300">삭제</button>}
                           </span>
                         </td>
                       )}
@@ -117,7 +156,7 @@ export default function SuppliersView({
               {rows.map(s => (
                 <li key={s.id} className="flex items-center gap-3 px-4 py-3">
                   <div className="min-w-0 flex-1">
-                    <b className="block truncate text-base">{s.name}</b>
+                    <b className="block truncate text-base"><NameLink name={s.name} address={s.address} /></b>
                     {s.handles && <span className="block truncate text-sm text-zinc-600 dark:text-zinc-300">{s.handles}</span>}
                     {s.address && <span className="block truncate text-xs text-zinc-500">{s.address}</span>}
                     {(canEdit || canDelete) && (
@@ -127,7 +166,7 @@ export default function SuppliersView({
                       </span>
                     )}
                   </div>
-                  {s.phone && <a href={telHref(s.phone)} aria-label={s.name + " 전화 걸기"} className="shrink-0 rounded-full bg-emerald-600 px-4 py-2 text-sm font-bold text-white active:scale-95">📞 연락하기</a>}
+                  {s.phone && <a href={telHref(s.phone)} aria-label={s.name + " 전화 걸기"} className="shrink-0 rounded-full bg-emerald-600 px-4 py-2 text-sm font-bold text-white">📞 연락하기</a>}
                 </li>
               ))}
             </ul>
@@ -135,7 +174,7 @@ export default function SuppliersView({
   );
 
   return (
-    <div className="mx-auto w-full max-w-5xl flex-1 px-4 pb-24">
+    <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24">
       <header className="flex flex-wrap items-center gap-3 py-5">
         <h1 className="mr-auto text-xl font-extrabold">거래처관리</h1>
         <span className="text-sm text-zinc-500">총 {suppliers.length}곳</span>
@@ -202,15 +241,28 @@ export default function SuppliersView({
           <input id="sp-handles" value={f.handles} onChange={e => setF({ ...f, handles: e.target.value })} maxLength={100} placeholder="예: 합판, 각재, 방부목 (여러 개는 쉼표로)" autoComplete="off" className={inputCls} />
           <p className="mt-1 text-xs text-zinc-500">쉼표(,)로 나눠 적으면 품목마다 묶어서 볼 수 있어요.</p>
           <label htmlFor="sp-phone" className="mt-4 block text-sm font-bold">연락처 <span className="font-normal text-zinc-500">(선택)</span></label>
-          <input id="sp-phone" type="tel" value={f.phone} onChange={e => setF({ ...f, phone: e.target.value })} maxLength={30} placeholder="예: 010-1234-5678" autoComplete="off" className={inputCls} />
+          <input id="sp-phone" type="tel" value={f.phone} onChange={e => setF({ ...f, phone: formatPhone(e.target.value) })} maxLength={13} placeholder="예: 010-1234-5678" autoComplete="off" className={inputCls} />
           <label htmlFor="sp-addr" className="mt-4 block text-sm font-bold">주소 <span className="font-normal text-zinc-500">(선택)</span></label>
-          <input id="sp-addr" value={f.address} onChange={e => setF({ ...f, address: e.target.value })} maxLength={200} placeholder="예: 경기도 ○○시 ○○로 12" autoComplete="off" className={inputCls} />
+          <div className="mt-2 flex gap-2">
+            <input id="sp-addr" value={f.address} onChange={e => setF({ ...f, address: e.target.value })} maxLength={200} placeholder="주소 찾기로 도로명 주소를 골라요" autoComplete="off" className={inputCls.replace("mt-1.5 w-full ", "") + " min-w-0 flex-1"} />
+            <button type="button" onClick={() => { setAddrErr(""); setAddrOpen(true); }} className="shrink-0 rounded-xl bg-zinc-100 px-4 text-sm font-bold dark:bg-zinc-800">주소 찾기</button>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">고른 뒤 동·호수 같은 상세 주소는 이어서 적어요.</p>
           {err && <p className="mt-3 text-sm text-red-500" role="alert">{err}</p>}
           <div className="mt-5 flex gap-2">
             <button type="button" disabled={busy} onClick={close} className="flex-1 rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">취소</button>
             <button disabled={busy || !f.name.trim()} className="flex-1 rounded-xl bg-blue-600 py-3 font-bold text-white disabled:opacity-50">{busy ? "저장 중…" : formId ? "저장" : "등록"}</button>
           </div>
         </form>
+      </Modal>
+
+      <Modal open={addrOpen} onClose={() => setAddrOpen(false)} wide>
+        <div className="flex items-center gap-2">
+          <h2 className="mr-auto text-lg font-bold">도로명 주소 찾기</h2>
+          <button type="button" onClick={() => setAddrOpen(false)} aria-label="닫기" className="-mr-1 flex h-8 w-8 items-center justify-center rounded-full text-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800">✕</button>
+        </div>
+        <p className="mt-1 text-xs text-zinc-500">도로명·건물명·지번으로 검색해 고르세요.</p>
+        {addrErr ? <p className="mt-3 text-sm text-red-500" role="alert">{addrErr}</p> : <div ref={addrBox} className="mt-3 h-[28rem] max-h-[60vh] overflow-hidden rounded-xl border border-black/10 dark:border-white/10" />}
       </Modal>
 
       <Modal open={dlg?.t === "del"} onClose={close}>

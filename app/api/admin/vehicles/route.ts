@@ -1,5 +1,5 @@
-import { actorCan, getActor } from '@/lib/auth';
-import { addVehicle, assignItem, getMembers, getTeams, removeVehicle, returnItem, updateVehicle } from '@/lib/db';
+import { getActor, vehiclesFull } from '@/lib/auth';
+import { addVehicle, assignItem, getActiveMembers, getTeams, removeVehicle, returnItem, updateVehicle } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { sideOf, teamGroup } from '@/lib/roles';
 import { asIcon, type VehicleOwnership, type VehicleSpec } from '@/lib/types';
@@ -22,7 +22,7 @@ export async function POST(req: Request) {
   const a = b.action;
   const need = a === 'add' ? 'register' : a === 'remove' ? 'delete' : a === 'update' || a === 'assign' || a === 'return' ? 'edit' : null;
   if (!need) return json({ error: 'bad request' }, 400);
-  if (!actorCan(actor, 'vehicles', need)) return json({ error: '이 작업을 할 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
+  if (!vehiclesFull(actor)) return json({ error: '이 작업을 할 권한이 없어요. (차량정보 모든 권한이 필요해요) 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
 
   const id = str(b.id, 64);
   if (a === 'add' || a === 'update') {
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
     const driverId = str(b.driverId, 64);
     if (driverId) {
       // 배차는 사내 회원(사무실·현장)만 가능하다
-      const [members, teams] = await Promise.all([getMembers(), getTeams()]);
+      const [members, teams] = await Promise.all([getActiveMembers(), getTeams()]);
       const m = members.find(x => x.id === driverId);
       if (!m) return json({ error: '없는 회원이에요. 배차할 회원을 다시 골라 주세요.' }, 400);
       const g = teamGroup(teams, m.role);

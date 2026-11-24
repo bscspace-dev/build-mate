@@ -62,8 +62,8 @@ export default function LoginIdChangeButton({ className = "", unlimited = false,
         ) : (
           <form onSubmit={submit}>
             <p className="mt-1 text-sm text-zinc-500">{unlimited ? "횟수 제한 없이 바꿀 수 있어요." : "아이디는 처음 한 번만 바꿀 수 있어요. 신중하게 정해 주세요."}</p>
-            <label htmlFor="li-new" className="mt-3 block text-sm font-bold">새 아이디 <span className="font-normal text-zinc-500">(영문 소문자·숫자·_- 3~20자)</span></label>
-            <input id="li-new" value={newId} onChange={e => setNewId(e.target.value)} autoCapitalize="none" spellCheck={false} autoComplete="off" className={inputCls} />
+            <label htmlFor="li-new" className="mt-3 block text-sm font-bold">새 아이디 <span className="font-normal text-zinc-500">(영문 소문자+숫자 조합 3~20자)</span></label>
+            <input id="li-new" value={newId} onChange={e => setNewId(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, ""))} maxLength={20} autoCapitalize="none" spellCheck={false} autoComplete="off" className={inputCls} />
             {needPw && (
               <>
                 <label htmlFor="li-pw" className="mt-3 block text-sm font-bold">현재 비밀번호</label>

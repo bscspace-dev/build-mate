@@ -20,7 +20,7 @@ async function ensureBucket(): Promise<void> {
 
 /** 이미지를 저장하고 화면에서 쓸 주소(image 값)를 돌려준다. bytes 는 webp 로 변환된 이미지. */
 export async function saveImage(key: string, bytes: Uint8Array, contentType: string): Promise<string> {
-  const ext = contentType === 'image/png' ? 'png' : contentType === 'image/jpeg' ? 'jpg' : 'webp';
+  const ext = contentType === 'application/pdf' ? 'pdf' : contentType === 'image/png' ? 'png' : contentType === 'image/jpeg' ? 'jpg' : 'webp'; // 도면은 PDF 도 올린다
   if (!inStorageMode()) {
     await fs.mkdir(CATALOG_DIR, { recursive: true });
     await fs.writeFile(path.join(CATALOG_DIR, `${key}.${ext}`), bytes);

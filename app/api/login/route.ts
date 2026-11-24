@@ -29,6 +29,7 @@ export async function POST(req: Request) {
   // 없는 아이디여도 같은 시간이 걸리도록 항상 해시 비교를 한다
   const ok = await verifyPassword(pw, m?.passHash ?? (await getDummyHash()));
   if (!m || !m.passHash || !ok) return json({ error: '아이디 또는 비밀번호가 맞지 않아요.' }, 401);
+  if (m.resignDate) return json({ error: '퇴사 처리된 계정이에요. 관리자에게 문의해 주세요.' }, 403);
   await createMemberSession(m);
   await destroySession();
   return json({ ok: true });

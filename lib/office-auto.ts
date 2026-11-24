@@ -1,5 +1,5 @@
 import 'server-only';
-import { assignPlacements, getLeaves, getMembers, getPlacements, getTeams } from './db';
+import { assignPlacements, getLeaves, getActiveMembers, getPlacements, getTeams } from './db';
 import { leaveSlots } from './leave';
 import { OFFICE_SITE_ID } from './office-site';
 import { memberHasGroup } from './roles';
@@ -20,7 +20,7 @@ export async function ensureOfficeDefaults(today: string): Promise<number> {
   if (process.env.OFFICE_AUTO !== 'on') return 0; // 지금은 직접 배치한다 — 자동 배치는 꺼 둔다 (켜려면 OFFICE_AUTO=on)
   const from = addDays(today, -2);
   const to = today; // 자정이 지나 '오늘'이 된 날까지만 (내일 이후는 채우지 않는다)
-  const [members, teams] = await Promise.all([getMembers(), getTeams()]);
+  const [members, teams] = await Promise.all([getActiveMembers(), getTeams()]);
   const dual = members.filter(m => isDualMember(teams, m));
   if (!dual.length) return 0;
   let filled = 0;

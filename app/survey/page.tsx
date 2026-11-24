@@ -3,9 +3,9 @@ import { redirect } from "next/navigation";
 import RequestForm from "@/components/request/RequestForm";
 import AdminNav from "@/components/admin/AdminNav";
 import { toSurveyItems } from "@/lib/catalog";
-import { getProducts, getSites, getTrades } from "@/lib/db";
+import { getProducts, getSites, getTeams, getTrades } from "@/lib/db";
 import { getSessionMember } from "@/lib/member-session";
-import { canSurvey, memberRoles } from "@/lib/roles";
+import { canSurvey, memberRoles, memberTrades } from "@/lib/roles";
 
 export const metadata = { title: "자재 요청 · 빌드메이트", robots: { index: false, follow: false } };
 
@@ -23,7 +23,7 @@ async function SurveyLoader() {
   if (!member) redirect("/"); // 로그인 전이면 로그인 화면으로
   if (!canSurvey(memberRoles(member), member.menus)) redirect("/"); // 설문 권한이 없으면 처음 화면으로
 
-  const [products, allTrades, sites] = await Promise.all([getProducts(), getTrades(), getSites()]);
+  const [products, allTrades, sites, teams] = await Promise.all([getProducts(), getTrades(), getSites(), getTeams()]);
   // 자재 요청에는 '자재' 품목 전체가 보인다 (연장·상비품은 제외, 재고가 없어도, 공정·카테고리와 상관없이).
   // 공정 탭은 어느 공정의 요청인지 나누는 용도라서, 모든 공정 탭에서 같은 자재 목록이 보인다.
   const everyTrade = allTrades.reduce((m, _t, i) => m | (1 << i), 0);
@@ -36,8 +36,8 @@ async function SurveyLoader() {
       sites={sites.map(s => ({ name: s.name, startDate: s.startDate, endDate: s.endDate }))}
       allTrades={allTrades}
       workerName={member.name}
-      myTrades={member.trades}
-      myCategories={member.categories}
+      myTrades={memberTrades(teams, member, allTrades)}
+      myCategories={[]}
     />
     </>
   );

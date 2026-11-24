@@ -13,9 +13,9 @@ export type SiteLite = { id: string; name: string; address: string; pmName: stri
 export type WorkerLite = { id: string; name: string; team: string; isPm: boolean; dual?: boolean }; // dual = 사무실·현장 팀을 모두 가진 겸직 인원
 
 type SlotSel = "all" | Slot; // 종일 / 오전 / 오후
-const SLOT_TABS: { v: SlotSel; label: string }[] = [{ v: "all", label: "종일" }, { v: "am", label: "오전" }, { v: "pm", label: "오후" }, { v: "ot", label: "야간 0.5" }, { v: "nt", label: "심야 1" }];
+const SLOT_TABS: { v: SlotSel; label: string }[] = [{ v: "all", label: "배치" }, { v: "ot", label: "야간 0.5" }, { v: "nt", label: "심야 1" }];
 // 한 날짜 칸의 가로 구성: 오전 | 오후 | 야간 | 심야 (야간·심야는 오전·오후와 별개의 시간대라 따로 칸을 둔다)
-const COLS = "1fr 1fr 0.85fr 0.85fr";
+const COLS = "1.6fr 0.85fr 0.85fr";
 const slotsOf = (v: SlotSel): Slot[] => (v === "all" ? [...SLOTS] : [v]);
 
 const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
@@ -28,7 +28,7 @@ const stepWork = (d: string, n: 1 | -1) => nextWork(addDays(d, n)) === addDays(d
 
 type Cell = { siteId: string; date: string; slot: SlotSel };
 
-// 현장배치: 주간 일정표(현장 × 날짜, 칸마다 오전·오후 인원 + 그날 작업 내용) 또는 하루씩 보기.
+// 현장배치: 하루씩 보기(기본) 또는 주간 일정표(현장 × 날짜, 칸마다 오전·오후 인원 + 그날 작업 내용).
 // 작업자는 '내 배치'에서 다음날 현장·작업 내용을 확인한다.
 export default function PlacementsAdmin({
   sites, workers, placements, notes, leaves, canRegister, canDelete,
@@ -37,10 +37,11 @@ export default function PlacementsAdmin({
 }) {
   const router = useRouter();
   const today = new Date().toLocaleDateString("sv-SE");
-  const [view, setView] = useState<"week" | "day">("week");
+  const [view, setView] = useState<"week" | "day">("day");
   const [date, setDate] = useState(() => nextWork(today)); // 기준 날짜 (기본은 오늘, 일요일이면 월요일). 표는 이 날짜 앞뒤의 근무일만 보여 준다
   const [allSites, setAllSites] = useState(false);
   // 주간 표 칸 크기: 한 칸에 10명 넘게 들어가도 이름이 들어가도록 날짜 칸 폭·글자 크기를 고른다
+  const [gap, setGap] = useState<{ date: string; ids: string[]; site: string }>({ date: "", ids: [], site: "" }); // 하루씩 보기: 미배치 인원 선택
   const [zoom, setZoom] = useState<"s" | "m" | "l">("m");
   const [radius, setRadius] = useState(2); // 기준 날짜 앞뒤로 며칠씩 보일지 (일요일은 건너뜀)
   const dayRem = { s: 14, m: 19, l: 25 }[zoom]; // 날짜 한 칸(오전·오후·야간·심야 4칸) 폭
@@ -67,6 +68,14 @@ export default function PlacementsAdmin({
   for (const list of peopleAt.values()) list.sort((a, b) => a.name.localeCompare(b.name, "ko"));
   const noteAt = new Map(notes.map(n => [`${n.date}|${n.siteId}`, n.note]));
   const people = (d: string, siteId: string, slot: Slot) => peopleAt.get(`${d}|${siteId}|${slot}`) ?? [];
+  const wholeDay = (d: string, siteId: string) => {
+    const am = people(d, siteId, "am");
+    const pm = people(d, siteId, "pm");
+    const seen = new Map<string, { w: WorkerLite; note: string }>();
+    for (const w of am) seen.set(w.id, { w, note: pm.some(x => x.id === w.id) ? "" : "오전" });
+    for (const w of pm) if (!seen.has(w.id)) seen.set(w.id, { w, note: "오후" });
+    return [...seen.values()];
+  };
   const slotsAssigned = (d: string, id: string) => ALL_SLOTS.filter(s => siteAt.has(`${d}|${s}|${id}`));
   // 승인된 휴가: 그 날짜·시간대는 배치할 수 없고, 미배치 계산에서도 빠진다
   const leaveOn = (id: string, d: string) => leaves.find(l => l.memberId === id && d >= l.startDate && d <= l.endDate);
@@ -111,6 +120,20 @@ export default function PlacementsAdmin({
     } finally {
       setBusy(false);
     }
+  }
+  const gapSel = gap.date === date ? gap.ids : [];
+  async function assignGap() {
+    if (!gap.site || gapSel.length === 0) return;
+    const bySlot = new Map<string, string[]>();
+    for (const g of gapsOn(date)) {
+      if (!gapSel.includes(g.w.id)) continue;
+      const slot = g.missing.length === 2 ? "all" : g.missing[0];
+      bySlot.set(slot, [...(bySlot.get(slot) ?? []), g.w.id]);
+    }
+    for (const [slot, memberIds] of bySlot) {
+      if (!(await call({ action: "assign", date, siteId: gap.site, memberIds, slot }, "{n}명을 배치했어요"))) return;
+    }
+    setGap({ date, ids: [], site: gap.site });
   }
   // 지난주(또는 전날)의 배치를 가져온다: 같은 시간대가 이미 있는 사람은 건너뛴다
   async function copyFrom(days: string[], back: number, what: string) {
@@ -187,17 +210,30 @@ export default function PlacementsAdmin({
   );
 
   return (
-    <div className="mx-auto w-full max-w-[100rem] flex-1 px-4 pb-24">
-      <header className="flex flex-wrap items-center gap-3 py-5">
+    <div className="mx-auto w-full max-w-6xl flex-1 overflow-x-clip px-4 pb-24">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 py-5">
         <h1 className="mr-auto text-xl font-extrabold">현장배치</h1>
         <div className="flex overflow-hidden rounded-xl border border-black/15 text-sm font-bold dark:border-white/15" role="group" aria-label="보기 방식">
-          {([["week", "🗓️ 주간"], ["day", "📋 하루씩"]] as const).map(([v, l]) => (
+          {([["day", "📋 하루씩"], ["week", "🗓️ 주간"]] as const).map(([v, l]) => (
             <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)} className={`px-3.5 py-2 ${view === v ? "bg-blue-600 text-white" : "bg-white dark:bg-zinc-900"}`}>{l}</button>
           ))}
         </div>
         <span className="text-sm text-zinc-500">현장 인원 {workers.length}명</span>
       </header>
-      <p className="mb-3 rounded-2xl bg-blue-50 p-3.5 text-sm text-blue-900 dark:bg-blue-500/10 dark:text-blue-100">현장 × 날짜 표에서 칸의 <b>왼쪽(오전)·오른쪽(오후)</b>을 눌러 인원을 배치하고, 칸 오른쪽의 <b>야간(오후 5~8시, 0.5일)·심야(오후 8~10시, 1일)</b> 칸으로 추가 근무도 넣고, 날짜 아래 <b>“야간 전원 / 심야 전원”</b> 버튼으로 그 현장 <b>오후 근무자(오전만 한 사람 제외)</b>에게 한 번에 체크하고(야간과 심야는 하루에 하나만 — 심야를 체크하면 야간은 빠져요), 현장 아래 줄을 눌러 그날 <b>작업 내용</b>을 적어요. 현장작업자는 <b>“내 배치”</b>에서 자기 현장과 작업 내용을 확인해요. 오전·오후에 다른 현장으로 나눠 보낼 수도 있고, 같은 시간대에 다시 배치하면 그 현장으로 옮겨져요. <b>🏢 사무실</b>은 고정 항목이에요(사무실·현장 팀을 모두 가진 인원만 직접 배치). <b>오늘 앞뒤 며칠</b>만 보여 주고(위의 “앞뒤 N일씩”으로 조절), <b>일요일은 쉬는 날</b>이라 표에 나오지 않아요.</p>
+      <div className="mb-3 text-sm text-zinc-500">
+        <p><b>배치</b> 칸을 눌러 배치하고, <b>야간·심야</b> 칸으로 추가 근무를, 현장 아래 줄에 <b>작업 내용</b>을 적어요.</p>
+        <details className="mt-1">
+          <summary className="cursor-pointer text-xs font-bold text-blue-700 dark:text-blue-300">자세한 설명</summary>
+          <ul className="mt-1.5 list-disc space-y-1 pl-5 text-xs leading-relaxed">
+            <li><b>야간</b>(오후 5~8시, 0.5일)·<b>심야</b>(오후 8~10시, 1일)는 하루에 하나만 — 심야를 체크하면 야간은 빠져요.</li>
+            <li>날짜 아래 <b>야간 전원 / 심야 전원</b>은 그 현장 오후 근무자(오전만 한 사람 제외)에게 한 번에 체크해요.</li>
+            <li>같은 시간대에 다시 배치하면 그 현장으로 옮겨져요.</li>
+            <li><b>사무실</b>은 고정 항목이에요(사무실·현장 팀을 모두 가진 인원만 직접 배치).</li>
+            <li>오늘 앞뒤 며칠만 보여 주고(위의 「앞뒤 N일씩」으로 조절), 일요일은 표에 나오지 않아요.</li>
+            <li>현장작업자는 「내 배치」에서 자기 현장과 작업 내용을 확인해요.</li>
+          </ul>
+        </details>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         {view === "week" ? (
@@ -218,12 +254,12 @@ export default function PlacementsAdmin({
         ) : (
           <>
             <button type="button" onClick={() => setDate(d => stepWork(d, -1))} aria-label="전날" className="rounded-lg border border-black/15 px-3 py-2 text-sm font-bold dark:border-white/15">‹</button>
-            <input type="date" aria-label="배치 날짜" value={date} onChange={e => e.target.value && setDate(e.target.value)} className="rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900" />
+            <input type="date" aria-label="배치 날짜" value={date} onChange={e => e.target.value && setDate(e.target.value)} className="min-w-0 flex-1 rounded-xl border border-black/15 bg-white px-3 py-2 text-sm font-bold outline-none focus:border-blue-500 sm:flex-none dark:border-white/15 dark:bg-zinc-900" />
             <button type="button" onClick={() => setDate(d => stepWork(d, 1))} aria-label="다음날" className="rounded-lg border border-black/15 px-3 py-2 text-sm font-bold dark:border-white/15">›</button>
             <button type="button" onClick={() => setDate(nextWork(today))} className={`rounded-lg px-3 py-2 text-xs font-bold ${date === today ? "bg-blue-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}>오늘</button>
             <button type="button" onClick={() => setDate(nextWork(addDays(today, 1)))} className={`rounded-lg px-3 py-2 text-xs font-bold ${date === nextWork(addDays(today, 1)) ? "bg-blue-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}>{isRest(addDays(today, 1)) ? "다음 근무일" : "내일"}</button>
             <b className="ml-1 text-base">{label(date)}</b>
-            {canRegister && <button type="button" disabled={busy} onClick={() => void copyFrom([date], dow(date) === 1 ? 2 : 1, "전 근무일 배치")} className="ml-auto rounded-xl border border-black/15 px-3.5 py-2 text-sm font-bold disabled:opacity-50 dark:border-white/15">전 근무일 배치 가져오기</button>}
+            {canRegister && <button type="button" disabled={busy} onClick={() => void copyFrom([date], dow(date) === 1 ? 2 : 1, "전 근무일 배치")} className="w-full rounded-xl border border-black/15 px-3.5 py-2 text-sm font-bold disabled:opacity-50 sm:ml-auto sm:w-auto dark:border-white/15">전 근무일 배치 가져오기</button>}
           </>
         )}
       </div>
@@ -245,7 +281,7 @@ export default function PlacementsAdmin({
                 </tr>
                 <tr className="bg-zinc-100 text-[10px] font-bold text-zinc-500 dark:bg-zinc-800">
                   <th className="sticky left-0 z-10 border-b border-r border-black/15 bg-zinc-100 dark:border-white/15 dark:bg-zinc-800" />
-                  {weekDays.map(d => <th key={d} className="border-b border-l border-dashed border-black/40 py-0.5 dark:border-white/30"><span className="grid text-center leading-tight" style={{ gridTemplateColumns: COLS }}><span>오전</span><span>오후</span><span className="text-amber-700 dark:text-amber-300">야간 0.5<small className="block text-[9px] font-normal">오후 5~8시</small></span><span className="text-indigo-700 dark:text-indigo-300">심야 1<small className="block text-[9px] font-normal">오후 8~10시</small></span></span></th>)}
+                  {weekDays.map(d => <th key={d} className="border-b border-l border-dashed border-black/40 py-0.5 dark:border-white/30"><span className="grid text-center leading-tight" style={{ gridTemplateColumns: COLS }}><span>배치</span><span className="text-amber-700 dark:text-amber-300">야간 0.5<small className="block text-[9px] font-normal">오후 5~8시</small></span><span className="text-indigo-700 dark:text-indigo-300">심야 1<small className="block text-[9px] font-normal">오후 8~10시</small></span></span></th>)}
                 </tr>
               </thead>
               <tbody>
@@ -265,14 +301,14 @@ export default function PlacementsAdmin({
                         return (
                           <td key={d} className={`border-l border-dashed border-black/40 p-0 dark:border-white/30 ${d === today ? "bg-blue-50/60 dark:bg-blue-500/5" : out ? "bg-zinc-50 dark:bg-zinc-800/40" : ""}`}>
                             <div className="grid min-h-16" style={{ gridTemplateColumns: COLS }}>
-                              {[...SLOTS, ...EXTRA_SLOTS].map((sl, i) => {
-                                const names = people(d, s.id, sl);
-                                const extra = i >= SLOTS.length;
+                              {(["all", ...EXTRA_SLOTS] as const).map((sl, i) => {
+                                const names = sl === "all" ? wholeDay(d, s.id) : people(d, s.id, sl).map(w => ({ w, note: "" }));
+                                const extra = i >= 1;
                                 const tone = !extra ? "" : sl === "ot" ? "bg-amber-50/70 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100" : "bg-indigo-50/70 text-indigo-900 dark:bg-indigo-500/10 dark:text-indigo-100";
-                                const inner = names.length ? names.map(w => <span key={w.id} className="block leading-5">{w.name}</span>) : null;
+                                const inner = names.length ? names.map(x => <span key={x.w.id} className="block leading-5">{x.w.name}{x.note && <small className="ml-0.5 text-[10px] font-bold text-amber-600">({x.note})</small>}</span>) : null;
                                 const cls = `${i > 0 ? "border-l border-dotted border-black/20 dark:border-white/20" : ""} px-2 py-2 text-left ${nameCls} font-semibold ${tone}`;
                                 return canRegister ? (
-                                  <button key={sl} type="button" onClick={() => openCell({ siteId: s.id, date: d, slot: sl })} aria-label={`${s.name} ${md(d)} ${slotLabel(sl)} 배치`} className={`${cls} hover:brightness-95 hover:bg-blue-100/70 dark:hover:bg-blue-500/20`}>{inner}</button>
+                                  <button key={sl} type="button" onClick={() => openCell({ siteId: s.id, date: d, slot: sl })} aria-label={`${s.name} ${md(d)} ${sl === "all" ? "" : slotLabel(sl) + " "}배치`} className={`${cls} hover:brightness-95 hover:bg-blue-100/70 dark:hover:bg-blue-500/20`}>{inner}</button>
                                 ) : (
                                   <div key={sl} className={cls}>{inner}</div>
                                 );
@@ -281,7 +317,7 @@ export default function PlacementsAdmin({
                             {canRegister && (
                               /* 날짜 하단: 눌러서 이 현장의 모든 인원에게 야간(0.5)·심야(1)를 한 번에 체크 / 전원이면 해제 */
                               <div className="grid border-t border-dotted border-black/25 dark:border-white/25" style={{ gridTemplateColumns: COLS }}>
-                                <span className="col-span-2" />
+                                <span />
                                 {EXTRA_SLOTS.map(sl => {
                                   const crew = new Set(people(d, s.id, "pm").map(w => w.id)); // 오후(종일 포함) 근무자만 — 오전만 한 사람은 제외
                                   const have = new Set(people(d, s.id, sl).map(w => w.id));
@@ -339,7 +375,7 @@ export default function PlacementsAdmin({
               </tbody>
             </table>
           </div>
-          <p className="mt-2 text-xs text-zinc-500">오전·오후 모두 같은 현장이면 두 칸에 같은 이름이 보여요. 빨간 준공일은 마감 7일 이내예요.</p>
+          <p className="mt-2 text-xs text-zinc-500">빨간 준공일은 마감 7일 이내예요. 예전에 반나절만 배치한 사람은 이름 옆에 (오전)·(오후)로 보여요.</p>
         </>
       ) : isRest(date) ? (
         <p className="mt-4 rounded-2xl bg-white p-8 text-center text-zinc-500 dark:bg-zinc-900">일요일은 쉬는 날이라 배치하지 않아요.</p>
@@ -349,9 +385,29 @@ export default function PlacementsAdmin({
           <section className="mt-3 rounded-2xl border border-dashed border-amber-400 bg-amber-50/60 p-4 dark:bg-amber-500/5" aria-label="미배치 인원">
             <h2 className="text-sm font-extrabold">미배치 인원 <span className="font-semibold text-zinc-500">{gapsOn(date).length}명</span></h2>
             {gapsOn(date).length === 0 ? <p className="mt-1 text-sm text-zinc-500">{workers.length === 0 ? "현장 부서 회원이 없어요. 회원 관리에서 먼저 만들어 주세요." : "오전·오후 모두 배치됐어요."}</p> : (
+              <>
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {gapsOn(date).map(({ w, missing }) => <span key={w.id} className="rounded-full bg-white px-3 py-1 text-sm shadow-sm dark:bg-zinc-900">{w.name}<small className={`ml-1 text-[10px] font-bold ${missing.length === 2 ? "text-zinc-500" : "text-amber-600"}`}>{missingText(missing)}</small></span>)}
+                {gapsOn(date).map(({ w, missing }) => {
+                  const on = gapSel.includes(w.id);
+                  const label = <>{w.name}<small className={`ml-1 text-[10px] font-bold ${on ? "text-blue-100" : missing.length === 2 ? "text-zinc-500" : "text-amber-600"}`}>{missingText(missing)}</small></>;
+                  return canRegister ? (
+                    <button key={w.id} type="button" role="checkbox" aria-checked={on} onClick={() => setGap({ date, site: gap.site, ids: on ? gapSel.filter(x => x !== w.id) : [...gapSel, w.id] })} className={`rounded-full border px-3 py-1 text-sm shadow-sm ${on ? "border-blue-600 bg-blue-600 text-white" : "border-transparent bg-white dark:bg-zinc-900"}`}>{label}</button>
+                  ) : <span key={w.id} className="rounded-full bg-white px-3 py-1 text-sm shadow-sm dark:bg-zinc-900">{label}</span>;
+                })}
+                {canRegister && gapsOn(date).length > 1 && <button type="button" onClick={() => setGap({ date, site: gap.site, ids: gapSel.length === gapsOn(date).length ? [] : gapsOn(date).map(g => g.w.id) })} className="rounded-full px-3 py-1 text-xs font-bold text-blue-600 dark:text-blue-300">{gapSel.length === gapsOn(date).length ? "선택 해제" : "전체 선택"}</button>}
               </div>
+              {canRegister && gapSel.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-white p-2.5 shadow-sm dark:bg-zinc-900">
+                  <span className="text-sm font-bold">선택 {gapSel.length}명 →</span>
+                  <select aria-label="배치할 현장" value={gap.site} onChange={e => setGap({ date, ids: gapSel, site: e.target.value })} className="min-w-0 flex-1 rounded-lg border border-black/15 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/15">
+                    <option value="">현장 선택</option>
+                    {daySites.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </select>
+                  <button type="button" disabled={busy || !gap.site} onClick={() => void assignGap()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">{busy ? "배치 중…" : "이 현장에 배치"}</button>
+                  <p className="basis-full text-[11px] text-zinc-500">각자 비어 있는 시간대만 채워져요.</p>
+                </div>
+              )}
+              </>
             )}
           </section>
           {leaveListOn(date).length > 0 && <section className="mt-3 rounded-2xl border border-sky-300 bg-sky-50/60 p-4 dark:bg-sky-500/5" aria-label="휴가"><h2 className="text-sm font-extrabold text-sky-800 dark:text-sky-200">휴가 <span className="font-semibold text-zinc-500">{leaveListOn(date).length}명</span></h2><div className="mt-2 flex flex-wrap gap-1.5">{leaveListOn(date).map(({ w, kind }) => <span key={w.id} className="rounded-full bg-white px-3 py-1 text-sm shadow-sm dark:bg-zinc-900">{w.name}<small className="ml-1 text-[10px] font-bold text-sky-700">{leaveKindLabel(kind)}</small></span>)}</div></section>}
@@ -387,12 +443,10 @@ export default function PlacementsAdmin({
                   <div className="mt-3 flex items-center gap-1.5">
                     <span className="text-xs font-bold text-zinc-500">{crew.length}명</span>
                     {canRegister && (
-                      <span className="ml-auto flex items-center gap-1">
-                        <button type="button" onClick={() => openCell({ siteId: s.id, date, slot: "am" })} className="rounded-lg bg-sky-100 px-2.5 py-1.5 text-xs font-bold text-sky-800 dark:bg-sky-500/20 dark:text-sky-200">+ 오전</button>
-                        <button type="button" onClick={() => openCell({ siteId: s.id, date, slot: "pm" })} className="rounded-lg bg-violet-100 px-2.5 py-1.5 text-xs font-bold text-violet-800 dark:bg-violet-500/20 dark:text-violet-200">+ 오후</button>
+                      <span className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+                        <button type="button" onClick={() => openCell({ siteId: s.id, date, slot: "all" })} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-bold text-white">배치</button>
                         <button type="button" onClick={() => openCell({ siteId: s.id, date, slot: "ot" })} className="rounded-lg bg-amber-100 px-2.5 py-1.5 text-xs font-bold text-amber-900 dark:bg-amber-500/20 dark:text-amber-100">+ 야간</button>
                         <button type="button" onClick={() => openCell({ siteId: s.id, date, slot: "nt" })} className="rounded-lg bg-indigo-100 px-2.5 py-1.5 text-xs font-bold text-indigo-900 dark:bg-indigo-500/25 dark:text-indigo-100">+ 심야</button>
-                        <button type="button" onClick={() => openCell({ siteId: s.id, date, slot: "all" })} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-bold text-white">+ 인원 배치</button>
                       </span>
                     )}
                   </div>

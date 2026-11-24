@@ -1,5 +1,5 @@
 import { actorCan, getActor } from '@/lib/auth';
-import { addSite, getMembers, getSites, removeSite, updateSite } from '@/lib/db';
+import { addSite, getActiveMembers, getSites, removeSite, removeSitePostsOf, setSiteMark, updateSite } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { memberHasRole } from '@/lib/roles';
 import { removeImage, saveImage } from '@/lib/images';
@@ -10,6 +10,9 @@ import { removeImage, saveImage } from '@/lib/images';
 const MAX_IMAGE = 3 * 1024 * 1024;
 const MAX_PHOTOS = 10; // 현장 하나에 올릴 수 있는 사진 수
 const TYPES = ['image/webp', 'image/jpeg', 'image/png'];
+const DRAWING_TYPES = [...TYPES, 'application/pdf']; // 도면은 이미지나 PDF
+const MAX_DRAWING = 15 * 1024 * 1024;
+const MAX_DRAWINGS = 10;
 const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
 
@@ -22,11 +25,13 @@ export async function POST(req: Request) {
   const multipart = (req.headers.get('content-type') ?? '').includes('multipart/form-data');
   let get: (k: string) => FormDataEntryValue | unknown;
   let files: File[] = [];
+  let drawingFiles: File[] = [];
   if (multipart) {
     const form = await req.formData().catch(() => null);
     if (!form) return json({ error: 'bad request' }, 400);
     get = k => form.get(k);
     files = form.getAll('photo').filter((f): f is File => f instanceof File && f.size > 0);
+    drawingFiles = form.getAll('drawing').filter((f): f is File => f instanceof File && f.size > 0);
   } else {
     const b = (await req.json().catch(() => null)) as Record<string, unknown> | null;
     if (!b) return json({ error: 'bad request' }, 400);
@@ -43,6 +48,8 @@ export async function POST(req: Request) {
     const r = await removeSite(id);
     if ('error' in r) return json(r, 400);
     await Promise.all(r.photos.map(p => removeImage(p).catch(() => undefined))); // 현장 사진 파일도 정리한다
+    const postPhotos = await removeSitePostsOf(id).catch(() => [] as string[]); // 그 현장의 일지와 일지 사진도 함께 정리한다
+    await Promise.all(postPhotos.map(p => removeImage(p).catch(() => undefined)));
     return json({ ok: true });
   }
 
@@ -55,18 +62,27 @@ export async function POST(req: Request) {
   const pmId = clip(get('pmId'), 64);
   if (pmId) {
     // 담당 PM은 현장관리자(PM) 팀 회원만 지정할 수 있다
-    const m = (await getMembers()).find(x => x.id === pmId);
-    if (!m || !memberHasRole(m, 'pm')) return json({ error: '담당 PM은 현장관리자(PM) 팀 회원 중에서 골라 주세요.' }, 400);
+    const m = (await getActiveMembers()).find(x => x.id === pmId);
+    if (!m || !memberHasRole(m, 'pm')) return json({ error: '담당 PM은 PM 역할을 가진 회원 중에서 골라 주세요.' }, 400);
   }
 
   // 사진(여러 장): keep = 그대로 둘 기존 사진 주소들(수정할 때), photo = 새로 올린 파일들
   let keep: string[] | undefined;
+  let keepDrawings: string[] | undefined;
   if (a === 'update') {
     const cur = (await getSites()).find(x => x.id === id);
     if (!cur) return json({ error: '없는 현장이에요.' }, 400);
     let want: unknown = [];
     try { want = JSON.parse(typeof get('keep') === 'string' ? (get('keep') as string) : '[]'); } catch { want = []; }
     keep = (Array.isArray(want) ? want : []).filter((p): p is string => typeof p === 'string' && cur.photos.includes(p)); // 이 현장의 사진만 남길 수 있다
+    let wantD: unknown = [];
+    try { wantD = JSON.parse(typeof get('keepDrawings') === 'string' ? (get('keepDrawings') as string) : '[]'); } catch { wantD = []; }
+    keepDrawings = (Array.isArray(wantD) ? wantD : []).filter((p): p is string => typeof p === 'string' && cur.drawings.includes(p)); // 이 현장의 도면만 남길 수 있다
+  }
+  if (drawingFiles.length + (keepDrawings?.length ?? 0) > MAX_DRAWINGS) return json({ error: `도면은 한 현장에 ${MAX_DRAWINGS}개까지 올릴 수 있어요.` }, 400);
+  for (const f of drawingFiles) {
+    if (!DRAWING_TYPES.includes(f.type)) return json({ error: '도면은 PDF 또는 jpg·png·webp 파일만 올릴 수 있어요.' }, 400);
+    if (f.size > MAX_DRAWING) return json({ error: '도면 파일이 너무 커요. 한 개에 15MB 이하로 올려 주세요.' }, 413);
   }
   if (files.length + (keep?.length ?? 0) > MAX_PHOTOS) return json({ error: `사진은 한 현장에 ${MAX_PHOTOS}장까지 올릴 수 있어요.` }, 400);
   for (const f of files) {
@@ -74,15 +90,18 @@ export async function POST(req: Request) {
     if (f.size > MAX_IMAGE) return json({ error: '사진이 너무 커요. 한 장에 3MB 이하로 올려 주세요.' }, 413);
   }
   const saved: string[] = [];
-  const dropSaved = () => Promise.all(saved.map(p => removeImage(p).catch(() => undefined)));
+  const savedDrawings: string[] = [];
+  const dropSaved = () => Promise.all([...saved, ...savedDrawings].map(p => removeImage(p).catch(() => undefined)));
   try {
     for (const f of files) saved.push(await saveImage('site-' + Math.random().toString(36).slice(2, 10), new Uint8Array(await f.arrayBuffer()), f.type));
+    for (const f of drawingFiles) savedDrawings.push(await saveImage('drawing-' + Math.random().toString(36).slice(2, 10), new Uint8Array(await f.arrayBuffer()), f.type));
   } catch (e) {
     await dropSaved();
     throw e;
   }
   const photos = a === 'update' ? [...(keep ?? []), ...saved] : saved;
-  const input = { name, address: clip(get('address'), 200), pmId, startDate, endDate, memo: clip(get('memo'), 300), photos };
+  const drawings = a === 'update' ? [...(keepDrawings ?? []), ...savedDrawings] : savedDrawings;
+  const input = { name, address: clip(get('address'), 200), pmId, startDate, endDate, memo: clip(get('memo'), 300), photos, drawings };
 
   try {
     if (a === 'add') {
@@ -91,8 +110,18 @@ export async function POST(req: Request) {
       return json({ ok: true });
     }
     if (!id) { await dropSaved(); return json({ error: 'bad id' }, 400); }
+    const before = (await getSites()).find(x => x.id === id);
     const r = await updateSite(id, input);
     if ('error' in r) { await dropSaved(); return json(r, 400); }
+    if (before) {
+      // 도면이 늘거나 줄었으면 도면, 그 밖의 정보(이름·주소·담당·기간·특이사항·사진)가 바뀌었으면 정보 변경으로 시각을 남긴다 (현장 카드의 '업데이트' 표시)
+      const same = (x: string[], y: string[]) => x.length === y.length && x.every((v, i) => v === y[i]);
+      const now = new Date().toISOString();
+      const mark: { infoAt?: string; drawingsAt?: string } = {};
+      if (!same(before.drawings, drawings)) mark.drawingsAt = now;
+      if (before.name !== input.name || before.address !== input.address || before.pmId !== input.pmId || before.startDate !== input.startDate || before.endDate !== input.endDate || before.memo !== input.memo || !same(before.photos, photos)) mark.infoAt = now;
+      if (mark.drawingsAt || mark.infoAt) await setSiteMark(id, mark).catch(() => undefined);
+    }
     await Promise.all(r.removed.map(p => removeImage(p).catch(() => undefined))); // 목록에서 뺀 사진 파일 정리
     return json({ ok: true });
   } catch (e) {

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import PasswordChangeButton from "@/components/PasswordChange";
 import LoginIdChangeButton from "@/components/LoginIdChange";
+import PushToggle from "@/components/admin/PushToggle";
 import { Modal } from "@/components/Sheet";
 import { isStaffAdmin, MENUS, menuLabel, menuParent, orderedMenuKeys, sortMenus, type MenuKey } from "@/lib/roles";
 
@@ -123,6 +124,7 @@ export default function AdminNav() {
               {me.name} · {me.roleLabel}
             </span>
           )}
+          {me && <PushToggle className="shrink-0 whitespace-nowrap rounded-full border border-black/10 px-2.5 py-1 text-xs text-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm hover:border-blue-500 dark:border-white/15 dark:text-zinc-200" />}
           {me?.idChange && <LoginIdChangeButton temp={me.temp} unlimited={me.idChange === "unlimited"} className="shrink-0 whitespace-nowrap rounded-full border border-black/10 px-2.5 py-1 text-xs text-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm hover:border-blue-400 dark:border-white/10 dark:text-zinc-200" />}
           {me?.canOrder && <button type="button" onClick={() => { setDraft(orderedMenuKeys(me.order)); setOrderErr(""); setOrderOpen(true); }} className="shrink-0 whitespace-nowrap rounded-full border border-black/10 px-2.5 py-1 text-xs text-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm hover:border-blue-400 dark:border-white/10 dark:text-zinc-200">메뉴 순서</button>}
           {me?.kind === "member" && <PasswordChangeButton temp={me.temp} className="shrink-0 whitespace-nowrap rounded-full border border-black/10 px-2.5 py-1 text-xs text-zinc-700 sm:px-3 sm:py-1.5 sm:text-sm hover:border-blue-400 dark:border-white/10 dark:text-zinc-200" />}

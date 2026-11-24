@@ -197,7 +197,6 @@ function ProductCard({
           {trashMode ? (
             <div className="ml-auto flex flex-wrap justify-end gap-1 sm:gap-1.5">
               <motion.button
-                whileTap={{ scale: 0.92 }}
                 type="button"
                 onClick={() => onAction(p.key, "restore")}
                 className="rounded-lg bg-emerald-50 whitespace-nowrap px-2 py-1 text-[11px] sm:px-2.5 sm:py-1.5 sm:text-[12px] font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
@@ -205,7 +204,6 @@ function ProductCard({
                 복원
               </motion.button>
               <motion.button
-                whileTap={{ scale: 0.92 }}
                 type="button"
                 onClick={() => onAction(p.key, "purge")}
                 className="rounded-lg bg-red-50 whitespace-nowrap px-2 py-1 text-[11px] sm:px-2.5 sm:py-1.5 sm:text-[12px] font-bold text-red-600 dark:bg-red-500/15 dark:text-red-300"
@@ -217,22 +215,22 @@ function ProductCard({
             <div className="ml-auto flex flex-wrap justify-end gap-1 sm:gap-1.5">
               {shiftable && (
                 <>
-                  <motion.button whileTap={{ scale: 0.92 }} type="button" aria-label="앞으로" disabled={!shiftable.prev} onClick={() => onShift(p.key, -1)} className="rounded-lg bg-zinc-100 px-1.5 py-1 text-[11px] sm:px-2 sm:py-1.5 sm:text-[12px] font-bold disabled:opacity-30 dark:bg-zinc-800">◀</motion.button>
-                  <motion.button whileTap={{ scale: 0.92 }} type="button" aria-label="뒤로" disabled={!shiftable.next} onClick={() => onShift(p.key, 1)} className="rounded-lg bg-zinc-100 px-1.5 py-1 text-[11px] sm:px-2 sm:py-1.5 sm:text-[12px] font-bold disabled:opacity-30 dark:bg-zinc-800">▶</motion.button>
+                  <motion.button type="button" aria-label="앞으로" disabled={!shiftable.prev} onClick={() => onShift(p.key, -1)} className="rounded-lg bg-zinc-100 px-1.5 py-1 text-[11px] sm:px-2 sm:py-1.5 sm:text-[12px] font-bold disabled:opacity-30 dark:bg-zinc-800">◀</motion.button>
+                  <motion.button type="button" aria-label="뒤로" disabled={!shiftable.next} onClick={() => onShift(p.key, 1)} className="rounded-lg bg-zinc-100 px-1.5 py-1 text-[11px] sm:px-2 sm:py-1.5 sm:text-[12px] font-bold disabled:opacity-30 dark:bg-zinc-800">▶</motion.button>
                 </>
               )}
               {canEdit && (
-                <motion.button whileTap={{ scale: 0.92 }} type="button" onClick={() => onRename(p)} className="rounded-lg bg-zinc-100 whitespace-nowrap px-2 py-1 text-[11px] sm:px-2.5 sm:py-1.5 sm:text-[12px] font-bold dark:bg-zinc-800">
+                <motion.button type="button" onClick={() => onRename(p)} className="rounded-lg bg-zinc-100 whitespace-nowrap px-2 py-1 text-[11px] sm:px-2.5 sm:py-1.5 sm:text-[12px] font-bold dark:bg-zinc-800">
                   수정
                 </motion.button>
               )}
               {canEdit && (
-                <motion.button whileTap={{ scale: 0.92 }} type="button" onClick={() => onMove(p.key)} className="rounded-lg bg-blue-50 whitespace-nowrap px-2 py-1 text-[11px] sm:px-2.5 sm:py-1.5 sm:text-[12px] font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
+                <motion.button type="button" onClick={() => onMove(p.key)} className="rounded-lg bg-blue-50 whitespace-nowrap px-2 py-1 text-[11px] sm:px-2.5 sm:py-1.5 sm:text-[12px] font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
                   이동
                 </motion.button>
               )}
               {canDelete && (
-                <motion.button whileTap={{ scale: 0.92 }} type="button" onClick={() => onAction(p.key, "delete")} className="rounded-lg bg-red-50 whitespace-nowrap px-2 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-[12px] font-bold text-red-600 dark:bg-red-500/15 dark:text-red-300">
+                <motion.button type="button" onClick={() => onAction(p.key, "delete")} className="rounded-lg bg-red-50 whitespace-nowrap px-2 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-[12px] font-bold text-red-600 dark:bg-red-500/15 dark:text-red-300">
                   삭제
                 </motion.button>
               )}
@@ -432,7 +430,7 @@ export default function AdminCatalog({
         }));
       const d = new Date();
       const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-      downloadBlob(buildXlsx(sheets), `${trashMode ? "장비운용_휴지통" : "장비운용_" + kind}${withPhoto ? "_사진" : ""}_${stamp}.xlsx`);
+      downloadBlob(buildXlsx(sheets), `${trashMode ? "창고장비현황_휴지통" : "창고장비현황_" + kind}${withPhoto ? "_사진" : ""}_${stamp}.xlsx`);
       setExportOpen(false);
     } catch (err) {
       setToast({ id: Date.now(), text: err instanceof Error ? err.message : "엑셀 파일을 만들지 못했어요." });
@@ -905,9 +903,9 @@ export default function AdminCatalog({
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-32">
       <header className="flex flex-wrap items-center gap-3 py-5">
-        <h1 className="mr-auto text-xl font-extrabold">장비운용</h1>
+        <h1 className="mr-auto text-xl font-extrabold">창고장비현황</h1>
         {canRegister && activeCat !== "전체" && ( // 카테고리를 고른 상태에서만 품목 추가
-          <motion.button whileTap={{ scale: 0.96 }} type="button" onClick={() => setAddOpen(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+          <motion.button type="button" onClick={() => setAddOpen(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
             + 품목 추가
           </motion.button>
         )}
@@ -931,7 +929,7 @@ export default function AdminCatalog({
         )}
       </div>
 
-      <div className="mt-3 flex gap-2" role="tablist" aria-label="장비운용 분류">
+      <div className="mt-3 flex gap-2" role="tablist" aria-label="창고장비현황 분류">
         {KINDS.map(k => (
           <button key={k} type="button" role="tab" aria-selected={kind === k} onClick={() => { setKind(k); setCat("전체"); setSub(""); setPage(1); resetSel(); }} className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-extrabold sm:flex-none sm:px-8 ${kind === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-700 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>
             {k}<small className="ml-1.5 opacity-70">{kindCounts[k] ?? 0}</small>
@@ -1085,18 +1083,17 @@ export default function AdminCatalog({
             <button type="button" onClick={selectAllShown} className="text-xs underline underline-offset-2 opacity-80">현재 목록 전체({list.length})</button>
             <button type="button" onClick={resetSel} className="text-xs font-bold underline underline-offset-2">전체 해제</button>
             {canEdit && (
-              <motion.button whileTap={{ scale: 0.95 }} type="button" onClick={() => { setMoveErr(""); setKindKeys([...selected]); }} className="rounded-xl bg-zinc-700 px-4 py-2 text-sm font-bold text-white">
+              <motion.button type="button" onClick={() => { setMoveErr(""); setKindKeys([...selected]); }} className="rounded-xl bg-zinc-700 px-4 py-2 text-sm font-bold text-white">
                 분류 변경
               </motion.button>
             )}
             {canEdit && !trashMode && (
-              <motion.button whileTap={{ scale: 0.95 }} type="button" onClick={() => { setMoveErr(""); setMoveKeys([...selected]); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+              <motion.button type="button" onClick={() => { setMoveErr(""); setMoveKeys([...selected]); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
                 카테고리 이동
               </motion.button>
             )}
             {canDelete && (
               <motion.button
-                whileTap={{ scale: 0.95 }}
                 type="button"
                 onClick={() => { setModalErr(""); setConfirm({ mode: trashMode ? "restore" : "delete", keys: [...selected] }); }}
                 className={`rounded-xl px-4 py-2 text-sm font-bold text-white ${trashMode ? "bg-emerald-600" : "bg-red-600"}`}
@@ -1106,7 +1103,6 @@ export default function AdminCatalog({
             )}
             {trashMode && canDelete && (
               <motion.button
-                whileTap={{ scale: 0.95 }}
                 type="button"
                 onClick={() => { setModalErr(""); setConfirm({ mode: "purge", keys: [...selected] }); }}
                 className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white"
@@ -1261,7 +1257,7 @@ export default function AdminCatalog({
             {canRegister && (
               <form onSubmit={addTradeName} className="mt-2 flex gap-2">
                 <input value={newTrade} maxLength={10} onChange={e => setNewTrade(e.target.value)} placeholder="새 공정 이름" aria-label="새 공정 이름" className="min-w-0 flex-1 rounded-xl border border-black/15 bg-transparent px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-white/15" />
-                <motion.button whileTap={{ scale: 0.96 }} disabled={busy || !newTrade.trim()} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40">+ 공정 등록</motion.button>
+                <motion.button disabled={busy || !newTrade.trim()} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40">+ 공정 등록</motion.button>
               </form>
             )}
             {tradeDel !== null && (
@@ -1280,7 +1276,7 @@ export default function AdminCatalog({
           <form onSubmit={addCat} className="mt-3 flex gap-2">
             <input value={newCat} maxLength={20} onChange={e => setNewCat(e.target.value)} placeholder="새 카테고리 이름" aria-label="새 카테고리 이름" className="min-w-0 flex-1 rounded-xl border border-black/15 bg-transparent px-3 py-2.5 text-sm outline-none focus:border-blue-500 dark:border-white/15" />
             <select value={newCatTrade} onChange={e => setNewCatTrade(e.target.value)} aria-label="공정" className="max-w-[9rem] rounded-xl border border-black/15 bg-transparent px-2 text-sm dark:border-white/15"><option value="">공정 미지정</option>{trades.map(t => <option key={t} value={t}>{t}</option>)}</select>
-            <motion.button whileTap={{ scale: 0.96 }} disabled={busy || !newCat.trim()} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40">+ 등록</motion.button>
+            <motion.button disabled={busy || !newCat.trim()} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-40">+ 등록</motion.button>
           </form>
         )}
         {catDel !== null && (
@@ -1389,7 +1385,7 @@ export default function AdminCatalog({
             {modalErr && <p className="mt-3 text-sm text-red-500" role="alert">{modalErr}</p>}
             <div className="mt-5 flex gap-2">
               <button type="button" disabled={busy} onClick={() => setConfirm(null)} className="flex-1 rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">취소</button>
-              <motion.button whileTap={{ scale: 0.97 }} type="button" disabled={busy} onClick={doConfirm} className={`flex-1 rounded-xl py-3 font-bold text-white disabled:opacity-50 ${confirm.mode === "restore" ? "bg-emerald-600" : "bg-red-600"}`}>
+              <motion.button type="button" disabled={busy} onClick={doConfirm} className={`flex-1 rounded-xl py-3 font-bold text-white disabled:opacity-50 ${confirm.mode === "restore" ? "bg-emerald-600" : "bg-red-600"}`}>
                 {busy ? "처리 중…" : confirm.mode === "delete" ? "삭제" : confirm.mode === "restore" ? "복원" : "영구 삭제"}
               </motion.button>
             </div>

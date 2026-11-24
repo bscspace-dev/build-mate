@@ -10,7 +10,7 @@ export default function MyVehicles({ vehicles, items, catalog, name, myId }: { v
   const prod = new Map(catalog.map(p => [p.key, p]));
   const nameOf = (k: string) => prod.get(k)?.name ?? "삭제된 품목";
   return (
-    <main className="mx-auto w-full max-w-5xl flex-1 px-4 pb-24">
+    <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24">
       <header className="flex flex-wrap items-center gap-3 py-5">
         <Link href="/" className="text-sm text-zinc-500 hover:text-blue-600">← 메뉴</Link>
         <h1 className="mr-auto text-xl font-extrabold">내 차량</h1>

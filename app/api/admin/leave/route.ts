@@ -1,5 +1,5 @@
 import { actorCan, getActor } from '@/lib/auth';
-import { addLeave, cancelLeave, decideLeave, getAnnualLeave, getLeaves, getMembers, getTeams, removePlacementsRange, setAnnualLeave } from '@/lib/db';
+import { addLeave, cancelLeave, decideLeave, getAnnualLeave, getLeaves, getActiveMembers, getTeams, removePlacementsRange, setAnnualLeave } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { isLeaveKind, leaveDates, leaveDaysInYear, leaveSlots, leaveUsage } from '@/lib/leave';
 import { isOfficePay } from '@/lib/roles';
@@ -14,7 +14,7 @@ const MAX_DAYS = 60; // 한 번에 신청할 수 있는 휴가 기간
 // 사무(사무실 부서) 회원의 휴가는 연차에서 차감된다. 현장 회원은 연차가 없고 휴가 일수만 출근에서 빠진다.
 // 연차 총 일수가 정해져 있는 사무 회원은 (승인 + 대기) 일수가 총량을 넘으면 신청할 수 없다.
 async function officeShortage(memberId: string, req: { startDate: string; endDate: string; kind: 'full' | 'am' | 'pm' }, includePending: boolean): Promise<string | null> {
-  const [members, teams, annual, leaves] = await Promise.all([getMembers(), getTeams(), getAnnualLeave(), getLeaves()]);
+  const [members, teams, annual, leaves] = await Promise.all([getActiveMembers(), getTeams(), getAnnualLeave(), getLeaves()]);
   const m = members.find(x => x.id === memberId);
   if (!m || !isOfficePay(teams, m)) return null; // 4대보험 사무직 기준이 아니면(일수제) 연차 차감 없음
   for (const year of new Set(leaveDates(req).map(d => Number(d.slice(0, 4))))) {
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
     const year = typeof b.year === 'number' && Number.isInteger(b.year) && b.year >= 2000 && b.year <= 2100 ? b.year : NaN;
     const days = b.days === null ? null : typeof b.days === 'number' && b.days >= 0 && b.days <= 60 && Number.isInteger(b.days * 2) ? b.days : NaN;
     if (Number.isNaN(year) || (days !== null && Number.isNaN(days)) || typeof b.memberId !== 'string') return json({ error: '연도와 연차 일수(0~60, 0.5 단위)를 확인해 주세요.' }, 400);
-    const [members, teams] = await Promise.all([getMembers(), getTeams()]);
+    const [members, teams] = await Promise.all([getActiveMembers(), getTeams()]);
     const m = members.find(x => x.id === b.memberId);
     if (!m || !isOfficePay(teams, m)) return json({ error: '연차는 급여 기준이 4대보험 사무직인 회원에게만 부여해요.' }, 400);
     await setAnnualLeave(year, b.memberId, days);

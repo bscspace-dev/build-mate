@@ -1,7 +1,7 @@
-import { getProducts, getSites, returnStock, saveRequest, takeStock } from '@/lib/db';
+import { getProducts, getSites, getTeams, getTrades, returnStock, saveRequest, takeStock } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { getSessionMember } from '@/lib/member-session';
-import { canSurvey, memberRoles } from '@/lib/roles';
+import { canSurvey, memberRoles, memberTrades } from '@/lib/roles';
 import type { RequestItem } from '@/lib/types';
 
 // 현장 자재 요청 (현장작업자·현장관리자 등 '자재 요청' 메뉴를 쓸 수 있는 회원).
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   const site = typeof b.site === 'string' ? b.site.trim().replace(/\s+/g, ' ') : '';
   if (!site || !(await getSites()).some(s => s.name === site)) return json({ error: '등록된 현장을 골라 주세요. 목록에 없으면 관리자에게 현장 등록을 요청해 주세요.' }, 400);
   const trade = typeof b.trade === 'string' ? b.trade : '';
-  if (!member.trades.includes(trade)) return json({ error: '등록된 공정이 아니에요.' }, 400);
+  if (!memberTrades(await getTeams(), member, await getTrades()).includes(trade)) return json({ error: '내 팀이 맡은 공정이 아니에요.' }, 400);
   const picks = Array.isArray(b.items) ? b.items : [];
   const customs = Array.isArray(b.customs) ? b.customs : [];
   if (picks.length + customs.length < 1) return json({ error: '요청할 자재를 1개 이상 골라 주세요.' }, 400);

@@ -16,7 +16,7 @@ function randomString(len: number): string {
 export function generateLoginId(taken: Set<string>): string {
   for (;;) {
     const id = 'w' + randomString(5);
-    if (!taken.has(id)) return id;
+    if (/[0-9]/.test(id) && !taken.has(id)) return id; // 영문+숫자 조합이어야 하니 숫자가 없으면 다시 만든다
   }
 }
 /** 관리자 아이디는 현장관리자가 쓸 수 없다. */
@@ -25,7 +25,7 @@ export const isReservedLoginId = (id: string) => !!process.env.ADMIN_PASSWORD &&
 export const generatePassword = () => randomString(8);
 
 export const normalizeLoginId = (s: string) => s.trim().toLowerCase();
-export const validLoginId = (s: string) => /^[a-z0-9_-]{3,20}$/.test(s);
+export const validLoginId = (s: string) => /^(?=.*[a-z])(?=.*[0-9])[a-z0-9]{3,20}$/.test(s); // 영문 소문자 + 숫자 조합 3~20자
 export const validPassword = (s: string) => s.length >= 6 && s.length <= 64;
 
 /** 비밀번호는 원문을 저장하지 않고 scrypt 해시로만 저장한다. */

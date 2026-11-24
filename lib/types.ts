@@ -60,6 +60,32 @@ export type LoadPackageInput = { name: string; items: LoadPackageItem[] };
 /** 차량에 배치된 품목. 연장은 1개씩(note = 일련번호·메모), 상비품은 품목마다 한 줄에 수량을 합친다. */
 export type VehicleItem = { id: string; vehicleId: string; key: string; qty: number; note: string; at: string };
 
+/** 현장 일지(공유 글): 그날의 변경사항·발주·작업일지·기타를 글과 사진으로 올려 공유한다 */
+export const SITE_POST_KINDS = [
+  { v: 'log', label: '작업내용' },
+  { v: 'change', label: '변경사항' },
+  { v: 'order', label: '발주' },
+  { v: 'etc', label: '기타' },
+] as const;
+export type SitePostKind = (typeof SITE_POST_KINDS)[number]['v'];
+export const isSitePostKind = (v: unknown): v is SitePostKind => SITE_POST_KINDS.some(k => k.v === v);
+export type SitePost = {
+  id: string;
+  siteId: string;
+  date: string; // 해당 날짜 (YYYY-MM-DD)
+  kind: SitePostKind;
+  body: string; // 내용
+  photos: string[]; // 사진 주소들
+  authorId: string; // 작성한 회원 (최고 관리자(내장)면 빈 문자열)
+  authorName: string;
+  createdAt: string;
+};
+
+/** 푸시 알림: 알림을 켠 기기(구독)와 보낸 알림 내용 */
+export type PushSub = { endpoint: string; memberId: string; at: string }; // memberId: 회원 id, 내장 최고 관리자는 'root'
+export type PushItem = { id: string; at: string; title: string; body: string; url: string; to: string[] }; // to: 받는 사람(회원 id 또는 'root')
+export type PushState = { subs: PushSub[]; feed: PushItem[] };
+
 /** 등록된 현장 — 자재 요청에서 이 목록 중에서 고른다 */
 export type Site = {
   id: string;
@@ -70,6 +96,7 @@ export type Site = {
   endDate: string; // 공사 종료일
   memo: string; // 특이사항
   photos: string[]; // 현장 사진 주소들 (여러 장, 없으면 빈 배열)
+  drawings: string[]; // 도면 파일 주소들 (이미지 또는 PDF, 없으면 빈 배열)
   extensions: SiteExtension[]; // 마감일을 바꾼 이력 (연장·단축), 오래된 것부터
   createdAt: string;
 };
@@ -146,7 +173,7 @@ export type ExpenseInput = { date: string; site: string; category: ExpenseCatego
 /** 마감일 변경 한 번: from(바꾸기 전 마감일) → to(새 마감일). to 가 늦으면 연장, 빠르면 단축 */
 export type SiteExtension = { from: string; to: string; at: string };
 /** 현장 등록·수정 입력 (이름 외에는 모두 선택) */
-export type SiteInput = { name: string; address: string; pmId: string; startDate: string; endDate: string; memo: string; photos?: string[] }; // photos: 등록 때는 사진 주소들, 수정 때는 undefined=그대로 · 배열=이 목록으로 바꾸기 (빠진 사진은 정리 대상)
+export type SiteInput = { name: string; address: string; pmId: string; startDate: string; endDate: string; memo: string; photos?: string[]; drawings?: string[] }; // photos: 등록 때는 사진 주소들, 수정 때는 undefined=그대로 · 배열=이 목록으로 바꾸기 (빠진 사진은 정리 대상)
 
 export type VehicleResult<T = object> = ({ ok: true } & T) | { error: string };
 
@@ -155,6 +182,10 @@ export type TrashedProduct = Product & { deletedAt: string };
 /** 급여 기준: '' = 자동(주 팀 기준), daily = 일수제(일당), office = 4대보험 사무직 기준 */
 export type PayType = '' | 'daily' | 'office';
 
+/** 급여 금액 이력 한 건: from(적용 시작일, 빈 문자열은 처음부터) 부터 amount 원. 금액을 바꾸면 다음 급여 기간 시작일로 쌓인다. */
+export type PayEntry = { from: string; amount: number; at: string };
+/** 월급 지급 완료 기록: 어느 달분을 언제 얼마(실지급)로 누가 지급 처리했는지 */
+export type PayrollPaid = { at: string; amount: number; by: string };
 export type Member = {
   id: string; // 내부 식별자 (응답 집계용). 로그인에는 쓰지 않는다
   name: string;
@@ -165,6 +196,22 @@ export type Member = {
   handles: string; // 거래처의 취급품목 (자유 입력)
   phone: string; // 연락처
   address: string; // 주소
+  addressDetail: string; // 세부 주소 (동·호수 등)
+  fieldRoles: RoleKey[]; // 현장 역할(PM·사수·부사수) 여러 개 선택. 비어 있으면 팀 하나만 가진 것
+  officeStatus: '' | 'probation' | 'regular'; // 사무실 구분: 수습 / 정규 (비우면 미지정)
+  bankbook: string; // 급여 통장 사본 사진 주소 (없으면 빈 문자열)
+  photo: string; // 프로필 사진 주소 (없으면 빈 문자열)
+  history: { hire: string; resign: string }[]; // 퇴사했다가 복직한 지난 재직 기간들 (입사일 ~ 퇴사일), 오래된 순
+  resignDate: string; // 퇴사일 (YYYY-MM-DD), 퇴사하지 않았으면 빈 문자열 — 있으면 퇴사자: 로그인할 수 없고 퇴사자 탭에 모인다
+  bank: string; // 급여 계좌: 은행
+  accountNo: string; // 급여 계좌: 계좌번호 (숫자와 -)
+  accountHolder: string; // 급여 계좌: 예금주
+  safetyDate: string; // 안전교육 이수일 (YYYY-MM-DD), 없으면 빈 문자열 (현장 인원)
+  license: string; // 면허·자격 정보 (자유 입력, 현장 인원)
+  payHistory: PayEntry[]; // 급여 금액 이력 (일당·월급이 오른 날짜별로). 비어 있으면 payAmount 가 처음부터 적용된 것
+  payAmount: number; // 급여(원): 일수제면 일당, 4대보험 사무직 기준이면 월급. 0 = 미설정
+  hireDate: string; // 입사일 (YYYY-MM-DD), 없으면 빈 문자열
+  position: string; // 직급 (사원·대리·과장 등 자유 입력). 현장작업자(정)=사수, (부)=부사수는 팀으로 구분한다
   categories: string[]; // 설문에서 맡는 카테고리(공정 아래 카테고리) 최대 3개. 비어 있으면 공정 전체
   menus: MenuKey[]; // 직급 기본 메뉴 외에 최고 관리자·개발팀이 추가로 부여한 메뉴 (소모품 / 설문 참여)
   actions: GrantedActions; // 부여받은 메뉴에서 허용된 동작 (예: { catalog: ['delete'] }). 설문 참여에는 없다
@@ -202,3 +249,23 @@ export type SurveyPayload = {
   items: string[];
   custom: { n: string; m: string }[];
 };
+
+/** 장비정보: 연장(공구)의 정보와 최저가를 모아 두는 목록 */
+export type EquipmentOffer = { id: string; mall: string; price: number; url: string; at: string; auto?: boolean }; // 판매처 가격 (auto: 링크에서 읽어 오는 가격 — 갱신 때마다 다시 읽는다)
+export type EquipmentNaver = { price: number; mall: string; url: string; title: string; at: string }; // 네이버 쇼핑에서 가져온 최저가
+export type EquipmentHistory = { at: string; price: number; mall: string }; // 최저가가 바뀐 기록 (오래된 것부터)
+export type Equipment = {
+  id: string;
+  name: string; // 장비명
+  brand: string; // 브랜드
+  model: string; // 모델명 (최저가를 찾을 때 이 이름이 제목에 있는 상품만 본다)
+  category: string; // 용도·분류 (예: 전동공구, 측정, 절단)
+  spec: string; // 스펙·메모
+  query: string; // 네이버 검색어 (비우면 브랜드 + 모델명)
+  offers: EquipmentOffer[];
+  naver: EquipmentNaver | null;
+  history: EquipmentHistory[];
+  createdAt: string;
+  updatedAt: string;
+};
+export type EquipmentInput = Omit<Equipment, 'id' | 'createdAt' | 'updatedAt'>;

@@ -46,6 +46,6 @@ export async function getSessionMember(): Promise<Member | null> {
   const [id, exp, sv] = v.split('.');
   if (!id || !exp || !sv || !(Number(exp) > Date.now() / 1000)) return null;
   const w = await getMember(id);
-  if (!w || !w.passHash || pwVersion(w) !== sv) return null;
+  if (!w || !w.passHash || w.resignDate || pwVersion(w) !== sv) return null; // 퇴사한 회원의 로그인은 바로 끊긴다
   return w;
 }

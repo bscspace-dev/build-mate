@@ -1,5 +1,5 @@
-import { actorCan, getActor } from '@/lib/auth';
-import { assignPlacements, copyPlacements, getLeaves, getMembers, getPlacements, getSites, getTeams, removePlacement, removePlacementsRange, setPlacementNote } from '@/lib/db';
+import { getActor, placementsFull } from '@/lib/auth';
+import { assignPlacements, copyPlacements, getLeaves, getActiveMembers, getPlacements, getSites, getTeams, removePlacement, removePlacementsRange, setPlacementNote } from '@/lib/db';
 import { leaveSlots } from '@/lib/leave';
 import { OFFICE_SITE_ID } from '@/lib/office-site';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -30,7 +30,7 @@ export async function POST(req: Request) {
   const a = b?.action;
   const need = a === 'assign' || a === 'copy' || a === 'note' || a === 'extra' ? 'register' : a === 'remove' ? 'delete' : null;
   if (!b || !need) return json({ error: 'bad request' }, 400);
-  if (!actorCan(actor, 'placements', need)) return json({ error: '이 작업을 할 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
+  if (!placementsFull(actor)) return json({ error: '이 작업을 할 권한이 없어요. (현장배치 모든 권한이 필요해요) 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
 
   if (a === 'remove') {
     // 빼기는 시간대를 여러 개 한 번에 줄 수 있다 (slots: ['am','ot'] 처럼). 없으면 slot 하나.
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
   }
 
   // 배치할 수 있는 회원(현장 부서)과 현장
-  const [members, teams, sites] = await Promise.all([getMembers(), getTeams(), getSites()]);
+  const [members, teams, sites] = await Promise.all([getActiveMembers(), getTeams(), getSites()]);
   const fieldIds = members.filter(m => memberHasGroup(teams, m, 'field')).map(m => m.id);
   const siteIds = [OFFICE_SITE_ID, ...sites.map(s => s.id)]; // 사무실은 고정 항목
 
@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     if (!crew.length) return json({ error: '이 현장에 오후(종일 포함)로 배치된 인원이 없어요. 오전만 한 사람은 야간·심야에서 제외돼요.' }, 400);
     const have = new Set(day.filter(p => p.siteId === b.siteId && p.slot === b.slot).map(p => p.memberId));
     if (crew.every(id => have.has(id))) {
-      if (!actorCan(actor, 'placements', 'delete')) return json({ error: '체크를 해제할 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
+      if (!placementsFull(actor)) return json({ error: '체크를 해제할 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
       for (const id of crew) await removePlacement(b.date, id, [b.slot]);
       return json({ ok: true, count: crew.length, on: false });
     }

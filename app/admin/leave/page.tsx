@@ -2,11 +2,11 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import LeaveAdmin from "@/components/admin/LeaveAdmin";
 import { actorCan, getActor } from "@/lib/auth";
-import { getAnnualLeave, getLeaves, getMembers, getTeams } from "@/lib/db";
-import { leaveUsage } from "@/lib/leave";
-import { isOfficePay, teamsLabel } from "@/lib/roles";
+import { getAnnualLeave, getLeaves, getActiveMembers, getTeams } from "@/lib/db";
+import { leaveDates, leaveUsage } from "@/lib/leave";
+import { isOfficePay, memberHasGroup, teamsLabel } from "@/lib/roles";
 
-export const metadata = { title: "휴가관리 · 빌드메이트" };
+export const metadata = { title: "연차·휴가관리 · 빌드메이트" };
 
 export default function LeavePage() {
   return (
@@ -20,10 +20,11 @@ export default function LeavePage() {
 // 승인 권한이 없으면 남의 신청은 화면으로 보내지 않는다.
 async function Loader() {
   const actor = await getActor("leave");
-  if (!actor) redirect("/"); // '휴가관리' 메뉴를 쓸 수 없으면 메인으로
-  const canDecide = actorCan(actor, "leave", "edit");
+  if (!actor) redirect("/"); // '연차·휴가관리' 메뉴를 쓸 수 없으면 메인으로
+  // 모든 권한(보기·등록·수정)을 가졌으면 관리자 탭 4개를, 일부 권한이면 내 휴가 신청과 금일 휴가자만 본다
+  const canDecide = actorCan(actor, "leave", "view") && actorCan(actor, "leave", "register") && actorCan(actor, "leave", "edit");
   const me = actor.kind === "member" ? { id: actor.member.id, name: actor.member.name } : null;
-  const [all, members, teams, annual] = await Promise.all([getLeaves(), getMembers(), getTeams(), getAnnualLeave()]);
+  const [all, members, teams, annual] = await Promise.all([getLeaves(), getActiveMembers(), getTeams(), getAnnualLeave()]);
   const leaves = canDecide ? all : all.filter(l => l.memberId === me?.id);
   // 연차 차감 대상 = 4대보험 사무직 기준인 회원 (급여 기준을 직접 정했으면 그것, 아니면 주 팀이 사무실이면 사무직 기준)
   const isOffice = (m: (typeof members)[number]) => isOfficePay(teams, m);
@@ -34,6 +35,12 @@ async function Loader() {
   const balanceOf = (id: string) => ({ total: annual[String(year)]?.[id] ?? null, ...leaveUsage(all, id, year) });
   const officeMembers = members.filter(m => isOffice(m));
   const balances = Object.fromEntries((canDecide ? officeMembers : officeMembers.filter(m => m.id === me?.id)).map(m => [m.id, balanceOf(m.id)]));
-  const roster = canDecide ? officeMembers.map(m => ({ id: m.id, name: m.name, team: teamsLabel(teams, m) })).sort((a, b) => a.name.localeCompare(b.name, "ko")) : [];
-  return <LeaveAdmin me={me} canApply={!!me && actorCan(actor, "leave", "register")} canDecide={canDecide} leaves={leaves} people={people} year={year} balances={balances} roster={roster} />;
+  const staff = canDecide ? members.filter(m => memberHasGroup(teams, m, "office") || memberHasGroup(teams, m, "field")).map(m => ({ id: m.id, name: m.name, team: teamsLabel(teams, m), office: isOffice(m) })).sort((a, b) => a.name.localeCompare(b.name, "ko")) : []; // 회원별 현황: 재직 회원 중 사무·현장 (거래처 제외)
+  // 금일 휴가자: 오늘 승인된 휴가 (누구나 볼 수 있고, 사유는 모든 권한자에게만 보낸다)
+  const todayKst = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
+  const todayList = all
+    .filter(l => l.status === "approved" && leaveDates(l).includes(todayKst) && who.has(l.memberId))
+    .map(l => ({ id: l.id, name: who.get(l.memberId)!.name, team: who.get(l.memberId)!.team, office: who.get(l.memberId)!.office, kind: l.kind, startDate: l.startDate, endDate: l.endDate, reason: canDecide ? l.reason : "" }))
+    .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  return <LeaveAdmin me={me} canApply={!!me && actorCan(actor, "leave", "register")} canDecide={canDecide} leaves={leaves} people={people} year={year} balances={balances} staff={staff} todayList={todayList} />;
 }

@@ -41,7 +41,7 @@ const toneCls = { red: "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red
 export type VehicleFormData = { name: string; nickname: string; icon: string; memo: string; driverId: string; model: string; year: string; vin: string; ownership: VehicleOwnership; mileage: number; oilDate: string; oilKm: number; inspectionDate: string; insurer: string; policyNo: string; insuranceExpiry: string; premium: number; insurancePhone: string; insuranceNote: string };
 
 export type MemberLite = { id: string; name: string; roleLabel: string };
-export type CatalogLite = { key: string; name: string; kind: Kind; stock: number; image: string; brand: string; trashed: boolean };
+export type CatalogLite = { key: string; name: string; kind: Kind; stock: number; image: string; brand: string; category: string; trashed: boolean };
 
 const inputCls = "mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15";
 const chipOn = "border-blue-600 bg-blue-600 text-white";
@@ -62,9 +62,9 @@ type Dialog =
 // 연장은 차량에 배정하면 장비운용(창고) 재고에서 1개 빠지고, 내리면 재고로 돌아온다.
 // 상비품은 차량에 실린 수량을 창고 재고와 따로 센다 (싣거나 빼도 창고 재고는 바뀌지 않는다).
 export default function VehiclesAdmin({
-  vehicles, items, members, catalog, packages, canRegister, canEdit, canDelete,
+  vehicles, items, members, catalog, packages, ownOnly = false, canRegister, canEdit, canDelete,
 }: {
-  vehicles: Vehicle[]; items: VehicleItem[]; members: MemberLite[]; catalog: CatalogLite[]; packages: LoadPackage[]; canRegister: boolean; canEdit: boolean; canDelete: boolean;
+  vehicles: Vehicle[]; items: VehicleItem[]; members: MemberLite[]; catalog: CatalogLite[]; packages: LoadPackage[]; ownOnly?: boolean; canRegister: boolean; canEdit: boolean; canDelete: boolean;
 }) {
   const router = useRouter();
   const [view, setView] = useState<"vehicle" | "item">("vehicle");
@@ -294,7 +294,7 @@ export default function VehiclesAdmin({
       <>
       <header className="flex flex-wrap items-center gap-3 py-5">
         <h1 className="mr-auto text-xl font-extrabold">차량정보</h1>
-        <span className="text-sm text-zinc-500">차량 {vehicles.length}대</span>
+        <span className="text-sm text-zinc-500">{ownOnly ? "내 차량" : "차량"} {vehicles.length}대</span>
         {canRegister && <button type="button" onClick={() => { setErr(""); setDlg({ t: "vehicle", v: null }); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">+ 차량 등록</button>}
       </header>
 
@@ -312,7 +312,8 @@ export default function VehiclesAdmin({
 
       {view === "vehicle" ? (
         <div className="mt-4">
-          {vehicles.length === 0 && <p className="rounded-2xl bg-white p-8 text-center text-zinc-500 dark:bg-zinc-900">등록된 차량이 없어요.{canRegister ? " 위의 “차량 등록”으로 먼저 차량을 추가해 주세요." : ""}</p>}
+          {vehicles.length === 0 && ownOnly && <p className="rounded-2xl bg-white p-8 text-center text-zinc-500 dark:bg-zinc-900">나에게 배치된 차량이 없어요. 차량이 배치되면 여기서 정보를 볼 수 있어요.</p>}
+          {vehicles.length === 0 && !ownOnly && <p className="rounded-2xl bg-white p-8 text-center text-zinc-500 dark:bg-zinc-900">등록된 차량이 없어요.{canRegister ? " 위의 “차량 등록”으로 먼저 차량을 추가해 주세요." : ""}</p>}
           {vehicles.length > 0 && shown.length === 0 && <p className="p-8 text-center text-zinc-500">검색 결과가 없어요.</p>}
 
           {/* 인쇄 전용 차량 대장: 화면에는 보이지 않고, 「인쇄」를 누르면 가로 A4 로 출력된다 */}
@@ -422,7 +423,7 @@ export default function VehiclesAdmin({
       {dlg?.t === "pkgForm" && <AssignForm key={"pkg" + (dlg.p?.id ?? "new")} v={dlg.v} catalog={catalog.filter(p => !p.trashed)} busy={busy} err={err} onClose={close} onSave={async () => []}
         pkg={{ id: dlg.p?.id ?? null, name: dlg.p?.name ?? "", items: dlg.p?.items ?? [], onBack: () => { setErr(""); setDlg({ t: "pkg", v: dlg.v }); },
           onSavePkg: (name, its) => void call({ action: "save", id: dlg.p?.id ?? "", name, items: its }, "패키지를 저장했어요", "/api/admin/load-packages").then(ok => { if (ok) setDlg({ t: "pkg", v: dlg.v }); }) }} />}
-      {dlg?.t === "pkgApply" && <PackageApply v={dlg.v} p={dlg.p} catalog={catalog} busy={busy} err={err} onClose={close} onBack={() => { setErr(""); setDlg({ t: "pkg", v: dlg.v }); }} onSave={rows => void assignMany(dlg.v, rows)} />}
+      {dlg?.t === "pkgApply" && <PackageApply v={dlg.v} p={dlg.p} catalog={catalog} loaded={items.filter(i => i.vehicleId === dlg.v.id).map(i => i.key)} busy={busy} err={err} onClose={close} onBack={() => { setErr(""); setDlg({ t: "pkg", v: dlg.v }); }} onSave={rows => void assignMany(dlg.v, rows)} />}
       {dlg?.t === "assign" && <AssignForm key={dlg.v.id} v={dlg.v} catalog={catalog.filter(p => !p.trashed)} busy={busy} err={err} onClose={close} onSave={rows => assignMany(dlg.v, rows)} />}
       {dlg?.t === "back" && <BackForm key={dlg.b.item.id} v={dlg.v} b={dlg.b} busy={busy} err={err} onClose={close} onSave={qty => call({ action: "return", id: dlg.b.item.id, qty }, dlg.b.kind === "연장" ? `${dlg.b.name}을(를) 차량에서 내려 창고 재고로 돌렸어요` : `${dlg.b.name} ${qty}개를 차량에서 뺐어요`).then(ok => { if (ok) setDlg(null); })} />}
       <Modal open={dlg?.t === "remove"} onClose={close}>
@@ -449,40 +450,53 @@ export default function VehiclesAdmin({
   );
 }
 
-// 차량에 실린 품목: 사진 카드 격자. 수량은 사진 위 배지로 크게 보여 준다.
+// 차량에 실린 품목: 카테고리별로 묶은 목록. 한 줄에 작은 사진 · 이름 · 수량 · 빼기가 보여서 많아도 훑어보기 쉽다.
 export function Group({ title, tone, rows, nameOf, prod, canEdit, onBack }: { title: string; tone: "tool" | "supply"; rows: VehicleItem[]; nameOf: (k: string) => string; prod: Map<string, CatalogLite>; canEdit: boolean; onBack: (b: Back) => void }) {
   const total = rows.reduce((n, i) => n + i.qty, 0);
   const head = tone === "tool" ? "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-200" : "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200";
   const badge = tone === "tool" ? "bg-blue-600" : "bg-amber-600";
+  const catOf = (i: VehicleItem) => prod.get(i.key)?.category || "미분류";
+  const sections = (() => {
+    const m = new Map<string, VehicleItem[]>();
+    for (const i of rows) m.set(catOf(i), [...(m.get(catOf(i)) ?? []), i]);
+    for (const l of m.values()) l.sort((x, y) => nameOf(x.key).localeCompare(nameOf(y.key), "ko"));
+    return [...m.entries()].sort(([x], [y]) => (x === "미분류" ? 1 : y === "미분류" ? -1 : x.localeCompare(y, "ko")));
+  })();
   return (
     <div className="mt-3 first:mt-1">
       <h3 className="flex items-center gap-2 text-sm font-extrabold">
         <span className={`rounded-full px-2.5 py-0.5 text-xs ${head}`}>{title}</span>
         <span className="text-xs font-semibold text-zinc-500">{rows.length === 0 ? "없어요" : `${rows.length}종 · 총 ${total}개`}</span>
       </h3>
-      {rows.length > 0 && (
-        <ul className="mt-1.5 grid grid-cols-3 gap-1.5 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-9">
-          {rows.map(i => {
-            const p = prod.get(i.key);
-            const isTool = p?.kind === "연장";
-            return (
-              <li key={i.id} className="flex flex-col overflow-hidden rounded-xl border border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900">
-                <div className="relative">
-                  {p?.image ? (
-                    <img src={p.image} alt="" loading="lazy" className="aspect-square w-full bg-white object-contain" />
-                  ) : <div className="aspect-square w-full bg-zinc-100 dark:bg-zinc-800" />}
-                  <span className={`absolute right-1 top-1 rounded-full px-1.5 py-px text-[11px] font-extrabold leading-tight text-white shadow ${badge}`}>{isTool && i.qty === 1 ? "1개" : "×" + i.qty}</span>
-                </div>
-                <div className="flex flex-1 flex-col gap-1 p-1.5">
-                  <span className="line-clamp-2 min-h-[2.3em] text-[11px] font-bold leading-snug">{nameOf(i.key)}</span>
-                  {i.note && <span className="truncate rounded bg-zinc-100 px-1 py-px text-[10px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{i.note}</span>}
-                  {canEdit && <button type="button" onClick={() => onBack({ item: i, name: nameOf(i.key), kind: p?.kind ?? "상비품" })} className="mt-auto rounded-md border border-black/15 py-1 text-[11px] font-bold hover:border-red-400 hover:text-red-600 dark:border-white/15">{isTool ? "내리기" : "빼기"}</button>}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {sections.map(([cat, list]) => (
+        <section key={cat} className="mt-2" aria-label={cat}>
+          {(sections.length > 1 || cat !== "미분류") && (
+            <div className="flex items-baseline gap-2 border-b border-black/10 pb-1 dark:border-white/10">
+              <span className="text-xs font-extrabold text-zinc-600 dark:text-zinc-300">{cat}</span>
+              <span className="text-[11px] font-semibold text-zinc-400">{list.length}종 · {list.reduce((n, i) => n + i.qty, 0)}개</span>
+            </div>
+          )}
+          <ul className="grid gap-x-4 lg:grid-cols-2">
+            {list.map(i => {
+              const pr = prod.get(i.key);
+              const isTool = pr?.kind === "연장";
+              return (
+                <li key={i.id} className="flex items-center gap-2.5 border-b border-black/5 py-1.5 dark:border-white/5">
+                  {pr?.image ? (
+                    <img src={pr.image} alt="" loading="lazy" className="h-9 w-9 shrink-0 rounded-md bg-white object-contain" />
+                  ) : <span className="h-9 w-9 shrink-0 rounded-md bg-zinc-100 dark:bg-zinc-800" />}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold">{nameOf(i.key)}</div>
+                    {i.note && <div className="truncate text-[11px] text-zinc-500">{i.note}</div>}
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-extrabold text-white ${badge}`}>{isTool && i.qty === 1 ? "1개" : "×" + i.qty}</span>
+                  {canEdit && <button type="button" onClick={() => onBack({ item: i, name: nameOf(i.key), kind: pr?.kind ?? "상비품" })} className="shrink-0 rounded-md border border-black/15 px-2.5 py-1 text-xs font-bold hover:border-red-400 hover:text-red-600 dark:border-white/15">{isTool ? "내리기" : "빼기"}</button>}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
     </div>
   );
 }
@@ -645,15 +659,21 @@ function PackageDialog({ v, packages, catalog, canEdit, busy, err, onClose, onAp
 }
 
 // 패키지를 이 차량에 적재하기 전 확인: 창고 재고가 모자란 연장은 빼고 적재한다
-function PackageApply({ v, p, catalog, busy, err, onClose, onBack, onSave }: { v: Vehicle; p: LoadPackage; catalog: CatalogLite[]; busy: boolean; err: string; onClose: () => void; onBack: () => void; onSave: (rows: { key: string; qty: number; note: string; name: string }[]) => void }) {
+function PackageApply({ v, p, catalog, loaded, busy, err, onClose, onBack, onSave }: { v: Vehicle; p: LoadPackage; catalog: CatalogLite[]; loaded: string[]; busy: boolean; err: string; onClose: () => void; onBack: () => void; onSave: (rows: { key: string; qty: number; note: string; name: string }[]) => void }) {
   const byKey = new Map(catalog.map(c => [c.key, c]));
-  const rows = p.items.map(i => { const c = byKey.get(i.key); return { i, c, gone: !c || c.trashed, short: !!c && c.kind === "연장" && c.stock < i.qty }; });
+  // 이미 이 차량에 실려 있는 품목은 다시 싣지 않는다 (같은 패키지를 또 적재해도 수량이 겹쳐 늘지 않게). 목록에도 나오지 않는다.
+  const have = new Set(loaded);
+  const all = p.items.map(i => { const c = byKey.get(i.key); return { i, c, gone: !c || c.trashed, short: !!c && c.kind === "연장" && c.stock < i.qty }; });
+  const already = all.filter(r => have.has(r.i.key));
+  const rows = all.filter(r => !have.has(r.i.key));
   const ok = rows.filter(r => !r.gone && !r.short);
   return (
     <Modal open onClose={onClose} wide>
       <h2 className="text-lg font-bold">“{p.name}” 적재</h2>
-      <p className="mt-1 text-sm text-zinc-500">{v.name}에 아래 품목을 적재해요. 창고 재고가 모자란 연장은 빼고 적재돼요.</p>
-      <ul className="mt-3 divide-y divide-black/5 rounded-xl border border-black/10 dark:divide-white/10 dark:border-white/10">
+      <p className="mt-1 text-sm text-zinc-500">{v.name}에 아래 품목을 적재해요. 이미 실린 품목은 빼고, 창고 재고가 모자란 연장도 빼고 적재돼요.</p>
+      {already.length > 0 && <p className="mt-2 rounded-lg bg-zinc-100 px-3 py-2 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">이미 실려 있어서 제외한 품목 {already.length}개: {already.map(r => r.c?.name ?? "삭제된 품목").join(", ")}</p>}
+      {rows.length === 0 && <p className="mt-3 rounded-xl bg-white p-6 text-center text-sm text-zinc-500 dark:bg-zinc-900">패키지의 모든 품목이 이미 실려 있어요.</p>}
+      {rows.length > 0 && <ul className="mt-3 divide-y divide-black/5 rounded-xl border border-black/10 dark:divide-white/10 dark:border-white/10">
         {rows.map(r => (
           <li key={r.i.key} className="flex items-center gap-2 px-3 py-2 text-sm">
             <span className="min-w-0 flex-1 truncate font-semibold">{r.c?.name ?? "삭제된 품목"}</span>
@@ -661,7 +681,7 @@ function PackageApply({ v, p, catalog, busy, err, onClose, onBack, onSave }: { v
             {r.gone ? <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold dark:bg-zinc-700">품목 없음</span> : r.short ? <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700 dark:bg-red-500/20 dark:text-red-300">재고 부족</span> : <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200">적재</span>}
           </li>
         ))}
-      </ul>
+      </ul>}
       {ok.length < rows.length && <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">{rows.length - ok.length}개 품목은 적재하지 않아요 (재고 부족·없는 품목).</p>}
       {err && <p className="mt-3 text-sm text-red-500" role="alert">{err}</p>}
       <div className="mt-5 flex gap-2">
@@ -675,11 +695,18 @@ function PackageApply({ v, p, catalog, busy, err, onClose, onBack, onSave }: { v
 function AssignForm({ v, catalog, busy, err, onClose, onSave, pkg }: { v: Vehicle; pkg?: { id: string | null; name: string; items: LoadPackageItem[]; onSavePkg: (name: string, items: LoadPackageItem[]) => void; onBack: () => void }; catalog: CatalogLite[]; busy: boolean; err: string; onClose: () => void; onSave: (rows: { key: string; qty: number; note: string; name: string }[]) => Promise<string[]> }) {
   const [kind, setKind] = useState<Kind>("연장");
   const [q, setQ] = useState("");
+  const [cat, setCat] = useState("__all"); // 카테고리 필터 ("__all" = 전체)
   // 고른 품목 (탭을 바꿔도 유지된다). 연장은 1개씩(메모 선택), 상비품은 수량
   const [sel, setSel] = useState<Map<string, { qty: string; note: string }>>(() => new Map((pkg?.items ?? []).map(i => [i.key, { qty: String(i.qty), note: "" }])));
   const [pname, setPname] = useState(pkg?.name ?? ""); // 패키지 이름 (패키지 만들기 모드)
   const kw = q.trim().replace(/\s+/g, "").toLowerCase();
-  const list = catalog.filter(p => p.kind === kind && (!kw || `${p.name}${p.brand}`.replace(/\s+/g, "").toLowerCase().includes(kw)));
+  // 카테고리: 연장·상비품 탭마다 있는 분류만 칩으로 보여 주고, 전체일 때는 분류별로 묶어서 보인다
+  const catOf = (p: CatalogLite) => p.category || "미분류";
+  const catCounts = (() => { const m = new Map<string, number>(); catalog.filter(p => p.kind === kind).forEach(p => m.set(catOf(p), (m.get(catOf(p)) ?? 0) + 1)); return [...m.entries()].sort(([a], [b]) => (a === "미분류" ? 1 : b === "미분류" ? -1 : a.localeCompare(b, "ko"))); })();
+  const catNow = cat !== "__all" && catCounts.some(([c]) => c === cat) ? cat : "__all"; // 탭을 바꿨는데 없는 분류면 전체로
+  const list = catalog
+    .filter(p => p.kind === kind && (catNow === "__all" || catOf(p) === catNow) && (!kw || `${p.name}${p.brand}${catOf(p)}`.replace(/\s+/g, "").toLowerCase().includes(kw)))
+    .sort((a, b) => (catOf(a) === "미분류" ? 1 : catOf(b) === "미분류" ? -1 : catOf(a).localeCompare(catOf(b), "ko")) || a.name.localeCompare(b.name, "ko"));
   const byKey = new Map(catalog.map(p => [p.key, p]));
   const rows = [...sel.entries()].flatMap(([key, x]) => { const p = byKey.get(key); return p ? [{ p, qty: Number(x.qty) || 0, note: x.note }] : []; });
   const over = pkg ? undefined : rows.find(r => r.p.kind === "연장" && r.qty > r.p.stock); // 연장은 창고 재고보다 많이 실을 수 없다
@@ -713,17 +740,36 @@ function AssignForm({ v, catalog, busy, err, onClose, onSave, pkg }: { v: Vehicl
             <button key={k} type="button" onClick={() => setKind(k)} className={`flex-1 rounded-xl border py-2.5 text-sm font-extrabold ${kind === k ? chipOn : chipOff}`}>{k}{counts[k] > 0 && <small className="ml-1.5 opacity-80">{counts[k]}개 선택</small>}</button>
           ))}
         </div>
+        {catCounts.length > 1 && (
+          <div className="no-scrollbar mt-2 flex gap-1.5 overflow-x-auto" role="group" aria-label="카테고리">
+            <button type="button" aria-pressed={catNow === "__all"} onClick={() => setCat("__all")} className={`shrink-0 rounded-full border px-3 py-1 text-xs font-bold ${catNow === "__all" ? chipOn : chipOff}`}>전체 <span className="opacity-70">{catCounts.reduce((n, [, c]) => n + c, 0)}</span></button>
+            {catCounts.map(([c, n]) => {
+              const picked = catalog.filter(p => p.kind === kind && catOf(p) === c && sel.has(p.key)).length;
+              return <button key={c} type="button" aria-pressed={catNow === c} onClick={() => setCat(c)} className={`shrink-0 rounded-full border px-3 py-1 text-xs font-bold ${catNow === c ? chipOn : chipOff}`}>{c} <span className="opacity-70">{n}</span>{picked > 0 && <span className="ml-1 rounded-full bg-emerald-500 px-1.5 text-[10px] text-white">{picked}</span>}</button>;
+            })}
+          </div>
+        )}
         <div className="mt-1.5 flex items-center gap-2">
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="품목 검색" className={inputCls + " !mt-0 flex-1"} />
           <button type="button" onClick={toggleAll} disabled={allShown.length === 0} className="shrink-0 rounded-xl border border-black/15 px-3 py-3 text-sm font-bold disabled:opacity-40 dark:border-white/15">{allOn ? "전체 해제" : "전체 선택"}</button>
         </div>
         <ul className="mt-2 max-h-[38vh] divide-y divide-black/5 overflow-y-auto rounded-xl border border-black/10 dark:divide-white/10 dark:border-white/10">
           {list.length === 0 && <li className="p-4 text-center text-sm text-zinc-500">품목이 없어요.</li>}
-          {list.map(p => {
+          {list.map((p, idx) => {
             const on = sel.get(p.key);
             const out = p.kind === "연장" && p.stock < 1;
+            const head = catNow === "__all" && (idx === 0 || catOf(list[idx - 1]) !== catOf(p)); // 전체 보기에서는 분류별로 묶어 머리글을 둔다
+            const members = head ? list.filter(x => catOf(x) === catOf(p) && (pkg || !(x.kind === "연장" && x.stock < 1))) : [];
+            const allIn = members.length > 0 && members.every(x => sel.has(x.key));
             return (
-              <li key={p.key} className={on ? "bg-blue-50 dark:bg-blue-500/15" : ""}>
+              <Fragment key={p.key}>
+              {head && (
+                <li className="sticky top-0 z-[1] flex items-center gap-2 bg-zinc-100 px-3 py-1.5 text-xs font-extrabold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  <span className="mr-auto">{catOf(p)} <span className="font-semibold text-zinc-400">{list.filter(x => catOf(x) === catOf(p)).length}종</span></span>
+                  {members.length > 0 && <button type="button" onClick={() => setSel(prev => { const n = new Map(prev); if (allIn) members.forEach(x => n.delete(x.key)); else members.forEach(x => { if (!n.has(x.key)) n.set(x.key, { qty: "1", note: "" }); }); return n; })} className="rounded-md bg-white px-2 py-0.5 text-[11px] font-bold text-blue-700 dark:bg-zinc-900 dark:text-blue-300">{allIn ? "이 분류 해제" : "이 분류 전체 선택"}</button>}
+                </li>
+              )}
+              <li className={on ? "bg-blue-50 dark:bg-blue-500/15" : ""}>
                 <div className="flex items-center gap-3 px-3 py-2">
                   <button type="button" role="checkbox" aria-checked={!!on} disabled={out && !pkg} onClick={() => toggle(p)} className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-40">
                     <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 text-sm text-white ${on ? "border-blue-600 bg-blue-600" : "border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-900"}`} aria-hidden>{on ? "✓" : ""}</span>
@@ -743,6 +789,7 @@ function AssignForm({ v, catalog, busy, err, onClose, onSave, pkg }: { v: Vehicl
                   )}
                 </div>
               </li>
+              </Fragment>
             );
           })}
         </ul>

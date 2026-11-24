@@ -23,8 +23,8 @@ async function Loader() {
   const [all, items, products, trash] = await Promise.all([getVehicles(), getVehicleItems(), getProducts(), getTrash()]);
   const vehicles = all.filter(v => v.driverId === member.id);
   const ids = new Set(vehicles.map(v => v.id));
-  const lite = (trashed: boolean) => (p: { key: string; name: string; kind: CatalogLite["kind"]; stock: number; image: string; brand: string }): CatalogLite =>
-    ({ key: p.key, name: p.name, kind: p.kind, stock: p.stock, image: p.image, brand: p.brand, trashed });
+  const lite = (trashed: boolean) => (p: { key: string; name: string; kind: CatalogLite["kind"]; stock: number; image: string; brand: string; category: string }): CatalogLite =>
+    ({ key: p.key, name: p.name, kind: p.kind, stock: p.stock, image: p.image, brand: p.brand, category: p.category ?? "", trashed });
   const catalog = [...products.map(lite(false)), ...trash.map(lite(true))];
   return (
     <>

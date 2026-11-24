@@ -1,4 +1,4 @@
-import { actorCan, getActor } from '@/lib/auth';
+import { getActor, vehiclesFull } from '@/lib/auth';
 import { getProducts, removeLoadPackage, saveLoadPackage } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 
@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('vehicles');
   if (!actor) return json({ error: '차량정보 메뉴 권한이 필요해요.' }, 401);
-  if (!actorCan(actor, 'vehicles', 'edit')) return json({ error: '적재 패키지를 만들 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
+  if (!vehiclesFull(actor)) return json({ error: '적재 패키지를 만들 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
   if (limited(req, 'load-packages', 120, 10 * 60 * 1000)) return json({ error: '잠시 후 다시 해 주세요.' }, 429);
 
   const b = (await req.json().catch(() => null)) as Body | null;

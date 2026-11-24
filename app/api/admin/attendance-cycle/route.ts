@@ -9,7 +9,7 @@ export async function POST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('attendance');
   if (!actor) return json({ error: '출근관리 메뉴 권한이 필요해요.' }, 401);
-  if (!actorCan(actor, 'attendance', 'register')) return json({ error: '조회 기준을 바꿀 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
+  if (!(actorCan(actor, 'attendance', 'register') && actorCan(actor, 'attendance', 'edit'))) return json({ error: '조회 기준을 바꿀 권한이 없어요. 최고 관리자나 개발팀에 요청해 주세요.' }, 403);
   if (limited(req, 'attendance-cycle', 60, 10 * 60 * 1000)) return json({ error: '잠시 후 다시 해 주세요.' }, 429);
   const b = (await req.json().catch(() => null)) as { action?: unknown; startDay?: unknown; endDay?: unknown; from?: unknown } | null;
   if (!b || !validFrom(b.from)) return json({ error: '적용을 시작할 달을 골라 주세요.' }, 400);

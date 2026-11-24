@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import AttendanceAdmin from "@/components/admin/AttendanceAdmin";
 import { actorCan, getActor } from "@/lib/auth";
-import { getLeaves, getAttendanceCycles, getMembers, getPlacements, getSites, getTeams } from "@/lib/db";
+import { getLeaves, getAttendanceCycles, getActiveMembers, getPlacements, getSites, getTeams } from "@/lib/db";
 import { monthOfDate, periodOf } from "@/lib/attendance-cycle";
 import { OFFICE_SITE_ID, OFFICE_SITE_NAME } from "@/lib/office-site";
 import { todayKst } from "@/lib/kst";
@@ -44,7 +44,7 @@ async function Loader({ searchParams }: { searchParams: Promise<{ from?: string 
   }
   const clamped = Date.parse(to) - Date.parse(from) > (MAX_DAYS - 1) * 86400000;
   if (clamped) to = addDays(from, MAX_DAYS - 1);
-  const [placements, sites, members, teams] = await Promise.all([getPlacements(from, to), getSites(), getMembers(), getTeams()]);
+  const [placements, sites, members, teams] = await Promise.all([getPlacements(from, to), getSites(), getActiveMembers(), getTeams()]);
   // '전체 인원 조회'(수정) 권한이 있으면 현장 부서 전원, 보기만 있으면 본인 출근만 (다른 사람의 데이터는 화면으로 보내지 않는다)
   const all = actorCan(actor, "attendance", "edit");
   const selfId = actor.kind === "member" ? actor.member.id : null;
@@ -60,7 +60,7 @@ async function Loader({ searchParams }: { searchParams: Promise<{ from?: string 
       ownOnly={!all}
       cycles={cycles}
       ym={ym}
-      canSetCycle={actorCan(actor, "attendance", "register")}
+      canSetCycle={all && actorCan(actor, "attendance", "register")} // 조회 기준은 모든 권한(전체 조회+등록)일 때만 바꾼다 — 일부 권한은 내 출근만 본다
       from={from}
       to={to}
       clamped={clamped}

@@ -117,12 +117,20 @@ export default function AttendanceAdmin({ ownOnly, cycles, ym, canSetCycle, from
 
   const th = "border-b border-l border-black/10 px-1 py-1.5 text-center text-[11px] font-bold dark:border-white/10";
   return (
-    <div className="mx-auto w-full max-w-[100rem] flex-1 px-4 pb-24">
+    <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24">
       <header className="flex flex-wrap items-center gap-3 py-5">
         <h1 className="mr-auto text-xl font-extrabold">출근관리</h1>
         <button type="button" onClick={exportXlsx} className="rounded-xl bg-emerald-50 px-3.5 py-2 text-sm font-bold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">엑셀 내보내기</button>
       </header>
-      <p className="mb-3 rounded-2xl bg-blue-50 p-3.5 text-sm text-blue-900 dark:bg-blue-500/10 dark:text-blue-100">출근 일수는 <b>현장배치</b>에서 계산해요. 종일 배치는 1일, 오전 또는 오후만 배치된 날은 0.5일, 승인된 <b>휴가</b>는 <b>“휴가”</b> 칸(노란색)으로 표시되고 출근에 세지 않아요. 거기에 <b>야간(오후 5~8시)은 +0.5일, 심야(오후 8~10시)는 +1일</b>이 더해지는데, 야간과 심야는 하루에 하나만 세요(둘 다 있으면 심야 1일만). <b>일요일은 쉬는 날</b>이라 세지 않아요. 날짜 칸에는 출근한 날 <b>+1</b>(반나절은 <b>+0.5</b>)로 표시돼요. <b>출근</b>은 오늘까지 배치된 날, <b>예정</b>은 오늘 이후에 배치된 날이에요.{ownOnly && <> <b className="text-blue-700 dark:text-blue-300">내 출근만 보여요.</b> (전체 인원 조회 권한이 필요하면 최고 관리자나 개발팀에 요청해 주세요.)</>}</p>
+      <div className="mb-3 rounded-2xl bg-blue-50 p-3.5 text-sm text-blue-900 dark:bg-blue-500/10 dark:text-blue-100">
+        <ol className="list-decimal space-y-0.5 pl-5">
+          <li>출근 일수는 <b>현장배치</b>로 계산해요.</li>
+          <li>종일 1일, 반나절 0.5일이에요. 야간 +0.5, 심야 +1이 더해지고, 둘 다 있으면 심야만 세요.</li>
+          <li>일요일과 승인된 <b>휴가</b>(노란색)는 세지 않아요.</li>
+          <li><b>출근</b>은 오늘까지, <b>예정</b>은 오늘 이후 배치예요.</li>
+        </ol>
+        {ownOnly && <p className="mt-1.5"><b className="text-blue-700 dark:text-blue-300">내 출근만 보여요.</b> (전체 인원 조회 권한이 필요하면 최고 관리자나 개발팀에 요청해 주세요.)</p>}
+      </div>
 
       {/* 조회 기준: 등록해 두면 매달 그 기준대로 달별로 본다 */}
       <div className="rounded-2xl border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-zinc-900">

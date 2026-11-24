@@ -73,7 +73,7 @@ export default function WorkerLogin() {
         >
           <span className="block pt-3">{err}</span>
         </motion.p>
-        <motion.button whileTap={{ scale: 0.98 }} disabled={!id.trim() || !pw || busy} className="mt-5 w-full rounded-xl bg-blue-600 py-3.5 text-base font-bold text-white disabled:opacity-40">
+        <motion.button disabled={!id.trim() || !pw || busy} className="mt-5 w-full rounded-xl bg-blue-600 py-3.5 text-base font-bold text-white disabled:opacity-40">
           {busy ? "확인 중…" : "로그인"}
         </motion.button>
       </motion.form>

@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import PlacementsAdmin from "@/components/admin/PlacementsAdmin";
-import { actorCan, getActor } from "@/lib/auth";
-import { getLeaves, getMembers, getPlacementNotes, getPlacements, getSites, getTeams } from "@/lib/db";
+import { getActor, placementsFull } from "@/lib/auth";
+import { getLeaves, getActiveMembers, getPlacementNotes, getPlacements, getSites, getTeams } from "@/lib/db";
 import { OFFICE_SITE_ID, OFFICE_SITE_NAME } from "@/lib/office-site";
 import { todayKst } from "@/lib/kst";
 import { ensureOfficeDefaults, isDualMember } from "@/lib/office-auto";
@@ -25,7 +25,7 @@ async function Loader() {
   const today = new Date().toISOString().slice(0, 10);
   await ensureOfficeDefaults(todayKst()); // 밤 12시(한국 시간)가 지나면 그날 현장에 배치되지 않은 사무실·현장 겸직 인원은 자동으로 사무실에 배치
   const range: [string, string] = [addDays(today, -45), addDays(today, 180)];
-  const [sites, members, teams, placements, notes] = await Promise.all([getSites(), getMembers(), getTeams(), getPlacements(...range), getPlacementNotes(...range)]);
+  const [sites, members, teams, placements, notes] = await Promise.all([getSites(), getActiveMembers(), getTeams(), getPlacements(...range), getPlacementNotes(...range)]);
   const leaves = (await getLeaves()).filter(l => l.status === "approved" && l.endDate >= range[0] && l.startDate <= range[1]).map(l => ({ memberId: l.memberId, startDate: l.startDate, endDate: l.endDate, kind: l.kind }));
   const mName = new Map(members.map(m => [m.id, m.name]));
   // 배치 대상: 현장 부서(현장작업자 정·부, 현장관리자 PM) 회원
@@ -40,8 +40,8 @@ async function Loader() {
       placements={placements}
       notes={notes}
       leaves={leaves}
-      canRegister={actorCan(actor, "placements", "register")}
-      canDelete={actorCan(actor, "placements", "delete")}
+      canRegister={placementsFull(actor)} // 모든 권한이 아니면 열람만
+      canDelete={placementsFull(actor)}
     />
   );
 }

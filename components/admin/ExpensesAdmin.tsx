@@ -192,7 +192,7 @@ export default function ExpensesAdmin({ items, sites, myId, isAll, canRegister, 
   );
 
   return (
-    <div className="mx-auto w-full max-w-5xl flex-1 px-4 pb-24">
+    <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24">
       <header className="flex flex-wrap items-center gap-2 py-5">
         <h1 className="mr-auto text-xl font-extrabold">경비관리</h1>
         {canRegister && <button type="button" onClick={() => openForm(null)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">📷 서류 올리기</button>}

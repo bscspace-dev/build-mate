@@ -5,9 +5,9 @@ import crypto from 'node:crypto';
 import { asIcon, asKind, EMPTY_SPEC, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput } from './types';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, Equipment, EquipmentInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput } from './types';
 import { removeImage } from './images';
-import { DEFAULT_TEAMS, withAccountingTeam, withFieldWorkerTeams, type Team } from './roles';
+import { applyTeamLocks, DEFAULT_TEAMS, type Team } from './roles';
 
 // 파일 기반 저장소 (data/*.json). 쓰기는 한 번에 하나씩, 임시파일 → rename 으로 안전하게 저장한다.
 const DIR = path.join(process.cwd(), 'data');
@@ -119,12 +119,12 @@ type LegacyWorker = { id: string; name: string; trades: string[]; createdAt: str
 async function loadMembers(): Promise<Member[]> {
   try {
     // 예전에 만들어진 회원에는 menus(부여받은 메뉴)가 없으니 빈 값으로 채운다
-    return (await readJson<Member[]>('members.json')).map(m => ({ ...m, menus: m.menus ?? [], actions: m.actions ?? {}, categories: m.categories ?? [], handles: m.handles ?? '', phone: m.phone ?? '', address: m.address ?? '', extraRole: m.extraRole ?? '', payType: m.payType ?? '' }));
+    return (await readJson<Member[]>('members.json')).map(m => ({ ...m, menus: m.menus ?? [], actions: m.actions ?? {}, categories: m.categories ?? [], handles: m.handles ?? '', phone: m.phone ?? '', address: m.address ?? '', addressDetail: m.addressDetail ?? '', position: m.position ?? '', hireDate: m.hireDate ?? '', payAmount: m.payAmount ?? 0, payHistory: m.payHistory ?? [], bank: m.bank ?? '', accountNo: m.accountNo ?? '', accountHolder: m.accountHolder ?? '', safetyDate: m.safetyDate ?? '', license: m.license ?? '', resignDate: m.resignDate ?? '', history: m.history ?? [], photo: m.photo ?? '', bankbook: m.bankbook ?? '', fieldRoles: m.fieldRoles ?? [], officeStatus: m.officeStatus ?? '', extraRole: m.extraRole ?? '', payType: m.payType ?? '' }));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     const old = await readOr<LegacyWorker[]>('workers.json', []);
     const migrated: Member[] = old.map(w => ({
-      id: w.id, name: w.name, role: 'worker', extraRole: '', payType: '', trades: w.trades, categories: [], handles: '', phone: '', address: '', menus: [], actions: {}, createdAt: w.createdAt,
+      id: w.id, name: w.name, role: 'worker', extraRole: '', payType: '', trades: w.trades, categories: [], handles: '', phone: '', address: '', addressDetail: '', position: '', hireDate: '', payAmount: 0, payHistory: [], bank: '', accountNo: '', accountHolder: '', safetyDate: '', license: '', resignDate: '', history: [], photo: '', bankbook: '', fieldRoles: [], officeStatus: '', menus: [], actions: {}, createdAt: w.createdAt,
       loginId: w.loginId, passHash: w.passHash, mustChangePassword: false, idChanged: false,
     }));
     await writeJson('members.json', migrated);
@@ -175,14 +175,11 @@ export function patchMember(id: string, patch: MemberPatch): Promise<{ member: M
 // 처음이면 기본 팀(DEFAULT_TEAMS)으로 채운다. 이후에는 최고 관리자·개발팀이 추가·삭제한다.
 async function loadTeams(): Promise<Team[]> {
   try {
-    const list = await readJson<Team[]>('teams.json');
-    const fixed = withAccountingTeam(withFieldWorkerTeams(list) ?? list) ?? withFieldWorkerTeams(list); // 현장작업자(정/부) 분리, 경리팀 추가 반영
-    if (fixed) await writeJson('teams.json', fixed);
-    return fixed ?? list;
+    return applyTeamLocks(await readJson<Team[]>('teams.json')); // 지운 기본 팀을 다시 만들지 않는다
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-    await writeJson('teams.json', DEFAULT_TEAMS);
-    return DEFAULT_TEAMS;
+    await writeJson('teams.json', applyTeamLocks(DEFAULT_TEAMS));
+    return applyTeamLocks(DEFAULT_TEAMS);
   }
 }
 export const getTeams = () => loadTeams();
@@ -196,12 +193,24 @@ export function insertTeam(t: Team): Promise<{ team: Team } | { conflict: 'label
   });
 }
 
+/** 현장 팀이 관여하는 공정 저장 */
+export function updateTeamTrades(key: string, trades: string[]): Promise<Team | null> {
+  return withLock(async () => {
+    const list = await loadTeams();
+    const i = list.findIndex(x => x.key === key);
+    if (i < 0) return null;
+    const next = { ...list[i], trades };
+    await writeJson('teams.json', list.map((x, j) => (j === i ? next : x)));
+    return next;
+  });
+}
+
 /** 팀 삭제: 소속 회원이 있으면 지우지 않고 인원수를 알려준다. */
 export function removeTeam(key: string): Promise<{ ok: true } | { inUse: number } | { notFound: true }> {
   return withLock(async () => {
     const list = await loadTeams();
     if (!list.some(x => x.key === key)) return { notFound: true as const };
-    const used = (await loadMembers()).filter(m => m.role === key || m.extraRole === key).length;
+    const used = (await loadMembers()).filter(m => m.role === key || m.extraRole === key || (m.fieldRoles ?? []).includes(key)).length;
     if (used > 0) return { inUse: used };
     await writeJson('teams.json', list.filter(x => x.key !== key));
     return { ok: true as const };
@@ -767,17 +776,118 @@ export function saveMenuOrder(order: string[]): Promise<void> {
   });
 }
 
+// ───────── 현장 일지 (data/site-posts.json) ─────────
+const sortPosts = (l: SitePost[]) => [...l].sort((a, b) => (a.date === b.date ? b.createdAt.localeCompare(a.createdAt) : b.date.localeCompare(a.date)));
+export async function getSitePosts(siteId: string): Promise<SitePost[]> {
+  return sortPosts((await readList<SitePost>('site-posts.json')).filter(p => p.siteId === siteId).map(p => ({ ...p, photos: p.photos ?? [] })));
+}
+export async function getSitePost(id: string): Promise<SitePost | null> {
+  return (await readList<SitePost>('site-posts.json')).find(p => p.id === id) ?? null;
+}
+export function addSitePost(i: Omit<SitePost, 'id' | 'createdAt'>): Promise<SitePost> {
+  return withLock(async () => {
+    const list = await readList<SitePost>('site-posts.json');
+    const post: SitePost = { ...i, id: crypto.randomBytes(6).toString('hex'), createdAt: new Date().toISOString() };
+    await writeJson('site-posts.json', [...list, post]);
+    return post;
+  });
+}
+export function removeSitePost(id: string): Promise<SitePost | null> {
+  return withLock(async () => {
+    const list = await readList<SitePost>('site-posts.json');
+    const cur = list.find(p => p.id === id);
+    if (!cur) return null;
+    await writeJson('site-posts.json', list.filter(p => p.id !== id));
+    return cur;
+  });
+}
+// ───────── 푸시 알림 (data/push.json) — 알림을 켠 기기와 최근에 보낸 알림 ─────────
+export async function getPushState(): Promise<import('./types').PushState> {
+  try {
+    const v = await readJson<Partial<import('./types').PushState>>('push.json');
+    return { subs: v.subs ?? [], feed: v.feed ?? [] };
+  } catch { return { subs: [], feed: [] }; }
+}
+export function updatePushState(fn: (s: import('./types').PushState) => import('./types').PushState): Promise<void> {
+  return withLock(async () => { await writeJson('push.json', fn(await getPushState())); });
+}
+
+export type SiteMarks = Record<string, { infoAt?: string; drawingsAt?: string }>;
+export async function getSiteMarks(): Promise<SiteMarks> {
+  try { return (await readJson<SiteMarks>('site-marks.json')) ?? {}; } catch { return {}; }
+}
+export function setSiteMark(siteId: string, patch: { infoAt?: string; drawingsAt?: string }): Promise<void> {
+  return withLock(async () => {
+    const all = await getSiteMarks();
+    await writeJson('site-marks.json', { ...all, [siteId]: { ...all[siteId], ...patch } });
+  });
+}
+/** since(ISO) 이후에 올라온 작업일보 (현장 카드의 '새 글' 표시용) */
+export async function getSitePostsSince(since: string): Promise<SitePost[]> {
+  return (await readList<SitePost>('site-posts.json')).filter(p => p.createdAt >= since).map(p => ({ ...p, photos: p.photos ?? [] }));
+}
+/** 현장을 지우면 그 현장의 일지도 함께 정리한다 (사진 주소를 돌려준다) */
+export function removeSitePostsOf(siteId: string): Promise<string[]> {
+  return withLock(async () => {
+    const list = await readList<SitePost>('site-posts.json');
+    const gone = list.filter(p => p.siteId === siteId);
+    if (gone.length === 0) return [];
+    await writeJson('site-posts.json', list.filter(p => p.siteId !== siteId));
+    return gone.flatMap(p => p.photos ?? []);
+  });
+}
+
+// ───────── 월급 지급 완료 (data/payroll-paid.json) — { 'YYYY-MM': { 회원 id: { at, amount, by } } } ─────────
+type PaidMap = Record<string, Record<string, { at: string; amount: number; by: string }>>;
+export async function getPayrollPaid(ym: string): Promise<Record<string, { at: string; amount: number; by: string }>> {
+  try {
+    const v = await readJson<PaidMap>('payroll-paid.json');
+    return (v && typeof v === 'object' ? v[ym] : undefined) ?? {};
+  } catch {
+    return {};
+  }
+}
+/** 여러 회원을 한 번에: 값이 있으면 지급 완료로 표시, null 이면 취소(미지급으로 되돌림). */
+export function setPayrollPaidMany(ym: string, changes: [string, { at: string; amount: number; by: string } | null][]): Promise<void> {
+  return withLock(async () => {
+    let all: PaidMap = {};
+    try { all = (await readJson<PaidMap>('payroll-paid.json')) ?? {}; } catch { all = {}; }
+    const month = { ...(all[ym] ?? {}) };
+    for (const [id, rec] of changes) {
+      if (rec === null) delete month[id];
+      else month[id] = rec;
+    }
+    await writeJson('payroll-paid.json', { ...all, [ym]: month });
+  });
+}
+
+// ───────── 급여 기본값 (data/pay-defaults.json) — 새 회원의 기본 일당·사무직 월급 ─────────
+export async function getPayDefaults(): Promise<{ daily: number; monthly: number }> {
+  const n = (x: unknown) => (typeof x === 'number' && x > 0 ? x : 0);
+  try {
+    const v = await readJson<{ daily?: unknown; monthly?: unknown }>('pay-defaults.json');
+    return { daily: n(v.daily), monthly: n(v.monthly) };
+  } catch {
+    return { daily: 0, monthly: 0 };
+  }
+}
+export function savePayDefaults(d: { daily: number; monthly: number }): Promise<void> {
+  return withLock(async () => {
+    await writeJson('pay-defaults.json', d);
+  });
+}
+
 // ───────── 현장 (data/sites.json) — 자재 요청에서 고르는 등록된 현장 ─────────
 // 예전에는 사진이 한 장(photo)이었다 — 있으면 photos 의 첫 장으로 읽는다.
-type StoredSite = Omit<Site, 'photos' | 'extensions'> & { photos?: string[]; photo?: string; extensions?: SiteExtension[] };
+type StoredSite = Omit<Site, 'photos' | 'drawings' | 'extensions'> & { photos?: string[]; drawings?: string[]; photo?: string; extensions?: SiteExtension[] };
 export const getSites = async (): Promise<Site[]> =>
-  (await readList<StoredSite>('sites.json')).map(({ photo, photos, extensions, ...s }) => ({ ...s, address: s.address ?? '', pmId: s.pmId ?? '', startDate: s.startDate ?? '', endDate: s.endDate ?? '', photos: photos ?? (photo ? [photo] : []), extensions: extensions ?? [] }));
+  (await readList<StoredSite>('sites.json')).map(({ photo, photos, drawings, extensions, ...s }) => ({ ...s, drawings: drawings ?? [], address: s.address ?? '', pmId: s.pmId ?? '', startDate: s.startDate ?? '', endDate: s.endDate ?? '', photos: photos ?? (photo ? [photo] : []), extensions: extensions ?? [] }));
 
 export function addSite(i: SiteInput): Promise<VehicleResult<{ site: Site }>> {
   return withLock(async () => {
     const list = await getSites();
     if (list.some(s => s.name === i.name)) return { error: '같은 이름의 현장이 이미 있어요.' };
-    const site: Site = { id: crypto.randomBytes(6).toString('hex'), ...i, photos: i.photos ?? [], extensions: [], createdAt: new Date().toISOString() };
+    const site: Site = { id: crypto.randomBytes(6).toString('hex'), ...i, photos: i.photos ?? [], drawings: i.drawings ?? [], extensions: [], createdAt: new Date().toISOString() };
     await writeJson('sites.json', [...list, site]);
     return { ok: true, site };
   });
@@ -791,10 +901,11 @@ export function updateSite(id: string, i: SiteInput): Promise<VehicleResult<{ re
     if (!cur) return { error: '없는 현장이에요.' };
     if (list.some(s => s.id !== id && s.name === i.name)) return { error: '같은 이름의 현장이 이미 있어요.' };
     const photos = i.photos ?? cur.photos;
+    const drawings = i.drawings ?? cur.drawings;
     // 마감일을 바꾸면 이력에 남긴다 (바꾸기 전 마감일이 있을 때만 연장·단축으로 센다)
     const extensions = cur.endDate && i.endDate && cur.endDate !== i.endDate ? [...cur.extensions, { from: cur.endDate, to: i.endDate, at: new Date().toISOString() }] : cur.extensions;
-    await writeJson('sites.json', list.map(s => (s.id === id ? { ...s, ...i, photos, extensions } : s)));
-    return { ok: true, removed: cur.photos.filter(p => !photos.includes(p)) };
+    await writeJson('sites.json', list.map(s => (s.id === id ? { ...s, ...i, photos, drawings, extensions } : s)));
+    return { ok: true, removed: [...cur.photos.filter(p => !photos.includes(p)), ...cur.drawings.filter(p => !drawings.includes(p))] };
   });
 }
 
@@ -808,7 +919,7 @@ export function removeSite(id: string): Promise<VehicleResult<{ photos: string[]
     if (pl.some(p => p.siteId === id)) await writeJson('placements.json', pl.filter(p => p.siteId !== id)); // 그 현장의 배치도 함께 지운다
     const nt = await readList<PlacementNote>('placement-notes.json');
     if (nt.some(n => n.siteId === id)) await writeJson('placement-notes.json', nt.filter(n => n.siteId !== id)); // 작업 내용 메모도
-    return { ok: true, photos: cur.photos };
+    return { ok: true, photos: [...cur.photos, ...cur.drawings] }; // 사진·도면 파일을 모두 정리할 수 있게 돌려준다
   });
 }
 
@@ -1003,3 +1114,30 @@ export function removeLoadPackage(id: string): Promise<VehicleResult> {
   });
 }
 
+
+// ───────── 장비정보 (data/equipment.json) — 연장 정보와 최저가 ─────────
+export const getEquipment = async (): Promise<Equipment[]> => (await readList<Partial<Equipment> & { id: string; createdAt: string; updatedAt: string }>('equipment.json')).map(e => ({ id: e.id, name: e.name ?? '', brand: e.brand ?? '', model: e.model ?? '', category: e.category ?? '', spec: e.spec ?? '', query: e.query ?? '', offers: e.offers ?? [], naver: e.naver ?? null, history: e.history ?? [], createdAt: e.createdAt, updatedAt: e.updatedAt }));
+export function saveEquipment(id: string | null, i: EquipmentInput): Promise<Equipment | null> {
+  return withLock(async () => {
+    const list = await getEquipment();
+    const now = new Date().toISOString();
+    if (!id) {
+      const row: Equipment = { id: crypto.randomBytes(6).toString('hex'), ...i, createdAt: now, updatedAt: now };
+      await writeJson('equipment.json', [row, ...list]);
+      return row;
+    }
+    const cur = list.find(x => x.id === id);
+    if (!cur) return null;
+    const row: Equipment = { ...cur, ...i, updatedAt: now };
+    await writeJson('equipment.json', list.map(x => (x.id === id ? row : x)));
+    return row;
+  });
+}
+export function removeEquipment(id: string): Promise<boolean> {
+  return withLock(async () => {
+    const list = await getEquipment();
+    if (!list.some(x => x.id === id)) return false;
+    await writeJson('equipment.json', list.filter(x => x.id !== id));
+    return true;
+  });
+}

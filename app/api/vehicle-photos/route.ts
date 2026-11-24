@@ -1,4 +1,4 @@
-import { actorCan, getActor, hasRootSession } from '@/lib/auth';
+import { getActor, hasRootSession, vehiclesFull } from '@/lib/auth';
 import { addVehiclePhoto, getVehicles, removeVehiclePhoto } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { removeImage, saveImage } from '@/lib/images';
@@ -41,9 +41,9 @@ export async function POST(req: Request) {
   const vehicle = (await getVehicles()).find(v => v.id === id);
   if (!vehicle) return json({ error: '없는 차량이에요.' }, 404);
   const actor = await getActor('vehicles');
-  const canEdit = !!actor && actorCan(actor, 'vehicles', 'edit');
+  const canEdit = !!actor && vehiclesFull(actor);
   const isDriver = !!member && vehicle.driverId === member.id;
-  const canRegister = !!actor && actorCan(actor, 'vehicles', 'register'); // 차량을 등록하면서 사진을 올릴 수 있다
+  const canRegister = !!actor && vehiclesFull(actor); // 차량을 등록하면서 사진을 올릴 수 있다
   if (!canEdit && !isDriver && !(a === 'add' && canRegister)) return json({ error: '이 차량의 사진을 올릴 권한이 없어요.' }, 403);
 
   if (a === 'remove') {

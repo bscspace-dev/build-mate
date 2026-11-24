@@ -2,8 +2,8 @@ import 'server-only';
 import { asIcon, asKind, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput } from './types';
-import { withAccountingTeam, withFieldWorkerTeams, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type Team } from './roles';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, Equipment, EquipmentInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput } from './types';
+import { applyTeamLocks, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type Team } from './roles';
 import { removeImage } from './images';
 import { supabase } from './supabase';
 import type { CatResult, TradeResult } from './db-file';
@@ -127,15 +127,15 @@ export async function getSubmissions(): Promise<Record<string, Record<string, st
 
 // ───────── 회원 ─────────
 type MemberRow = {
-  id: string; name: string; role: string; extra_role: string | null; pay_type: string | null; trades: string[]; categories: string[] | null; handles: string | null; phone: string | null; address: string | null; menus: string[] | null; actions: GrantedActions | null; login_id: string | null; pass_hash: string | null;
+  id: string; name: string; role: string; extra_role: string | null; pay_type: string | null; trades: string[]; categories: string[] | null; handles: string | null; phone: string | null; address: string | null; address_detail: string | null; position: string | null; hire_date: string | null; pay_amount: number | null; pay_history: { from: string; amount: number; at: string }[] | null; bank: string | null; account_no: string | null; account_holder: string | null; safety_date: string | null; license: string | null; resign_date: string | null; employment_history: { hire: string; resign: string }[] | null; photo: string | null; bankbook: string | null; field_roles: string[] | null; office_status: string | null; menus: string[] | null; actions: GrantedActions | null; login_id: string | null; pass_hash: string | null;
   must_change_password: boolean; id_changed: boolean; created_at: string;
 };
 const toMember = (r: MemberRow): Member => ({
-  id: r.id, name: r.name, role: r.role as RoleKey, extraRole: (r.extra_role ?? '') as RoleKey | '', payType: (r.pay_type ?? '') as PayType, trades: r.trades ?? [], categories: r.categories ?? [], handles: r.handles ?? '', phone: r.phone ?? '', address: r.address ?? '', menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
+  id: r.id, name: r.name, role: r.role as RoleKey, extraRole: (r.extra_role ?? '') as RoleKey | '', payType: (r.pay_type ?? '') as PayType, trades: r.trades ?? [], categories: r.categories ?? [], handles: r.handles ?? '', phone: r.phone ?? '', address: r.address ?? '', addressDetail: r.address_detail ?? '', position: r.position ?? '', hireDate: r.hire_date ?? '', payAmount: r.pay_amount ?? 0, payHistory: r.pay_history ?? [], bank: r.bank ?? '', accountNo: r.account_no ?? '', accountHolder: r.account_holder ?? '', safetyDate: r.safety_date ?? '', license: r.license ?? '', resignDate: r.resign_date ?? '', history: r.employment_history ?? [], photo: r.photo ?? '', bankbook: r.bankbook ?? '', fieldRoles: (r.field_roles ?? []) as RoleKey[], officeStatus: (r.office_status ?? '') as '' | 'probation' | 'regular', menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
   loginId: r.login_id ?? undefined, passHash: r.pass_hash ?? undefined, mustChangePassword: r.must_change_password, idChanged: r.id_changed,
 });
 const toRow = (m: Member) => ({
-  id: m.id, name: m.name, role: m.role, extra_role: m.extraRole || null, pay_type: m.payType || null, trades: m.trades, categories: m.categories, handles: m.handles, phone: m.phone, address: m.address, menus: m.menus, actions: m.actions, login_id: m.loginId ?? null, pass_hash: m.passHash ?? null,
+  id: m.id, name: m.name, role: m.role, extra_role: m.extraRole || null, pay_type: m.payType || null, trades: m.trades, categories: m.categories, handles: m.handles, phone: m.phone, address: m.address, address_detail: m.addressDetail ?? '', position: m.position, hire_date: m.hireDate || null, pay_amount: m.payAmount || 0, pay_history: m.payHistory ?? [], bank: m.bank, account_no: m.accountNo, account_holder: m.accountHolder, safety_date: m.safetyDate || null, license: m.license, resign_date: m.resignDate || null, employment_history: m.history ?? [], photo: m.photo ?? '', bankbook: m.bankbook ?? '', field_roles: m.fieldRoles, office_status: m.officeStatus, menus: m.menus, actions: m.actions, login_id: m.loginId ?? null, pass_hash: m.passHash ?? null,
   must_change_password: m.mustChangePassword, id_changed: m.idChanged, created_at: m.createdAt,
 });
 function toPatchRow(p: MemberPatch): Record<string, unknown> {
@@ -149,6 +149,22 @@ function toPatchRow(p: MemberPatch): Record<string, unknown> {
   if (p.handles !== undefined) o.handles = p.handles;
   if (p.phone !== undefined) o.phone = p.phone;
   if (p.address !== undefined) o.address = p.address;
+  if (p.addressDetail !== undefined) o.address_detail = p.addressDetail;
+  if (p.position !== undefined) o.position = p.position;
+  if (p.hireDate !== undefined) o.hire_date = p.hireDate || null;
+  if (p.payAmount !== undefined) o.pay_amount = p.payAmount || 0;
+  if (p.payHistory !== undefined) o.pay_history = p.payHistory;
+  if (p.bank !== undefined) o.bank = p.bank;
+  if (p.accountNo !== undefined) o.account_no = p.accountNo;
+  if (p.accountHolder !== undefined) o.account_holder = p.accountHolder;
+  if (p.safetyDate !== undefined) o.safety_date = p.safetyDate || null;
+  if (p.license !== undefined) o.license = p.license;
+  if (p.resignDate !== undefined) o.resign_date = p.resignDate || null;
+  if (p.history !== undefined) o.employment_history = p.history;
+  if (p.photo !== undefined) o.photo = p.photo;
+  if (p.bankbook !== undefined) o.bankbook = p.bankbook;
+  if (p.fieldRoles !== undefined) o.field_roles = p.fieldRoles;
+  if (p.officeStatus !== undefined) o.office_status = p.officeStatus;
   if (p.menus !== undefined) o.menus = p.menus;
   if (p.actions !== undefined) o.actions = p.actions;
   if (p.loginId !== undefined) o.login_id = p.loginId;
@@ -207,33 +223,12 @@ export async function removeMember(id: string): Promise<boolean> {
 }
 
 // ───────── 팀 ─────────
-type TeamRow = { key: string; label: string; grp: string; locked: boolean };
-const toTeam = (r: TeamRow): Team => ({ key: r.key, label: r.label, group: r.grp as GroupKey, locked: r.locked });
+type TeamRow = { key: string; label: string; grp: string; locked: boolean; trades?: string[] | null };
+const toTeam = (r: TeamRow): Team => ({ key: r.key, label: r.label, group: r.grp as GroupKey, locked: r.locked, trades: r.trades ?? [] });
 
 export async function getTeams(): Promise<Team[]> {
   const load = async () => (await fetchAll<TeamRow>((a, b) => supabase().from('teams').select('*').order('sort').order('created_at').range(a, b), '팀 조회')).map(toTeam);
-  let list = await load();
-  // 경리팀: 아직 없으면 한 번 만들어 둔다 (supabase/add-expenses.sql 을 실행하지 않았어도 동작)
-  if (withAccountingTeam(list)) {
-    try {
-      await supabase().from('teams').upsert({ key: 'accounting', label: '경리팀', grp: 'office', locked: true, sort: 10 }, { onConflict: 'key', ignoreDuplicates: true });
-      list = await load();
-    } catch {
-      // 같은 이름의 팀이 이미 있으면 그대로 쓴다
-    }
-  }
-  // 현장작업자(정/부) 분리: 아직 없으면 한 번 만들어 둔다 (supabase/add-worker-sub.sql 을 실행하지 않았어도 동작)
-  if (withFieldWorkerTeams(list)) {
-    try {
-      await supabase().from('teams').update({ label: '현장작업자(정)' }).eq('key', 'worker').eq('label', '현장작업자');
-      await supabase().from('teams').update({ sort: 8 }).eq('key', 'pm');
-      await supabase().from('teams').upsert({ key: 'worker_sub', label: '현장작업자(부)', grp: 'field', locked: true, sort: 7 }, { onConflict: 'key', ignoreDuplicates: true });
-      return await load();
-    } catch {
-      return list;
-    }
-  }
-  return list;
+  return applyTeamLocks(await load()); // 지운 기본 팀을 다시 만들지 않는다
 }
 
 export async function insertTeam(t: Team): Promise<{ team: Team } | { conflict: 'label' }> {
@@ -245,11 +240,20 @@ export async function insertTeam(t: Team): Promise<{ team: Team } | { conflict: 
   return { team: toTeam(data as TeamRow) };
 }
 
+/** 현장 팀이 관여하는 공정 저장 */
+export async function updateTeamTrades(key: string, trades: string[]): Promise<Team | null> {
+  const { data, error } = await supabase().from('teams').update({ trades }).eq('key', key).select('*').maybeSingle();
+  if (error) throw new Error(`Supabase 팀 공정 저장 실패: ${error.message}`);
+  return data ? toTeam(data as TeamRow) : null;
+}
+
 /** 팀 삭제: 소속 회원이 있으면 지우지 않고 인원수를 알려준다 (DB 의 외래 키도 같은 규칙을 한 번 더 지킨다). */
 export async function removeTeam(key: string): Promise<{ ok: true } | { inUse: number } | { notFound: true }> {
   const { count, error: ce } = await supabase().from('members').select('*', { count: 'exact', head: true }).eq('role', key);
   if (ce) throw new Error(`Supabase 팀 소속 회원 확인 실패: ${ce.message}`);
   if ((count ?? 0) > 0) return { inUse: count ?? 0 };
+  const { count: fc } = await supabase().from('members').select('*', { count: 'exact', head: true }).contains('field_roles', [key]);
+  if ((fc ?? 0) > 0) return { inUse: fc ?? 0 };
   const { data, error } = await supabase().from('teams').delete().eq('key', key).select('key');
   if (error) {
     if (error.code === '23503') return { inUse: 1 }; // 그 사이에 회원이 생긴 경우
@@ -707,12 +711,93 @@ export async function saveMenuOrder(order: string[]): Promise<void> {
   must(await supabase().from('app_settings').upsert({ key: 'menu_order', value: order }, { onConflict: 'key' }), '메뉴 순서 저장');
 }
 
+// ───────── 현장 일지 (site_posts) ─────────
+type SitePostRow = { id: number; site_id: string; post_date: string; kind: string; body: string; photos: string[] | null; author_id: string | null; author_name: string; created_at: string };
+const toSitePost = (r: SitePostRow): SitePost => ({ id: String(r.id), siteId: r.site_id, date: r.post_date, kind: (['log', 'change', 'order', 'etc'].includes(r.kind) ? r.kind : 'etc') as SitePost['kind'], body: r.body, photos: r.photos ?? [], authorId: r.author_id ?? '', authorName: r.author_name, createdAt: new Date(r.created_at).toISOString() });
+export async function getSitePosts(siteId: string): Promise<SitePost[]> {
+  return (await fetchAll<SitePostRow>((a, b) => supabase().from('site_posts').select('*').eq('site_id', siteId).order('post_date', { ascending: false }).order('id', { ascending: false }).range(a, b), '현장 일지 조회')).map(toSitePost);
+}
+export async function getSitePost(id: string): Promise<SitePost | null> {
+  const row = must(await supabase().from('site_posts').select('*').eq('id', id).maybeSingle(), '현장 일지 조회') as SitePostRow | null;
+  return row ? toSitePost(row) : null;
+}
+export async function addSitePost(i: Omit<SitePost, 'id' | 'createdAt'>): Promise<SitePost> {
+  const { data, error } = await supabase().from('site_posts').insert({ site_id: i.siteId, post_date: i.date, kind: i.kind, body: i.body, photos: i.photos, author_id: i.authorId || null, author_name: i.authorName }).select('*').single();
+  if (error) throw new Error('Supabase 현장 일지 등록 실패: ' + error.message);
+  return toSitePost(data as SitePostRow);
+}
+export async function removeSitePost(id: string): Promise<SitePost | null> {
+  const cur = await getSitePost(id);
+  if (!cur) return null;
+  must(await supabase().from('site_posts').delete().eq('id', id), '현장 일지 삭제');
+  return cur;
+}
+/** 현장을 지우면 그 현장의 일지도 함께 정리한다 (사진 주소를 돌려준다) */
+// ───────── 푸시 알림 (app_settings.push_state) — 알림을 켠 기기와 최근에 보낸 알림 ─────────
+export async function getPushState(): Promise<import('./types').PushState> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'push_state').maybeSingle(), '푸시 상태 조회') as { value: Partial<import('./types').PushState> | null } | null;
+  return { subs: row?.value?.subs ?? [], feed: row?.value?.feed ?? [] };
+}
+export async function updatePushState(fn: (s: import('./types').PushState) => import('./types').PushState): Promise<void> {
+  const next = fn(await getPushState());
+  must(await supabase().from('app_settings').upsert({ key: 'push_state', value: next }, { onConflict: 'key' }), '푸시 상태 저장');
+}
+
+export type SiteMarks = Record<string, { infoAt?: string; drawingsAt?: string }>;
+export async function getSiteMarks(): Promise<SiteMarks> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'site_marks').maybeSingle(), '현장 변경 표시 조회') as { value: unknown } | null;
+  return row?.value && typeof row.value === 'object' ? (row.value as SiteMarks) : {};
+}
+export async function setSiteMark(siteId: string, patch: { infoAt?: string; drawingsAt?: string }): Promise<void> {
+  const all = await getSiteMarks();
+  must(await supabase().from('app_settings').upsert({ key: 'site_marks', value: { ...all, [siteId]: { ...all[siteId], ...patch } } }, { onConflict: 'key' }), '현장 변경 표시 저장');
+}
+export async function getSitePostsSince(since: string): Promise<SitePost[]> {
+  return (await fetchAll<SitePostRow>((a, b) => supabase().from('site_posts').select('*').gte('created_at', since).order('id', { ascending: false }).range(a, b), '현장 일지 조회')).map(toSitePost);
+}
+export async function removeSitePostsOf(siteId: string): Promise<string[]> {
+  const rows = await fetchAll<SitePostRow>((a, b) => supabase().from('site_posts').select('*').eq('site_id', siteId).order('id').range(a, b), '현장 일지 조회');
+  if (rows.length === 0) return [];
+  must(await supabase().from('site_posts').delete().eq('site_id', siteId), '현장 일지 삭제');
+  return rows.flatMap(r => r.photos ?? []);
+}
+
+// ───────── 월급 지급 완료 (app_settings.payroll_paid) — { 'YYYY-MM': { 회원 id: { at, amount, by } } } ─────────
+type PaidMap = Record<string, Record<string, { at: string; amount: number; by: string }>>;
+async function loadPaid(): Promise<PaidMap> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'payroll_paid').maybeSingle(), '월급 지급 조회') as { value: unknown } | null;
+  return row?.value && typeof row.value === 'object' ? (row.value as PaidMap) : {};
+}
+export async function getPayrollPaid(ym: string): Promise<Record<string, { at: string; amount: number; by: string }>> {
+  return (await loadPaid())[ym] ?? {};
+}
+/** 여러 회원을 한 번에: 값이 있으면 지급 완료로 표시, null 이면 취소(미지급으로 되돌림). */
+export async function setPayrollPaidMany(ym: string, changes: [string, { at: string; amount: number; by: string } | null][]): Promise<void> {
+  const all = await loadPaid();
+  const month = { ...(all[ym] ?? {}) };
+  for (const [id, rec] of changes) {
+    if (rec === null) delete month[id];
+    else month[id] = rec;
+  }
+  must(await supabase().from('app_settings').upsert({ key: 'payroll_paid', value: { ...all, [ym]: month } }, { onConflict: 'key' }), '월급 지급 저장');
+}
+
+// ───────── 급여 기본값 (app_settings.pay_defaults) — 새 회원의 기본 일당 ─────────
+export async function getPayDefaults(): Promise<{ daily: number; monthly: number }> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'pay_defaults').maybeSingle(), '급여 기본값 조회') as { value: { daily?: unknown; monthly?: unknown } | null } | null;
+  const n = (x: unknown) => (typeof x === 'number' && x > 0 ? x : 0);
+  return { daily: n(row?.value?.daily), monthly: n(row?.value?.monthly) };
+}
+export async function savePayDefaults(d: { daily: number; monthly: number }): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'pay_defaults', value: d }, { onConflict: 'key' }), '급여 기본값 저장');
+}
+
 // ───────── 현장 (sites) — 자재 요청에서 고르는 등록된 현장 ─────────
 // photos(여러 장)가 비어 있고 예전 photo(한 장)만 있으면 그것을 첫 장으로 읽는다.
-type SiteRow = { id: number; name: string; address: string | null; pm_id: string | null; start_date: string | null; end_date: string | null; memo: string; photo: string | null; photos: string[] | null; extensions: SiteExtension[] | null; created_at: string };
+type SiteRow = { id: number; name: string; address: string | null; pm_id: string | null; start_date: string | null; end_date: string | null; memo: string; photo: string | null; photos: string[] | null; drawings: string[] | null; extensions: SiteExtension[] | null; created_at: string };
 const sitePhotos = (r: { photo: string | null; photos: string[] | null }): string[] => (r.photos && r.photos.length ? r.photos : r.photo ? [r.photo] : []);
-const toSite = (r: SiteRow): Site => ({ id: String(r.id), name: r.name, address: r.address ?? '', pmId: r.pm_id ?? '', startDate: r.start_date ?? '', endDate: r.end_date ?? '', memo: r.memo, photos: sitePhotos(r), extensions: r.extensions ?? [], createdAt: new Date(r.created_at).toISOString() });
-const siteCols = (i: SiteInput) => ({ name: i.name, address: i.address, pm_id: i.pmId || null, start_date: i.startDate || null, end_date: i.endDate || null, memo: i.memo, ...(i.photos === undefined ? {} : { photos: i.photos, photo: '' }) });
+const toSite = (r: SiteRow): Site => ({ id: String(r.id), name: r.name, address: r.address ?? '', pmId: r.pm_id ?? '', startDate: r.start_date ?? '', endDate: r.end_date ?? '', memo: r.memo, photos: sitePhotos(r), drawings: r.drawings ?? [], extensions: r.extensions ?? [], createdAt: new Date(r.created_at).toISOString() });
+const siteCols = (i: SiteInput) => ({ name: i.name, address: i.address, pm_id: i.pmId || null, start_date: i.startDate || null, end_date: i.endDate || null, memo: i.memo, ...(i.photos === undefined ? {} : { photos: i.photos, photo: '' }), ...(i.drawings === undefined ? {} : { drawings: i.drawings }) });
 const SITE_DUP = '같은 이름의 현장이 이미 있어요.';
 
 export async function getSites(): Promise<Site[]> {
@@ -720,7 +805,7 @@ export async function getSites(): Promise<Site[]> {
 }
 
 export async function addSite(i: SiteInput): Promise<VehicleResult<{ site: Site }>> {
-  const res = await supabase().from('sites').insert(siteCols({ ...i, photos: i.photos ?? [] })).select('*').single();
+  const res = await supabase().from('sites').insert(siteCols({ ...i, photos: i.photos ?? [], drawings: i.drawings ?? [] })).select('*').single();
   if (res.error) {
     if (res.error.code === '23505') return { error: SITE_DUP };
     throw new Error('Supabase 현장 등록 실패: ' + res.error.message);
@@ -729,7 +814,7 @@ export async function addSite(i: SiteInput): Promise<VehicleResult<{ site: Site 
 }
 
 export async function updateSite(id: string, i: SiteInput): Promise<VehicleResult<{ removed: string[] }>> {
-  const cur = must(await supabase().from('sites').select('photo,photos,end_date,extensions').eq('id', numId(id)).maybeSingle(), '현장 조회') as { photo: string | null; photos: string[] | null; end_date: string | null; extensions: SiteExtension[] | null } | null;
+  const cur = must(await supabase().from('sites').select('photo,photos,drawings,end_date,extensions').eq('id', numId(id)).maybeSingle(), '현장 조회') as { photo: string | null; photos: string[] | null; drawings: string[] | null; end_date: string | null; extensions: SiteExtension[] | null } | null;
   if (!cur) return { error: '없는 현장이에요.' };
   // 마감일을 바꾸면 이력에 남긴다 (바꾸기 전 마감일이 있을 때만 연장·단축으로 센다)
   const ext = cur.end_date && i.endDate && cur.end_date !== i.endDate ? { extensions: [...(cur.extensions ?? []), { from: cur.end_date, to: i.endDate, at: new Date().toISOString() }] } : {};
@@ -740,15 +825,16 @@ export async function updateSite(id: string, i: SiteInput): Promise<VehicleResul
   }
   if (!(res.data ?? []).length) return { error: '없는 현장이에요.' };
   const prev = sitePhotos(cur);
-  return { ok: true, removed: i.photos === undefined ? [] : prev.filter(p => !i.photos!.includes(p)) };
+  const prevDrawings = cur.drawings ?? [];
+  return { ok: true, removed: [...(i.photos === undefined ? [] : prev.filter(p => !i.photos!.includes(p))), ...(i.drawings === undefined ? [] : prevDrawings.filter(p => !i.drawings!.includes(p)))] };
 }
 
 export async function removeSite(id: string): Promise<VehicleResult<{ photos: string[] }>> {
-  const rows = must(await supabase().from('sites').delete().eq('id', numId(id)).select('photo,photos'), '현장 삭제') as { photo: string | null; photos: string[] | null }[];
+  const rows = must(await supabase().from('sites').delete().eq('id', numId(id)).select('photo,photos,drawings'), '현장 삭제') as { photo: string | null; photos: string[] | null; drawings: string[] | null }[];
   if (!rows.length) return { error: '없는 현장이에요.' };
   await supabase().from('placements').delete().eq('site_id', id); // 그 현장의 배치도 함께 지운다 (테이블이 아직 없으면 무시)
   await supabase().from('placement_notes').delete().eq('site_id', id); // 작업 내용 메모도
-  return { ok: true, photos: sitePhotos(rows[0]) };
+  return { ok: true, photos: [...sitePhotos(rows[0]), ...(rows[0].drawings ?? [])] }; // 사진·도면 파일을 모두 정리할 수 있게 돌려준다
 }
 
 // ───────── 현장 배치 (placements) — 날짜·시간대(오전/오후)별로 누가 어느 현장에 가는지 ─────────
@@ -896,3 +982,20 @@ export async function removeLoadPackage(id: string): Promise<VehicleResult> {
   return rows.length ? { ok: true } : { error: '없는 패키지예요.' };
 }
 
+
+// ───────── 장비정보 (equipment) — 연장 정보와 최저가 ─────────
+type EquipmentRow = { id: number; name: string; brand: string | null; model: string | null; category: string | null; spec: string | null; query: string | null; offers: Equipment['offers'] | null; naver: Equipment['naver'] | null; history: Equipment['history'] | null; created_at: string; updated_at: string };
+const toEquipment = (r: EquipmentRow): Equipment => ({ id: String(r.id), name: r.name, brand: r.brand ?? '', model: r.model ?? '', category: r.category ?? '', spec: r.spec ?? '', query: r.query ?? '', offers: Array.isArray(r.offers) ? r.offers : [], naver: r.naver ?? null, history: Array.isArray(r.history) ? r.history : [], createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString() });
+const equipmentCols = (i: EquipmentInput) => ({ name: i.name, brand: i.brand, model: i.model, category: i.category, spec: i.spec, query: i.query, offers: i.offers, naver: i.naver, history: i.history });
+export async function getEquipment(): Promise<Equipment[]> {
+  return (await fetchAll<EquipmentRow>((a, b) => supabase().from('equipment').select('*').order('id', { ascending: false }).range(a, b), '장비정보 조회')).map(toEquipment);
+}
+export async function saveEquipment(id: string | null, i: EquipmentInput): Promise<Equipment | null> {
+  if (!id) return toEquipment(must(await supabase().from('equipment').insert(equipmentCols(i)).select('*').single(), '장비 등록') as EquipmentRow);
+  const rows = must(await supabase().from('equipment').update({ ...equipmentCols(i), updated_at: new Date().toISOString() }).eq('id', numId(id)).select('*'), '장비 수정') as EquipmentRow[];
+  return rows[0] ? toEquipment(rows[0]) : null;
+}
+export async function removeEquipment(id: string): Promise<boolean> {
+  const rows = must(await supabase().from('equipment').delete().eq('id', numId(id)).select('id'), '장비 삭제') as { id: number }[];
+  return rows.length > 0;
+}

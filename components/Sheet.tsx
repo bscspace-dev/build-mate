@@ -31,7 +31,7 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose: () 
 }
 
 /** 화면 가운데 확인 창 (관리자의 삭제 확인) */
-export function Modal({ open, onClose, children, wide = false }: { open: boolean; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+export function Modal({ open, onClose, children, wide = false, xl = false }: { open: boolean; onClose: () => void; children: React.ReactNode; wide?: boolean; xl?: boolean }) {
   return (
     <AnimatePresence>
       {open && (
@@ -44,11 +44,11 @@ export function Modal({ open, onClose, children, wide = false }: { open: boolean
         >
           <motion.div
             onClick={e => e.stopPropagation()}
-            initial={{ opacity: 0, scale: 0.94, y: 12 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96 }}
-            transition={{ type: "spring", stiffness: 380, damping: 30 }}
-            className={`w-full max-h-[90vh] overflow-y-auto overscroll-contain ${wide ? "max-w-xl" : "max-w-sm"} rounded-2xl bg-white p-5 shadow-2xl dark:bg-zinc-900`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.12 }}
+            className={`w-full max-h-[90vh] overflow-y-auto overscroll-contain ${xl ? "max-w-3xl" : wide ? "max-w-xl" : "max-w-sm"} rounded-2xl bg-white p-5 shadow-2xl dark:bg-zinc-900`}
             role="dialog"
             aria-modal="true"
           >

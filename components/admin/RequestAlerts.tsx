@@ -17,6 +17,8 @@ export default function RequestAlerts() {
   const [list, setList] = useState<MaterialRequest[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState("");
+  // 좁은 화면(모바일)에서는 새 요청 카드가 화면 아래를 가려서, 처음에는 작은 알림 버튼만 보이고 눌러서 펼친다
+  const [open, setOpen] = useState(() => (typeof window === "undefined" ? true : window.innerWidth >= 640));
 
   useEffect(() => {
     let alive = true;
@@ -64,11 +66,20 @@ export default function RequestAlerts() {
 
   if (list.length === 0) return null;
 
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="fixed bottom-3 right-3 z-[55] flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2.5 text-sm font-bold text-white shadow-xl" aria-label={`새 자재 요청 ${list.length}건 펼치기`}>
+        📦 새 요청 {list.length}건 <span aria-hidden>▲</span>
+      </button>
+    );
+  }
+
   return (
     <div className="pointer-events-none fixed inset-x-3 bottom-3 z-[55] flex max-h-[70vh] flex-col gap-2 sm:left-auto sm:right-4 sm:w-[24rem]" aria-live="polite">
-      {list.length > 1 && (
-        <div className="pointer-events-auto self-end rounded-full bg-red-600 px-3 py-1 text-xs font-bold text-white shadow-lg">준비할 요청 {list.length}건</div>
-      )}
+      <div className="pointer-events-auto flex items-center gap-2 self-end">
+        {list.length > 1 && <div className="rounded-full bg-red-600 px-3 py-1 text-xs font-bold text-white shadow-lg">준비할 요청 {list.length}건</div>}
+        <button type="button" onClick={() => setOpen(false)} className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-bold text-white shadow-lg sm:hidden">접기 ▼</button>
+      </div>
       {err && <p className="pointer-events-auto rounded-xl bg-zinc-900 px-3 py-2 text-xs text-white shadow-lg" role="alert">{err}</p>}
       <div className="pointer-events-auto flex flex-col gap-2 overflow-y-auto pr-0.5">
         <AnimatePresence initial={false}>

@@ -70,6 +70,13 @@ export function actorCan(actor: Actor, menu: MenuKey, action: ActionKey): boolea
   return actor.kind === 'root' ? menu !== 'survey' : can(memberRoles(actor.member), actor.member.menus, actor.member.actions, menu, action);
 }
 
+/** 그 메뉴의 모든 권한(보기·등록·수정·삭제)을 가졌는가. 아니면(일부 권한) 보기만 하는 메뉴에 쓴다. */
+export const menuFull = (actor: Actor, menu: MenuKey): boolean => (['view', 'register', 'edit', 'delete'] as const).every(a => actorCan(actor, menu, a));
+/** 차량정보: 모든 권한이 있어야 등록·수정·삭제를 할 수 있다. 그렇지 않으면 차량 정보를 보기만 한다. */
+export const vehiclesFull = (actor: Actor): boolean => menuFull(actor, 'vehicles');
+/** 현장배치: 모든 권한이 있어야 배치·복사·삭제를 할 수 있다. 일부 권한은 열람만 한다. */
+export const placementsFull = (actor: Actor): boolean => menuFull(actor, 'placements');
+
 /**
  * 이 메뉴를 쓸 수 있는 사람. 없으면 null.
  *  · 내장 최고 관리자: 소모품·회원 관리 (설문은 회원 계정이 없어 불가)

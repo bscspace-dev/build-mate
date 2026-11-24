@@ -43,6 +43,7 @@ create table if not exists public.teams (
   label      text not null,
   grp        text not null check (grp in ('office','field','outsource')),   -- 사무실 / 현장 / 외주
   locked     boolean not null default false,
+  trades     text[] not null default '{}',   -- 현장 팀이 관여하는 공정
   sort       integer not null default 1000,
   created_at timestamptz not null default now()
 );
@@ -77,7 +78,23 @@ create table if not exists public.members (
   handles              text   not null default '',   -- 거래처 취급품목
   phone                text   not null default '',   -- 연락처
   address              text   not null default '',   -- 주소
-  menus                text[] not null default '{}' check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses']),
+  address_detail       text   not null default '',   -- 세부 주소 (동·호수)
+  position             text   not null default '',   -- 직급 (사원·대리 등 자유 입력)
+  hire_date            date,                         -- 입사일
+  bank                 text   not null default '',   -- 급여 계좌: 은행
+  account_no           text   not null default '',   -- 급여 계좌: 계좌번호
+  account_holder       text   not null default '',   -- 급여 계좌: 예금주
+  safety_date          date,                         -- 안전교육 이수일 (현장)
+  license              text   not null default '',   -- 면허·자격 정보 (현장)
+  pay_history          jsonb  not null default '[]', -- 급여 금액 이력 [{from, amount, at}]
+  pay_amount           integer not null default 0,   -- 급여(원): 일수제면 일당, 사무직 기준이면 월급
+  photo                text   not null default '',   -- 프로필 사진 주소
+  bankbook             text   not null default '',   -- 급여 통장 사본 사진 주소
+  employment_history   jsonb  not null default '[]', -- 퇴사 후 복직한 지난 재직 기간들 [{hire, resign}]
+  resign_date          date,                         -- 퇴사일 (있으면 퇴사자: 로그인 불가)
+  field_roles          text[] not null default '{}', -- 현장 역할 여러 개 (pm / worker / worker_sub)
+  office_status        text   not null default '' check (office_status in ('','probation','regular')),   -- 사무실 구분: 수습 / 정규
+  menus                text[] not null default '{}' check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses','equipment','members','staff','payroll']),
   actions              jsonb  not null default '{}',
   login_id             text,
   pass_hash            text,                  -- 비밀번호 원문은 저장하지 않는다 (scrypt 해시)
@@ -183,6 +200,7 @@ create table if not exists public.sites (
   end_date   date,                                 -- 공사 종료일
   memo       text not null default '',             -- 특이사항
   photo      text not null default '',             -- (예전) 현장 사진 한 장
+  drawings   text[] not null default '{}',   -- 도면 파일 주소들 (이미지 또는 PDF)
   photos     text[] not null default '{}',         -- 현장 사진 주소들 (여러 장)
   extensions jsonb not null default '[]',          -- 마감일 변경(연장·단축) 이력
   created_at timestamptz not null default now()
@@ -228,6 +246,23 @@ create table if not exists public.leave_requests (
 create index if not exists leave_requests_member on public.leave_requests (member_id);
 create index if not exists leave_requests_status on public.leave_requests (status);
 alter table public.leave_requests enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
+
+-- ───────── 장비정보 ─────────
+create table if not exists public.equipment (
+  id         bigint generated always as identity primary key,
+  name       text not null,
+  brand      text not null default '',
+  model      text not null default '',
+  category   text not null default '',
+  spec       text not null default '',
+  query      text not null default '',
+  offers     jsonb not null default '[]'::jsonb,
+  naver      jsonb,
+  history    jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.equipment enable row level security;
 
 -- ───────── 적재 패키지 ─────────
 create table if not exists public.load_packages (
@@ -290,3 +325,18 @@ create table if not exists public.expenses (
 create index if not exists expenses_spent_on on public.expenses (spent_on);
 create index if not exists expenses_member on public.expenses (member_id);
 alter table public.expenses enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
+
+-- ───────── 현장 일지 ─────────
+create table if not exists public.site_posts (
+  id          bigint generated always as identity primary key,
+  site_id     text not null,                         -- sites.id
+  post_date   date not null,                         -- 해당 날짜
+  kind        text not null default 'log' check (kind in ('log','change','order','etc')),   -- 작업일지 / 변경사항 / 발주 / 기타
+  body        text not null default '',
+  photos      text[] not null default '{}',
+  author_id   text,
+  author_name text not null default '',
+  created_at  timestamptz not null default now()
+);
+create index if not exists site_posts_site on public.site_posts (site_id, post_date desc);
+alter table public.site_posts enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
