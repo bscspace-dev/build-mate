@@ -255,8 +255,10 @@ function ProductCard({
 }
 
 export default function AdminCatalog({
-  deployed: deployedMap, invMarks = {}, initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
+  deployed: deployedMap, invMarks = {}, invExcluded, canSetInvExclude = false, initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
 }: {
+  invExcluded?: { trades: string[]; categories: string[] }; // 장비조사에서 제외한 공정·카테고리
+  canSetInvExclude?: boolean; // 모든 권한이 있는 사람만 제외 설정을 바꿀 수 있다
   invMarks?: Record<string, InvMark>; // 품목 번호 → 장비조사에서 추가·삭제한 사람과 때
   deployed: Record<string, { icon: string; label: string; qty: number }[]>; // 연장 품목 번호 → 배정된 차량
   initialProducts: Product[];
@@ -322,6 +324,27 @@ export default function AdminCatalog({
   const [renaming, setRenaming] = useState<{ name: string; to: string } | null>(null);
   const [catErr, setCatErr] = useState("");
   const [catDel, setCatDel] = useState<string | null>(null); // 삭제 확인 중인 카테고리
+  // 장비조사 제외: 지금 고른 공정·카테고리를 장비조사 목록에서 빼거나 다시 넣는다 (누르면 바로 저장)
+  const [invEx, setInvEx] = useState(invExcluded ?? { trades: [], categories: [] });
+  const [invBusy, setInvBusy] = useState(false);
+  async function toggleInvEx(kind: "trade" | "category", name: string) {
+    if (invBusy) return;
+    const has = kind === "trade" ? invEx.trades.includes(name) : invEx.categories.includes(name);
+    const next = kind === "trade"
+      ? { ...invEx, trades: has ? invEx.trades.filter(x => x !== name) : [...invEx.trades, name] }
+      : { ...invEx, categories: has ? invEx.categories.filter(x => x !== name) : [...invEx.categories, name] };
+    setInvBusy(true);
+    try {
+      const r = await fetch("/api/admin/inventory", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ menu: "inventory", action: "excludeSave", excludedTrades: next.trades, excludedCategories: next.categories }) });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(j.error ?? "저장하지 못했어요.");
+      setInvEx(next);
+      setToast({ id: Date.now(), text: has ? `“${name}” ${kind === "trade" ? "공정" : "카테고리"}를 장비조사에 다시 넣었어요` : `“${name}” ${kind === "trade" ? "공정" : "카테고리"}를 장비조사에서 제외했어요` });
+    } catch (e) {
+      setToast({ id: Date.now(), text: e instanceof Error ? e.message : "서버에 연결할 수 없어요." });
+    }
+    setInvBusy(false);
+  }
   const [editP, setEditP] = useState<Product | TrashedProduct | null>(null); // 품목 수정 창
   const canSelect = canDelete || canEdit;
   const canManageCats = canRegister || canEdit || canDelete;
@@ -998,6 +1021,30 @@ export default function AdminCatalog({
             </button>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
+          {canSetInvExclude && !trashMode && invEx.trades.length + invEx.categories.length > 0 && (
+            <details className="relative">
+              <summary className="cursor-pointer list-none rounded-xl bg-zinc-100 px-3 py-2 text-sm font-bold dark:bg-zinc-800">장비조사 제외 {invEx.trades.length + invEx.categories.length}</summary>
+              <div className="absolute right-0 z-20 mt-1 w-64 space-y-1 rounded-xl border border-black/10 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-zinc-900">
+                <p className="px-1 text-[11px] text-zinc-500">장비조사에서 빠져 있는 항목이에요. 눌러서 다시 추가해요.</p>
+                {invEx.trades.map(t => (
+                  <button key={"t" + t} type="button" disabled={invBusy} onClick={() => void toggleInvEx("trade", t)} className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm font-semibold hover:bg-zinc-50 disabled:opacity-50 dark:hover:bg-zinc-800"><span>{t} <small className="font-normal text-zinc-500">공정</small></span><span className="text-xs font-bold text-blue-600">＋ 다시 추가</span></button>
+                ))}
+                {invEx.categories.map(c => (
+                  <button key={"c" + c} type="button" disabled={invBusy} onClick={() => void toggleInvEx("category", c)} className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm font-semibold hover:bg-zinc-50 disabled:opacity-50 dark:hover:bg-zinc-800"><span>{c} <small className="font-normal text-zinc-500">카테고리</small></span><span className="text-xs font-bold text-blue-600">＋ 다시 추가</span></button>
+                ))}
+              </div>
+            </details>
+          )}
+          {canSetInvExclude && !trashMode && trade !== "전체" && (
+            <button type="button" disabled={invBusy} onClick={() => void toggleInvEx("trade", trade)} title="이 공정을 장비조사 목록에서 뺍니다 (창고장비현황에는 영향 없음)" className={`rounded-xl px-3 py-2 text-sm font-bold disabled:opacity-50 ${invEx.trades.includes(trade) ? "bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-300" : "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"}`}>
+              {invEx.trades.includes(trade) ? `“${trade}” 공정 장비조사 제외됨 · 해제` : `“${trade}” 공정 장비조사에서 제외`}
+            </button>
+          )}
+          {canSetInvExclude && !trashMode && cat !== "전체" && (
+            <button type="button" disabled={invBusy} onClick={() => void toggleInvEx("category", cat)} title="이 카테고리를 장비조사 목록에서 뺍니다 (창고장비현황에는 영향 없음)" className={`rounded-xl px-3 py-2 text-sm font-bold disabled:opacity-50 ${invEx.categories.includes(cat) ? "bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-300" : "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"}`}>
+              {invEx.categories.includes(cat) ? `“${cat}” 카테고리 장비조사 제외됨 · 해제` : `“${cat}” 카테고리 장비조사에서 제외`}
+            </button>
+          )}
           {canManageCats && !trashMode && (
             <button type="button" onClick={() => { setCatErr(""); setRenaming(null); setCatOpen(true); }} className="rounded-xl bg-blue-50 px-3 py-2 text-sm font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
               카테고리 관리

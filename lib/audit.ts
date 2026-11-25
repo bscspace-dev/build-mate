@@ -1,4 +1,5 @@
 import 'server-only';
+import { after } from 'next/server';
 import { addAudit } from './db';
 import { hasRootSession } from './auth';
 import { getSessionMember } from './member-session';
@@ -60,15 +61,31 @@ export async function recordChange(menu: MenuKey, info: ChangeInfo): Promise<voi
   } catch { /* 기록 실패는 작업을 막지 않는다 */ }
 }
 
+/** 직접 남기는 변경이력 — 응답을 기다리게 하지 않고 응답이 나간 뒤에 저장한다 (회원 확인은 미리 시작해 둔 것을 쓴다) */
+export function recordChangeLater(menu: MenuKey, info: ChangeInfo, byPromise?: Promise<{ id: string; name: string }>): void {
+  const by = (byPromise ?? who()).catch(() => ({ id: '', name: '알 수 없음' }));
+  try {
+    after(async () => {
+      try {
+        const b = await by;
+        await addAudit({ menu, action: info.action, target: info.target, detail: info.detail, byId: b.id, byName: b.name });
+      } catch { /* 기록 실패는 작업을 막지 않는다 */ }
+    });
+  } catch {
+    void recordChange(menu, info); // after 를 못 쓰는 환경이면 그냥 저장한다
+  }
+}
+
 /** 관리자 API(POST)를 감싸서 성공한 작업을 변경이력에 남긴다 */
 export function audited(menu: MenuKey, handler: (req: Request) => Promise<Response>, pick?: (info: ChangeInfo) => ChangeInfo | null): (req: Request) => Promise<Response> {
   return async req => {
+    const by = who().catch(() => ({ id: '', name: '알 수 없음' })); // 작업과 동시에 미리 확인해 둔다
     let info: ChangeInfo | null = null;
     try { info = await readInfo(req.clone()); } catch { /* 본문을 못 읽어도 작업은 계속 */ }
     const res = await handler(req);
     if (res.ok && info) {
       const final = pick ? pick(info) : info;
-      if (final) await recordChange(menu, final);
+      if (final) recordChangeLater(menu, final, by);
     }
     return res;
   };

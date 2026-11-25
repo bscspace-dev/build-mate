@@ -2,7 +2,8 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import AdminCatalog, { type InvMark } from "@/components/admin/AdminCatalog";
 import { actorCan, getActor } from "@/lib/auth";
-import { getCategories, getCategoryTrades, getInventory, getProducts, getTrades, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
+import { isStaffAdmin, memberRoles } from "@/lib/roles";
+import { getCategories, getCategoryTrades, getInventory, getInventoryExcluded, getProducts, getTrades, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
 
 export default function AdminPage() {
   return (
@@ -33,5 +34,7 @@ async function AdminLoader() {
       if (e.action === "delete" && !m.del) m.del = { by: e.byName, at: e.createdAt, src: e.memo === "pricing" ? "가격조사" : "장비조사" };
     }
   } catch { /* 표시만 생략 */ }
-  return <AdminCatalog key={products.reduce((n, p) => n + p.stock, 0) + ":" + JSON.stringify(deployed)} deployed={deployed} invMarks={invMarks} initialProducts={products} initialTrash={trash} trades={trades} categories={categories} categoryTrades={categoryTrades} canRegister={actorCan(actor, "catalog", "register")} canEdit={actorCan(actor, "catalog", "edit")} canDelete={actorCan(actor, "catalog", "delete")} />;
+  const invExcluded = await getInventoryExcluded().catch(() => ({ trades: [], categories: [] })); // 장비조사에서 제외한 공정·카테고리
+  const canSetInvExclude = actor.kind === "root" || isStaffAdmin(memberRoles(actor.member)); // 모든 권한이 있는 사람만 바꾼다
+  return <AdminCatalog key={products.reduce((n, p) => n + p.stock, 0) + ":" + JSON.stringify(deployed)} deployed={deployed} invMarks={invMarks} invExcluded={invExcluded} canSetInvExclude={canSetInvExclude} initialProducts={products} initialTrash={trash} trades={trades} categories={categories} categoryTrades={categoryTrades} canRegister={actorCan(actor, "catalog", "register")} canEdit={actorCan(actor, "catalog", "edit")} canDelete={actorCan(actor, "catalog", "delete")} />;
 }

@@ -23,6 +23,8 @@ const when = (iso: string) => new Date(iso).toLocaleString("sv-SE", { timeZone: 
 type Setup = { trades: string[]; categories: Record<string, string[]>; excluded: { trades: string[]; categories: string[] } };
 export default function InventoryAdmin({ trades, categories, products, log, admin, setup }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: InventoryEntry[]; admin: boolean; setup: Setup | null }) {
   const router = useRouter();
+  const [items, setItems] = useState(products); // 화면에 보이는 목록 (추가·수정·삭제하면 서버 응답 즉시 반영, 이후 서버 값으로 다시 맞춘다)
+  useEffect(() => setItems(products), [products]);
   const [density, setDensity] = useState<Density>("normal");
   useEffect(() => { try { const v = localStorage.getItem(DENSITY_KEY); if (v === "tight" || v === "normal" || v === "wide") setDensity(v); } catch { /* 저장이 막힌 환경 */ } }, []);
   const pickDensity = (d: Density) => { setDensity(d); try { localStorage.setItem(DENSITY_KEY, d); } catch { /* 저장이 막힌 환경 */ } };
@@ -60,18 +62,18 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     else setEx(prev);
   }
 
-  async function post(body: object): Promise<boolean> {
-    if (busy) return false;
+  async function post(body: object): Promise<Record<string, unknown> | null> {
+    if (busy) return null;
     setBusy(true);
     setErr("");
     try {
       const r = await fetch("/api/admin/inventory", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      const j = (await r.json().catch(() => ({}))) as Record<string, unknown> & { error?: string };
       if (!r.ok) throw new Error(j.error ?? "처리하지 못했어요.");
-      return true;
+      return j;
     } catch (e) {
       setErr(e instanceof Error ? e.message : "서버에 연결할 수 없어요.");
-      return false;
+      return null;
     } finally {
       setBusy(false);
     }
@@ -81,26 +83,32 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     if (!sel) return setErr("공정을 골라 주세요.");
     if (!catSel) return setErr("카테고리를 골라 주세요.");
     if (!name.trim()) return setErr("품목 이름을 적어 주세요.");
-    if (await post({ action: "add", trade: sel, category: catSel, name })) {
+    const j = await post({ action: "add", trade: sel, category: catSel, name });
+    if (j) {
+      if (typeof j.key === "string") setItems(x => [...x, { key: j.key as string, trade: sel, category: catSel, name: name.trim().replace(/\s+/g, " ") }]); // 새로고침을 기다리지 않고 바로 보여 준다
       setName("");
-      router.refresh();
+      router.refresh(); // 뒤에서 서버 값으로 맞춘다
     }
   }
   // 품목 이름 바꾸기 (창고장비현황에도 같은 이름으로 바뀐다)
   const [editKey, setEditKey] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   async function rename(p: Prod) {
-    const n = editName.trim().replace(/s+/g, " ");
+    const n = editName.trim().replace(/\s+/g, " ");
     if (!n) return setErr("품목 이름을 적어 주세요.");
     if (n === p.name) return setEditKey(null);
     if (await post({ action: "rename", key: p.key, name: n })) {
+      setItems(x => x.map(i => (i.key === p.key ? { ...i, name: n } : i)));
       setEditKey(null);
       router.refresh();
     }
   }
   async function del(p: Prod) {
     if (!window.confirm(`“${p.name}”을(를) 삭제할까요?\n창고장비현황의 휴지통으로 이동해요. (거기서 복원할 수 있어요)`)) return;
-    if (await post({ action: "delete", key: p.key })) router.refresh();
+    if (await post({ action: "delete", key: p.key })) {
+      setItems(x => x.filter(i => i.key !== p.key));
+      router.refresh();
+    }
   }
   // 품목마다 가장 최근에 '추가'한 기록 (없으면 처음부터 있던 품목)
   const addedBy = new Map<string, InventoryEntry>();
@@ -108,7 +116,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const cats = sel ? categories[sel] ?? [] : [];
   // 공정 → 카테고리 순서로 묶어서 보여 준다 (카테고리 순서는 창고장비현황을 따른다)
   const catRank = (p: Prod) => (categories[p.trade] ?? []).indexOf(p.category);
-  const shown = products
+  const shown = items
     .filter(p => (!sel || p.trade === sel) && (!catSel || p.category === catSel))
     .map((p, i) => ({ p, i }))
     .sort((x, y) => trades.indexOf(x.p.trade) - trades.indexOf(y.p.trade) || catRank(x.p) - catRank(y.p) || x.i - y.i)
@@ -129,6 +137,17 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
         <h1 className="text-xl font-extrabold">장비조사</h1>
         <span className="text-sm text-zinc-500">{admin ? "모든 공정 · 상비품" : trades.length ? `내 공정: ${trades.join(" · ")}` : ""}</span>
       </div>
+      {admin && setup && ex.trades.length + ex.categories.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-xl bg-zinc-100 px-3 py-2 text-xs dark:bg-zinc-800">
+          <span className="font-bold text-zinc-600 dark:text-zinc-300">장비조사에서 제외된 항목</span>
+          {ex.trades.map(t => (
+            <button key={"t" + t} type="button" disabled={busy} onClick={() => void toggleEx("trade", t)} title="다시 장비조사에 넣기" className="rounded-full border border-red-300 bg-white px-2.5 py-1 font-semibold text-red-600 disabled:opacity-50 dark:border-red-500/40 dark:bg-zinc-900 dark:text-red-300">{t} 공정 · ＋ 다시 추가</button>
+          ))}
+          {ex.categories.map(c => (
+            <button key={"c" + c} type="button" disabled={busy} onClick={() => void toggleEx("category", c)} title="다시 장비조사에 넣기" className="rounded-full border border-red-300 bg-white px-2.5 py-1 font-semibold text-red-600 disabled:opacity-50 dark:border-red-500/40 dark:bg-zinc-900 dark:text-red-300">{c} 카테고리 · ＋ 다시 추가</button>
+          ))}
+        </div>
+      )}
       {admin && setup && (
         <div className="mt-2">
           <button type="button" onClick={() => setSetupOpen(o => !o)} className="rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">{setupOpen ? "조사 제외 설정 닫기" : `조사 제외 설정${ex.trades.length + ex.categories.length > 0 ? ` (제외 ${ex.trades.length + ex.categories.length})` : ""}`}</button>

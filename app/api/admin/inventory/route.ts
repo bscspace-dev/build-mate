@@ -2,7 +2,7 @@ import { getActor } from '@/lib/auth';
 import { addInventory, addProduct, getPurchaseLinks, getInventory, getInventoryExcluded, removeInventory, saveInventoryExcluded, deleteProducts, getCategoryTrades, getProducts, getTrades, getPricingSnapshots, nextProductKey, savePricingSnapshots, setPurchaseLink, setStock, updateProduct } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { inventoryTrades } from '@/lib/inventory';
-import { recordChange } from '@/lib/audit';
+import { recordChangeLater } from '@/lib/audit';
 import { headOf, rewriteSub } from '@/lib/sub-path';
 
 // 장비조사·가격조사(menu): 내 팀이 맡은 공정(대분류)의 상비품 목록에서
@@ -25,10 +25,13 @@ export async function POST(req: Request) {
   const actor = await getActor(menu);
   if (!actor) return json({ error: `${pricing ? '가격조사' : '장비조사'} 메뉴 권한이 필요해요.` }, 401);
   if (limited(req, menu, 300, 10 * 60 * 1000)) return json({ error: '잠시 후 다시 해 주세요.' }, 429);
-  const scope = await inventoryTrades(actor);
+  // 서로 상관없는 조회는 동시에 한다 (한 번 왕복에 약 0.2초씩 걸려서, 차례로 하면 그만큼 더해진다)
+  const [scope, excl] = await Promise.all([
+    inventoryTrades(actor),
+    // 장비조사에서 제외한 공정·카테고리는 보이지도, 추가·수정·삭제도 안 된다 (가격조사는 해당 없음)
+    pricing ? Promise.resolve({ trades: [] as string[], categories: [] as string[] }) : getInventoryExcluded(),
+  ]);
   const { admin } = scope;
-  // 장비조사에서 제외한 공정·카테고리는 보이지도, 추가·수정·삭제도 안 된다 (가격조사는 해당 없음)
-  const excl = pricing ? { trades: [], categories: [] } : await getInventoryExcluded();
   const trades = scope.trades.filter(t => !excl.trades.includes(t));
   const me = actor.kind === 'member' ? { id: actor.member.id, name: actor.member.name } : { id: '', name: '최고 관리자' };
   const memo = pricing ? 'pricing' : ''; // 기록에 어느 메뉴에서 했는지 남긴다
@@ -42,24 +45,22 @@ export async function POST(req: Request) {
     const qty = pricing ? whole(b.qty, 9_999_999) : 0;
     if (Number.isNaN(price)) return json({ error: '금액은 0 이상의 숫자로 적어 주세요.' }, 400);
     if (Number.isNaN(qty)) return json({ error: '수량은 0 이상의 숫자로 적어 주세요.' }, 400);
-    const catTrades = await getCategoryTrades();
     const category = clip(b.category, 40);
     if (!category) return json({ error: '카테고리를 골라 주세요.' }, 400);
+    const [catTrades, allProducts, key, allTrades] = await Promise.all([getCategoryTrades(), getProducts(), nextProductKey(), getTrades()]); // 동시에 조회
     if (catTrades[category] !== trade) return json({ error: '이 공정의 카테고리가 아니에요.' }, 400);
     if (excl.categories.includes(category)) return json({ error: '장비조사에서 제외된 카테고리예요.' }, 403);
-    if ((await getProducts()).some(p => catTrades[p.category] === trade && p.name === name)) return json({ error: '이 공정에 이미 있는 품목이에요.' }, 400);
-    const key = await nextProductKey();
-    const product = await addProduct({ key, kind: '상비품', category, sub: rewriteSub('', '', headOf(category, catTrades, await getTrades())), name, brand: '', price, priceInclVat: null, vatBasis: '', soldout: false, stock: 0, image: '', trades: [trade] });
+    if (allProducts.some(p => catTrades[p.category] === trade && p.name === name)) return json({ error: '이 공정에 이미 있는 품목이에요.' }, 400);
+    const product = await addProduct({ key, kind: '상비품', category, sub: rewriteSub('', '', headOf(category, catTrades, allTrades)), name, brand: '', price, priceInclVat: null, vatBasis: '', soldout: false, stock: 0, image: '', trades: [trade] });
     await addInventory({ action: 'add', category: trade, productKey: product.key, name, brand: '', qty, price, memo, byId: me.id, byName: me.name });
-    await recordChange(menu, { action: '추가', target: name, detail: `${trade} › ${category}${pricing ? ` · 금액 ${price.toLocaleString('ko-KR')} · 구매 예정 수량 ${qty}` : ''}` });
+    recordChangeLater(menu, { action: '추가', target: name, detail: `${trade} › ${category}${pricing ? ` · 금액 ${price.toLocaleString('ko-KR')} · 구매 예정 수량 ${qty}` : ''}` });
     return json({ ok: true, key: product.key });
   }
 
   if (b.action === 'rename') {
-    const all = await getProducts();
+    const [all, catTrades] = await Promise.all([getProducts(), getCategoryTrades()]); // 동시에 조회
     const p = all.find(x => x.key === clip(b.key, 40));
     if (!p || p.kind !== '상비품') return json({ error: '없는 상비품이에요.' }, 404);
-    const catTrades = await getCategoryTrades();
     const trade = catTrades[p.category] ?? '';
     if (!trades.includes(trade)) return json({ error: '내 팀이 맡은 공정이 아니에요.' }, 403);
     if (excl.categories.includes(p.category)) return json({ error: '장비조사에서 제외된 카테고리예요.' }, 403);
@@ -72,7 +73,7 @@ export async function POST(req: Request) {
     const changes: string[] = [];
     if (name !== p.name) changes.push(`이름 ${p.name} → ${name}`);
     if (pricing && price !== p.price) changes.push(`금액 ${p.price.toLocaleString('ko-KR')} → ${price.toLocaleString('ko-KR')}`);
-    if (changes.length) await recordChange(menu, { action: '수정', target: name, detail: changes.join(' · ') });
+    if (changes.length) recordChangeLater(menu, { action: '수정', target: name, detail: changes.join(' · ') });
     return json({ ok: true, name, price });
   }
 
@@ -96,7 +97,7 @@ export async function POST(req: Request) {
     }
     const vendor = clip(b.vendor, 40);
     await setPurchaseLink(p.key, url || vendor ? { url, vendor } : null);
-    await recordChange(menu, { action: '구매처·링크 변경', target: p.name, detail: url || vendor ? `구매처 ${vendor || '—'} · ${url || '링크 없음'}` : '구매처·링크 삭제' });
+    recordChangeLater(menu, { action: '구매처·링크 변경', target: p.name, detail: url || vendor ? `구매처 ${vendor || '—'} · ${url || '링크 없음'}` : '구매처·링크 삭제' });
     return json({ ok: true, url, vendor });
   }
 
@@ -109,7 +110,7 @@ export async function POST(req: Request) {
     const ts = Array.isArray(b.excludedTrades) ? [...new Set(b.excludedTrades.filter((x): x is string => typeof x === 'string' && allTrades.includes(x)))] : [];
     const cs = Array.isArray(b.excludedCategories) ? [...new Set(b.excludedCategories.filter((x): x is string => typeof x === 'string' && !!catTrades[x]))] : [];
     await saveInventoryExcluded({ trades: ts, categories: cs });
-    await recordChange(menu, { action: '조사 제외 설정', target: '장비조사', detail: `제외 공정: ${ts.join(', ') || '없음'} · 제외 카테고리: ${cs.join(', ') || '없음'}` });
+    recordChangeLater(menu, { action: '조사 제외 설정', target: '장비조사', detail: `제외 공정: ${ts.join(', ') || '없음'} · 제외 카테고리: ${cs.join(', ') || '없음'}` });
     return json({ ok: true });
   }
 
@@ -126,7 +127,7 @@ export async function POST(req: Request) {
     }
     if (removed === 0) return json({ error: '없는 내역이에요.' }, 404);
     const day = new Date(entries[0].createdAt).toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' });
-    await recordChange(menu, { action: '구매 내역서 삭제', target: day, detail: `${removed}건 · 합계 ${total.toLocaleString('ko-KR')}원 (창고 재고는 그대로)` });
+    recordChangeLater(menu, { action: '구매 내역서 삭제', target: day, detail: `${removed}건 · 합계 ${total.toLocaleString('ko-KR')}원 (창고 재고는 그대로)` });
     return json({ ok: true, removed });
   }
 
@@ -139,7 +140,7 @@ export async function POST(req: Request) {
       const snap = list.find(x => x.id === id);
       if (!snap) return json({ error: '없는 저장본이에요.' }, 404);
       await savePricingSnapshots(list.filter(x => x.id !== id));
-      await recordChange(menu, { action: '저장본 삭제', target: snap.name, detail: `${snap.items.length}개 품목` });
+      recordChangeLater(menu, { action: '저장본 삭제', target: snap.name, detail: `${snap.items.length}개 품목` });
       return json({ ok: true });
     }
     const all = await getProducts();
@@ -154,7 +155,7 @@ export async function POST(req: Request) {
       if (items.length === 0 && excluded.length === 0) return json({ error: '저장할 품목이 없어요.' }, 400);
       const snap = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, at: new Date().toISOString(), byName: me.name, items, excluded };
       await savePricingSnapshots([snap, ...list.filter(x => x.name !== name)].slice(0, 30)); // 같은 이름이면 덮어쓰고 최대 30개
-      await recordChange(menu, { action: '금액·수량 저장', target: name, detail: `${items.length}개 품목 · 제외 ${excluded.length}개` });
+      recordChangeLater(menu, { action: '금액·수량 저장', target: name, detail: `${items.length}개 품목 · 제외 ${excluded.length}개` });
       return json({ ok: true, count: items.length });
     }
     const snap = list.find(x => x.id === clip(b.id, 40));
@@ -170,7 +171,7 @@ export async function POST(req: Request) {
     }
     const excludedNow = (snap.excluded ?? []).filter(k => !!mine(k));
     if (applied === 0 && excludedNow.length === 0) return json({ error: '불러올 수 있는 품목이 없어요. (삭제됐거나 내 공정이 아니에요)' }, 400);
-    await recordChange(menu, { action: '금액·수량 불러오기', target: snap.name, detail: `${applied}개 품목 · 금액 바뀐 품목 ${priceChanged}개` });
+    recordChangeLater(menu, { action: '금액·수량 불러오기', target: snap.name, detail: `${applied}개 품목 · 금액 바뀐 품목 ${priceChanged}개` });
     return json({ ok: true, applied, skipped: snap.items.length - applied, items: loaded, excluded: excludedNow });
   }
 
@@ -191,7 +192,7 @@ export async function POST(req: Request) {
       const supply = qty * p.price, vat = Math.round(supply * 0.1);
       await setStock(p.key, p.stock + qty); // 창고장비현황 재고에 더한다
       await addInventory({ action: 'buy', category: trade, productKey: p.key, name: p.name, brand: p.brand, qty, price: p.price, shipping, vendor, memo, byId: me.id, byName: me.name });
-      await recordChange(menu, { action: '구매완료', target: p.name, detail: `${qty.toLocaleString('ko-KR')}개 × ${p.price.toLocaleString('ko-KR')}원 = 공급가액 ${supply.toLocaleString('ko-KR')} · 부가세 ${vat.toLocaleString('ko-KR')} · 배송비 ${shipping.toLocaleString('ko-KR')} · 합계 ${(supply + vat + shipping).toLocaleString('ko-KR')}원${vendor ? ` · 구매처 ${vendor}` : ''} · 재고 ${p.stock} → ${p.stock + qty}` });
+      recordChangeLater(menu, { action: '구매완료', target: p.name, detail: `${qty.toLocaleString('ko-KR')}개 × ${p.price.toLocaleString('ko-KR')}원 = 공급가액 ${supply.toLocaleString('ko-KR')} · 부가세 ${vat.toLocaleString('ko-KR')} · 배송비 ${shipping.toLocaleString('ko-KR')} · 합계 ${(supply + vat + shipping).toLocaleString('ko-KR')}원${vendor ? ` · 구매처 ${vendor}` : ''} · 재고 ${p.stock} → ${p.stock + qty}` });
       done++;
     }
     if (done === 0) return json({ error: b.action === 'buy' ? '구매할 수량을 먼저 적어 주세요.' : '구매할 수량이 적힌 품목이 없어요.' }, 400);
@@ -199,14 +200,15 @@ export async function POST(req: Request) {
   }
 
   if (b.action === 'delete') {
-    const p = (await getProducts()).find(x => x.key === clip(b.key, 40));
+    const [allP, catT] = await Promise.all([getProducts(), getCategoryTrades()]); // 동시에 조회
+    const p = allP.find(x => x.key === clip(b.key, 40));
     if (!p || p.kind !== '상비품') return json({ error: '없는 상비품이에요.' }, 404);
-    const trade = (await getCategoryTrades())[p.category] ?? '';
+    const trade = catT[p.category] ?? '';
     if (!trades.includes(trade)) return json({ error: '내 팀이 맡은 공정이 아니에요.' }, 403);
     if (excl.categories.includes(p.category)) return json({ error: '장비조사에서 제외된 카테고리예요.' }, 403);
     if ((await deleteProducts([p.key])) === 0) return json({ error: '없는 상비품이에요.' }, 404);
     await addInventory({ action: 'delete', category: trade, productKey: p.key, name: p.name, brand: p.brand, qty: p.stock, price: p.price, memo, byId: me.id, byName: me.name });
-    await recordChange(menu, { action: '삭제', target: p.name, detail: `${trade} › ${p.category} · 창고장비현황 휴지통으로 이동` });
+    recordChangeLater(menu, { action: '삭제', target: p.name, detail: `${trade} › ${p.category} · 창고장비현황 휴지통으로 이동` });
     return json({ ok: true });
   }
   return json({ error: 'bad request' }, 400);
