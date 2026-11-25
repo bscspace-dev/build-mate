@@ -241,7 +241,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
             {ORDERS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
           </select>
         </label>
-        <div className="flex items-center gap-1.5">
+        <div className="hidden items-center gap-1.5 md:flex">
         행 간격
         <div className="inline-flex overflow-hidden rounded-lg border border-black/10 dark:border-white/10" role="radiogroup" aria-label="행 간격">
           {([["tight", "좁게"], ["normal", "보통"], ["wide", "넓게"]] as const).map(([d, label]) => (
@@ -257,7 +257,59 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
         <p className="mt-6 rounded-2xl border border-dashed border-black/15 p-8 text-center text-sm text-zinc-500 dark:border-white/15">내 팀이 맡은 공정이 아직 없어요. 최고 관리자나 개발팀에 팀의 ‘관여 공정’ 설정을 요청해 주세요.</p>
       ) : (
         <>
-          <div className="no-scrollbar mt-4 overflow-x-auto rounded-xl border border-black/10 dark:border-white/10">
+          {/* 좁은 화면(모바일): 표 대신 카드로 보여 준다 — 옆으로 밀어야 하는 표는 잘려 보여서 불편하다 */}
+          <div className="mt-4 space-y-1.5 md:hidden">
+            <div className="space-y-2 rounded-xl border border-blue-200 bg-blue-50/60 p-3 dark:border-blue-500/30 dark:bg-blue-500/10">
+              <div className="grid grid-cols-2 gap-2">
+                <select value={sel} onChange={e => { setSel(e.target.value); setCatSel(firstCat(e.target.value)); }} className={inp} aria-label="공정">
+                  <option value="">공정 선택</option>
+                  {trades.map(t => <option key={t}>{t}</option>)}
+                </select>
+                <select value={catSel} onChange={e => setCatSel(e.target.value)} disabled={!sel} className={inp} aria-label="카테고리">
+                  <option value="">{sel ? "카테고리 선택" : "공정 먼저"}</option>
+                  {cats.map(c => <option key={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름 (모바일)" onKeyDown={e => e.key === "Enter" && add()} />
+                <button type="button" disabled={busy} onClick={add} className="shrink-0 rounded-md bg-blue-600 px-5 text-sm font-bold text-white disabled:opacity-50">추가</button>
+              </div>
+            </div>
+            {shown.length === 0 && <p className="rounded-xl border border-dashed border-black/15 p-6 text-center text-sm text-zinc-500 dark:border-white/15">내 공정에 상비품이 없어요. 위에서 추가해 보세요.</p>}
+            {rows.map((p, k) => {
+              const i = start + k;
+              const a = addedBy.get(p.key);
+              const head = !sort && (k === 0 || groupOf(shown[i - 1]) !== groupOf(p));
+              return (
+                <Fragment key={p.key}>
+                  {head && <div className="px-1 pt-1.5 text-xs font-extrabold text-blue-700 dark:text-blue-300">{freshAt(p) ? <>신규 추가 <span className="font-normal text-zinc-500">{freshCount}개</span></> : <>{p.trade} › {p.category} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개</span></>}</div>}
+                  <div className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${checked.includes(p.key) ? "border-red-300 bg-red-50/60 dark:border-red-500/40 dark:bg-red-500/5" : "border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900"}`}>
+                    <input type="checkbox" aria-label={`${p.name} 삭제할 품목으로 선택`} checked={checked.includes(p.key)} onChange={e => setChecked(c => (e.target.checked ? [...c, p.key] : c.filter(x => x !== p.key)))} className="h-4 w-4 shrink-0 accent-red-600" />
+                    <div className="min-w-0 flex-1">
+                      {editKey === p.key
+                        ? <input autoFocus value={editName} onChange={e => setEditName(e.target.value.slice(0, 100))} onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} className={inp} aria-label="품목 이름 수정" />
+                        : <div className="break-words text-sm font-semibold leading-snug">{p.name}</div>}
+                      {a && <div className="text-[11px] leading-tight text-zinc-500">{a.byName} 추가</div>}
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      {editKey === p.key ? (
+                        <>
+                          <button type="button" disabled={busy} onClick={() => void rename(p)} className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-40">저장</button>
+                          <button type="button" disabled={busy} onClick={() => setEditKey(null)} className="rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold dark:bg-zinc-800">취소</button>
+                        </>
+                      ) : (
+                        <>
+                          <button type="button" disabled={busy} onClick={() => { setEditKey(p.key); setEditName(p.name); }} className="rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">수정</button>
+                          <button type="button" disabled={busy} onClick={() => del(p)} className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 disabled:opacity-40 dark:bg-red-500/15 dark:text-red-300">삭제</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </Fragment>
+              );
+            })}
+          </div>
+          <div className="no-scrollbar mt-4 hidden overflow-x-auto rounded-xl border border-black/10 md:block dark:border-white/10">
             <table className="w-full min-w-[44rem] border-collapse text-left text-sm">
               <thead>
                 <tr className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-800/60">

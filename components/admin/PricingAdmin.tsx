@@ -140,7 +140,7 @@ export default function PricingAdmin({ trades, categories, products, log, links,
       inputMode="numeric"
       disabled={busy}
       title="눌러서 바로 수정"
-      id={field === "qty" ? "qty-" + p.key : undefined}
+      data-qty={field === "qty" ? p.key : undefined}
       aria-label={`${p.name} ${field === "price" ? "금액" : field === "qty" ? "수량" : "배송비"}`}
       className={`w-full bg-transparent px-2.5 ${PADS[density]} text-right tabular-nums outline-none hover:bg-blue-50/70 focus:bg-white focus:ring-2 focus:ring-blue-500 dark:hover:bg-blue-500/10 dark:focus:bg-zinc-900 ${extra}`}
     />
@@ -189,8 +189,8 @@ export default function PricingAdmin({ trades, categories, products, log, links,
     if (qtyOf(p) <= 0) {
       // 수량이 아직 없으면 그 줄의 수량 칸으로 보내 준다
       setErr("수량을 먼저 적어 주세요. 수량 칸에 숫자를 입력한 뒤 구매완료를 눌러요.");
-      const el = document.getElementById("qty-" + p.key) as HTMLInputElement | null;
-      el?.focus();
+      const els = Array.from(document.querySelectorAll<HTMLInputElement>(`[data-qty="${p.key}"]`));
+      (els.find(x => x.offsetParent !== null) ?? els[0])?.focus(); // 표·카드 중 지금 보이는 쪽
       return;
     }
     const q = qtyOf(p);
@@ -309,7 +309,7 @@ export default function PricingAdmin({ trades, categories, products, log, links,
           : <>구매완료한 내역이에요. 구매한 수량은 이미 창고장비현황 재고에 더해졌어요. 금액을 바꾼 이력은 변경이력 메뉴에서 확인해요.</>}
       </p>
 
-      <div className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500">
+      <div className="mt-2 hidden items-center gap-1.5 text-xs text-zinc-500 md:flex">
         행 간격
         <div className="inline-flex overflow-hidden rounded-lg border border-black/10 dark:border-white/10" role="radiogroup" aria-label="행 간격">
           {([["tight", "좁게"], ["normal", "보통"], ["wide", "넓게"]] as const).map(([d, label]) => (
@@ -332,7 +332,60 @@ export default function PricingAdmin({ trades, categories, products, log, links,
             </div>
           )}
           {checkBar}
-          <div className="no-scrollbar mt-4 overflow-x-auto rounded-xl border border-black/10 dark:border-white/10">
+          {/* 좁은 화면(모바일): 표 대신 카드 — 옆으로 밀어야 하는 표는 잘려 보여서 불편하다 */}
+          <div className="mt-4 space-y-2 md:hidden">
+            <div className="grid grid-cols-2 gap-2">
+              <select value={sel} onChange={e => pick(e.target.value)} className="w-full rounded-lg border border-black/15 bg-transparent px-2 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/15" aria-label="공정 선택 (모바일)">
+                {trades.length !== 1 && <option value="">전체 공정</option>}
+                {trades.map(t => <option key={t}>{t}</option>)}
+              </select>
+              <select value={catSel} onChange={e => setCatSel(e.target.value)} disabled={!sel} className="w-full rounded-lg border border-black/15 bg-transparent px-2 py-2 text-sm outline-none focus:border-blue-500 disabled:opacity-50 dark:border-white/15" aria-label="카테고리 선택 (모바일)">
+                <option value="">{sel ? "전체 카테고리" : "공정을 먼저"}</option>
+                {cats.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            {shown.length === 0 && <p className="rounded-xl border border-dashed border-black/15 p-6 text-center text-sm text-zinc-500 dark:border-white/15">내 공정에 상비품이 없어요. 창고장비현황이나 장비조사에서 추가해 주세요.</p>}
+            {shown.map((p, i) => {
+              const head = i === 0 || shown[i - 1].trade !== p.trade || shown[i - 1].category !== p.category;
+              const info = links[p.key];
+              return (
+                <Fragment key={p.key}>
+                  {head && (
+                    <label className="flex cursor-pointer items-center gap-2 px-1 pt-2 text-xs font-extrabold text-blue-700 dark:text-blue-300">
+                      <input type="checkbox" aria-label={`${p.category} 전체 체크`} checked={checkedIn(p.trade, p.category) === countIn(p.trade, p.category)} onChange={e => toggle(inGroup(p.trade, p.category).map(x => x.key), e.target.checked)} className="h-5 w-5 accent-blue-600" />
+                      <span>{p.trade} › {p.category} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개{checkedIn(p.trade, p.category) > 0 && <> · 체크 {checkedIn(p.trade, p.category)}개 {won(sumIn(p.trade, p.category))}원</>}</span></span>
+                    </label>
+                  )}
+                  <div className={`rounded-xl border p-3 ${on(p) ? "border-blue-300 bg-blue-50/50 dark:border-blue-500/40 dark:bg-blue-500/5" : "border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900"}`}>
+                    <div className="flex items-start gap-2.5">
+                      <input type="checkbox" aria-label={`${p.name} 합계에 넣기`} checked={on(p)} onChange={e => toggle([p.key], e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-blue-600" />
+                      <div className="min-w-0 flex-1">
+                        <div className="break-words font-semibold"><span className="mr-1.5 text-xs font-normal text-zinc-400">{i + 1}</span>{p.name}</div>
+                        <button type="button" onClick={() => { setLinkP(p); setLinkVendor(info?.vendor ?? ""); setLinkUrl(info?.url ?? ""); setErr(""); }} className={`mt-0.5 text-xs underline-offset-2 hover:underline ${info?.vendor ? "font-semibold text-zinc-700 dark:text-zinc-200" : "text-zinc-400"}`}>구매처: {info?.vendor || "등록"}</button>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2">
+                      {([["price", "공급가", p.price, 9], ["qty", "수량", qtyOf(p), 7], ["ship", "배송비", shipOf(p), 7]] as const).map(([f, label, v, max]) => (
+                        <div key={f}>
+                          <div className="mb-0.5 text-[11px] font-bold text-zinc-500">{label}</div>
+                          <div className="overflow-hidden rounded-lg border border-black/15 dark:border-white/15">{numCell(p, f, v, max, f === "qty" ? "font-bold" : "")}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 text-xs text-zinc-500">
+                      <span>공급가액 {won(supplyOf(p))} + 부가세 {won(vatOf(p))} + 배송비 {won(shipOf(p))}</span>
+                      <span className="text-sm font-extrabold text-zinc-900 dark:text-zinc-50">합계 {won(totalOf(p))}원</span>
+                    </div>
+                    <div className="mt-2 flex justify-end gap-2">
+                      {info?.url && <a href={info.url} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-bold text-white">구매하기</a>}
+                      <button type="button" disabled={busy || draft[p.key] !== undefined} onClick={() => void buy(p)} className={`rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-35 ${qtyOf(p) > 0 ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"}`}>구매완료</button>
+                    </div>
+                  </div>
+                </Fragment>
+              );
+            })}
+          </div>
+          <div className="no-scrollbar mt-4 hidden overflow-x-auto rounded-xl border border-black/10 md:block dark:border-white/10">
             <table className="w-full min-w-[60rem] table-fixed border-collapse text-left text-sm">
               <thead>
                 <tr className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-800/60">
@@ -465,7 +518,23 @@ export default function PricingAdmin({ trades, categories, products, log, links,
                     </div>
                   </div>
                   <div className={`no-scrollbar mt-2 overflow-x-auto print-show ${openDays.includes(d) ? "" : "hidden"}`}>
-                    <table className="w-full min-w-[60rem] table-fixed border-collapse text-left text-sm">
+                    <div className="space-y-2 md:hidden">
+                      {list.map((e, i) => {
+                        const em = entryMoney(e);
+                        return (
+                          <div key={e.id} className="rounded-lg border border-black/10 p-2.5 text-sm dark:border-white/10">
+                            <div className="break-words font-semibold"><span className="mr-1.5 text-xs font-normal text-zinc-400">{i + 1}</span>{e.name}</div>
+                            <div className="text-xs text-zinc-500">{e.category} › {e.productCategory || "—"}{e.vendor ? ` · ${e.vendor}` : ""} · {e.byName} {when(e.createdAt).slice(11)}</div>
+                            <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 text-xs text-zinc-600 dark:text-zinc-300">
+                              <span>{won(e.price)} × {won(e.qty)} + 부가세 {won(em.vat)} + 배송비 {won(em.ship)}</span>
+                              <b className="text-sm text-zinc-900 dark:text-zinc-50">{won(em.total)}원</b>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <div className="flex justify-between rounded-lg bg-zinc-100 px-3 py-2 text-sm font-bold dark:bg-zinc-800"><span>합계 ({list.length}건 · 수량 {won(qtySum(list))})</span><span>{won(m.total)}원</span></div>
+                    </div>
+                    <table className="hidden w-full min-w-[60rem] table-fixed border-collapse text-left text-sm md:table">
                       <thead>
                         <tr className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-800/60">
                           <th className={th("w-9") + " text-center"}>#</th>

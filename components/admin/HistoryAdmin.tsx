@@ -81,7 +81,24 @@ export default function HistoryAdmin({ entries, menus, error, canDelete }: { ent
           <button type="button" onClick={() => setSelIds([])} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">선택 해제</button>
         </div>
       )}
-      <div className="no-scrollbar mt-4 overflow-x-auto rounded-xl border border-black/10 dark:border-white/10">
+      {/* 좁은 화면(모바일): 표 대신 카드 */}
+      <div className="mt-4 space-y-2 md:hidden">
+        {rows.length === 0 && <p className="rounded-xl border border-dashed border-black/15 p-6 text-center text-sm text-zinc-500 dark:border-white/15">{entries.length === 0 ? "아직 기록된 변경이 없어요." : "조건에 맞는 변경이력이 없어요."}</p>}
+        {rows.map(e => (
+          <div key={e.id} className={`rounded-xl border p-3 ${sel.includes(e.id) ? "border-red-300 bg-red-50/60 dark:border-red-500/40 dark:bg-red-500/5" : "border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900"}`}>
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              {canDelete && <input type="checkbox" aria-label="삭제할 이력 선택" checked={sel.includes(e.id)} onChange={ev => setSelIds(x => (ev.target.checked ? [...x, e.id] : x.filter(i => i !== e.id)))} className="mr-1 h-5 w-5 accent-red-600" />}
+              <span className={`rounded-full px-2 py-0.5 font-bold ${badge(e.action)}`}>{e.action}</span>
+              <span className="font-bold">{labelOf(e.menu)}</span>
+              <span className="ml-auto text-zinc-500">{when(e.at)}</span>
+            </div>
+            <div className="mt-1.5 break-words font-semibold">{e.target || "—"}</div>
+            {e.detail && <div className="mt-0.5 break-words text-xs text-zinc-600 dark:text-zinc-300">{e.detail}</div>}
+            <div className="mt-1 text-xs text-zinc-500">{e.byName}</div>
+          </div>
+        ))}
+      </div>
+      <div className="no-scrollbar mt-4 hidden overflow-x-auto rounded-xl border border-black/10 md:block dark:border-white/10">
         <table className="w-full min-w-[52rem] border-collapse text-left text-sm">
           <thead>
             <tr className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-800/60">
