@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { asIcon, asKind, EMPTY_SPEC, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, TeamCategories, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo } from './types';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo } from './types';
 import { removeImage } from './images';
 import { applyTeamLocks, DEFAULT_TEAMS, type Team } from './roles';
 
@@ -1116,10 +1116,10 @@ export function removeLoadPackage(id: string): Promise<VehicleResult> {
 
 
 // ───────── 장비조사 (data/inventory.json) — 조사 수량 기록 + 팀별 고정 카테고리 (data/team-categories.json) ─────────
-export const getInventory = async (): Promise<InventoryEntry[]> => (await readList<InventoryEntry>('inventory.json')).map(e => ({ ...e, action: e.action === 'delete' ? 'delete' as const : e.action === 'buy' ? 'buy' as const : e.action === 'price' ? 'price' as const : 'add' as const, qty: Number(e.qty) || 0, price: Number(e.price) || 0, oldPrice: Number(e.oldPrice) || 0, shipping: Number(e.shipping) || 0, vendor: typeof e.vendor === 'string' ? e.vendor : '' }));
+export const getInventory = async (): Promise<InventoryEntry[]> => (await readList<InventoryEntry>('inventory.json')).map(e => ({ ...e, action: e.action === 'delete' ? 'delete' as const : e.action === 'buy' ? 'buy' as const : 'add' as const, qty: Number(e.qty) || 0, price: Number(e.price) || 0, shipping: Number(e.shipping) || 0, vendor: typeof e.vendor === 'string' ? e.vendor : '' }));
 export function addInventory(i: InventoryEntryInput): Promise<InventoryEntry> {
   return withLock(async () => {
-    const row: InventoryEntry = { id: crypto.randomBytes(6).toString('hex'), ...i, oldPrice: i.oldPrice ?? 0, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', createdAt: new Date().toISOString() };
+    const row: InventoryEntry = { id: crypto.randomBytes(6).toString('hex'), ...i, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', createdAt: new Date().toISOString() };
     await writeJson('inventory.json', [row, ...(await getInventory())]);
     return row;
   });
@@ -1132,38 +1132,6 @@ export function removeInventory(id: string): Promise<boolean> {
     return true;
   });
 }
-export async function getTeamCategories(): Promise<TeamCategories> {
-  try {
-    const v = await readJson<unknown>('team-categories.json');
-    return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, a]) => [k, Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []])) : {};
-  } catch {
-    return {};
-  }
-}
-export function saveTeamCategories(map: TeamCategories): Promise<void> {
-  return withLock(async () => {
-    await writeJson('team-categories.json', map);
-  });
-}
-
-// ───────── 가격조사 — 품목별 구매 예정 수량 (data/pricing-qty.json). 구매완료를 누르면 창고 재고에 더해지고 비워진다. ─────────
-export async function getPricingQty(): Promise<Record<string, number>> {
-  try {
-    const v = await readJson<unknown>('pricing-qty.json');
-    return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, n]) => typeof n === 'number' && n > 0)) as Record<string, number> : {};
-  } catch {
-    return {};
-  }
-}
-/** 한 품목의 구매 예정 수량 정하기 (0 이하는 지운다) */
-export function setPricingQty(key: string, qty: number): Promise<void> {
-  return withLock(async () => {
-    const cur = await getPricingQty();
-    if (qty > 0) cur[key] = qty; else delete cur[key];
-    await writeJson('pricing-qty.json', cur);
-  });
-}
-
 // ───────── 가격조사 — 품목별 구매 링크 (data/purchase-links.json) ─────────
 /** 예전에는 주소(문자열)만 저장했다 — 그 값도 그대로 읽는다 */
 const toInfo = (u: unknown): PurchaseInfo | null => (typeof u === 'string' ? (u ? { url: u, vendor: '' } : null) : u && typeof u === 'object' ? { url: typeof (u as PurchaseInfo).url === 'string' ? (u as PurchaseInfo).url : '', vendor: typeof (u as PurchaseInfo).vendor === 'string' ? (u as PurchaseInfo).vendor : '' } : null);

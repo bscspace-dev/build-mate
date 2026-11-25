@@ -199,6 +199,19 @@ export async function POST(req: Request) {
     return json({ ok: true, done, skipped });
   }
 
+  if (b.action === 'deleteMany') {
+    // 체크한 품목을 한꺼번에 삭제 (창고장비현황 휴지통으로). 내 공정의 상비품만 처리한다.
+    const keys = Array.isArray(b.keys) ? [...new Set(b.keys.filter((k): k is string => typeof k === 'string').map(k => clip(k, 40)))].slice(0, 500) : [];
+    if (keys.length === 0) return json({ error: 'bad request' }, 400);
+    const [allP, catT] = await Promise.all([getProducts(), getCategoryTrades()]); // 동시에 조회
+    const targets = keys.flatMap(k => { const p = allP.find(x => x.key === k); return p && p.kind === '상비품' && trades.includes(catT[p.category] ?? '') && !excl.categories.includes(p.category) ? [p] : []; });
+    if (targets.length === 0) return json({ error: '삭제할 수 있는 품목이 없어요.' }, 404);
+    await deleteProducts(targets.map(p => p.key));
+    await Promise.all(targets.map(p => addInventory({ action: 'delete', category: catT[p.category] ?? '', productKey: p.key, name: p.name, brand: p.brand, qty: p.stock, price: p.price, memo, byId: me.id, byName: me.name })));
+    recordChangeLater(menu, { action: '삭제', target: `${targets.length}개 품목`, detail: `${targets.slice(0, 5).map(p => p.name).join(', ')}${targets.length > 5 ? ` 외 ${targets.length - 5}개` : ''} · 창고장비현황 휴지통으로 이동` });
+    return json({ ok: true, removed: targets.map(p => p.key) });
+  }
+
   if (b.action === 'delete') {
     const [allP, catT] = await Promise.all([getProducts(), getCategoryTrades()]); // 동시에 조회
     const p = allP.find(x => x.key === clip(b.key, 40));

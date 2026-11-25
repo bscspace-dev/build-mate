@@ -8,6 +8,8 @@ type Prod = { key: string; trade: string; category: string; name: string };
 
 const PICK_KEY = "bm_inventory_pick";
 const PAGE = 20; // 한 쪽에 보여 줄 품목 수
+const ORDER_KEY = "bm_inventory_order"; // 나열 순서 선택 (이 브라우저에 기억)
+const FRESH_MS = 14 * 24 * 60 * 60 * 1000; // 신규로 보는 기간 (14일): 이 안에 추가한 품목은 맨 위에 모아 보여 준다
 const BASE = "border border-black/10 px-2.5 dark:border-white/10";
 // 행 간격(칸 위아래 여백): 좁게 / 보통 / 넓게
 const PADS = { tight: "py-0.5", normal: "py-1.5", wide: "py-3.5" } as const;
@@ -23,6 +25,26 @@ const when = (iso: string) => new Date(iso).toLocaleString("sv-SE", { timeZone: 
 type Setup = { trades: string[]; categories: Record<string, string[]>; excluded: { trades: string[]; categories: string[] } };
 export default function InventoryAdmin({ trades, categories, products, log, admin, setup }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: InventoryEntry[]; admin: boolean; setup: Setup | null }) {
   const router = useRouter();
+  const [checked, setChecked] = useState<string[]>([]); // 삭제하려고 체크한 품목
+  // 열 제목을 눌러 정렬: 한 번 = 오름차순, 두 번 = 내림차순, 세 번 = 해제. 정렬 중에는 신규·카테고리 묶음을 풀고 한 줄로 늘어놓는다.
+  type SortKey = "trade" | "category" | "name" | "by" | "added";
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
+  // 나열 순서 옵션: 기본(신규 위·카테고리별) / 이름 / 공정 / 카테고리 / 추가한 시각 — 열 제목을 눌러도 같은 값이 바뀐다
+  const ORDERS: { v: string; label: string; sort: { key: SortKey; dir: 1 | -1 } | null }[] = [
+    { v: "default", label: "기본 (신규 위 · 카테고리별)", sort: null },
+    { v: "added:-1", label: "최근 추가한 순", sort: { key: "added", dir: -1 } },
+    { v: "added:1", label: "오래전 추가한 순", sort: { key: "added", dir: 1 } },
+    { v: "name:1", label: "품목 이름 가나다순", sort: { key: "name", dir: 1 } },
+    { v: "name:-1", label: "품목 이름 가나다 역순", sort: { key: "name", dir: -1 } },
+    { v: "category:1", label: "카테고리 가나다순", sort: { key: "category", dir: 1 } },
+    { v: "trade:1", label: "공정 가나다순", sort: { key: "trade", dir: 1 } },
+    { v: "by:1", label: "추가한 사람순", sort: { key: "by", dir: 1 } },
+  ];
+  const orderValue = sort ? `${sort.key}:${sort.dir}` : "default";
+  const pickOrder = (v: string) => setSort(ORDERS.find(o => o.v === v)?.sort ?? null);
+  useEffect(() => { try { const v = localStorage.getItem(ORDER_KEY); const o = ORDERS.find(x => x.v === v); if (o) setSort(o.sort); } catch { /* 저장이 막힌 환경 */ } }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { try { localStorage.setItem(ORDER_KEY, orderValue); } catch { /* 저장이 막힌 환경 */ } }, [orderValue]);
+  const clickSort = (key: SortKey) => setSort(s0 => (!s0 || s0.key !== key ? { key, dir: 1 } : s0.dir === 1 ? { key, dir: -1 } : null));
   const [items, setItems] = useState(products); // 화면에 보이는 목록 (추가·수정·삭제하면 서버 응답 즉시 반영, 이후 서버 값으로 다시 맞춘다)
   useEffect(() => setItems(products), [products]);
   const [density, setDensity] = useState<Density>("normal");
@@ -51,6 +73,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const [err, setErr] = useState("");
   // 조사 제외 설정(모든 권한이 있는 사람): 장비조사에서 뺄 공정·카테고리를 고른다. 누르면 바로 저장되고, 제외한 것은 모두에게 보이지 않는다.
   const [setupOpen, setSetupOpen] = useState(false);
+  const [exListOpen, setExListOpen] = useState(false); // 제외된 항목 목록 펼침 (처음에는 접혀 있다)
   const [ex, setEx] = useState(setup?.excluded ?? { trades: [], categories: [] });
   async function toggleEx(kind: "trade" | "category", name: string) {
     const next = kind === "trade"
@@ -85,6 +108,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     if (!name.trim()) return setErr("품목 이름을 적어 주세요.");
     const j = await post({ action: "add", trade: sel, category: catSel, name });
     if (j) {
+      if (typeof j.key === "string") setAddedNow(x => ({ ...x, [j.key as string]: Date.now() }));
       if (typeof j.key === "string") setItems(x => [...x, { key: j.key as string, trade: sel, category: catSel, name: name.trim().replace(/\s+/g, " ") }]); // 새로고침을 기다리지 않고 바로 보여 준다
       setName("");
       router.refresh(); // 뒤에서 서버 값으로 맞춘다
@@ -103,6 +127,18 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
       router.refresh();
     }
   }
+  async function delChecked() {
+    const keys = checked.filter(k => items.some(i => i.key === k));
+    if (keys.length === 0) return;
+    if (!window.confirm(`체크한 ${keys.length}개를 삭제할까요?\n창고장비현황의 휴지통으로 이동해요. (거기서 복원할 수 있어요)`)) return;
+    const j = await post({ action: "deleteMany", keys });
+    if (j) {
+      const gone = new Set(((Array.isArray(j.removed) ? j.removed : keys) as string[]));
+      setItems(x => x.filter(i => !gone.has(i.key)));
+      setChecked([]);
+      router.refresh();
+    }
+  }
   async function del(p: Prod) {
     if (!window.confirm(`“${p.name}”을(를) 삭제할까요?\n창고장비현황의 휴지통으로 이동해요. (거기서 복원할 수 있어요)`)) return;
     if (await post({ action: "delete", key: p.key })) {
@@ -116,15 +152,27 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const cats = sel ? categories[sel] ?? [] : [];
   // 공정 → 카테고리 순서로 묶어서 보여 준다 (카테고리 순서는 창고장비현황을 따른다)
   const catRank = (p: Prod) => (categories[p.trade] ?? []).indexOf(p.category);
+  // 신규로 추가된 품목은 공정·카테고리와 상관없이 항상 맨 앞(1쪽 맨 위)에, 최근에 추가한 것부터 보여 준다
+  const [addedNow, setAddedNow] = useState<Record<string, number>>({});
+  const freshAt = (p: Prod): number => {
+    const e = addedBy.get(p.key);
+    const t = addedNow[p.key] ?? (e ? new Date(e.createdAt).getTime() : 0);
+    return t && Date.now() - t < FRESH_MS ? t : 0;
+  };
+  const addedAtMs = (p: Prod): number => addedNow[p.key] ?? (addedBy.get(p.key) ? new Date(addedBy.get(p.key)!.createdAt).getTime() : 0);
+  const cmpAdded = (x: Prod, y: Prod, dir: 1 | -1): number => { const a = addedAtMs(x), b = addedAtMs(y); return !a || !b ? (a ? -1 : b ? 1 : 0) : dir * (a - b); }; // 추가한 기록이 없는 품목은 항상 맨 뒤
+  const sortVal = (p: Prod, key: SortKey): string => (key === "trade" ? p.trade : key === "category" ? p.category : key === "name" ? p.name : key === "by" ? addedBy.get(p.key)?.byName ?? "기존 품목" : "");
   const shown = items
     .filter(p => (!sel || p.trade === sel) && (!catSel || p.category === catSel))
-    .map((p, i) => ({ p, i }))
-    .sort((x, y) => trades.indexOf(x.p.trade) - trades.indexOf(y.p.trade) || catRank(x.p) - catRank(y.p) || x.i - y.i)
+    .map((p, i) => ({ p, i, f: freshAt(p) }))
+    .sort((x, y) => sort ? (sort.key === "added" ? cmpAdded(x.p, y.p, sort.dir) : sort.dir * sortVal(x.p, sort.key).localeCompare(sortVal(y.p, sort.key), "ko", { numeric: true })) || x.i - y.i : (x.f || y.f ? (!x.f ? 1 : !y.f ? -1 : y.f - x.f) : trades.indexOf(x.p.trade) - trades.indexOf(y.p.trade) || catRank(x.p) - catRank(y.p) || x.i - y.i))
     .map(x => x.p);
-  const countIn = (t: string, c: string) => shown.filter(x => x.trade === t && x.category === c).length;
+  const groupOf = (p: Prod) => (freshAt(p) ? "신규" : `${p.trade}›${p.category}`);
+  const freshCount = shown.filter(p => freshAt(p) > 0).length;
+  const countIn = (t: string, c: string) => shown.filter(x => !freshAt(x) && x.trade === t && x.category === c).length;
   // 목록이 길면 쪽으로 나눈다 (공정·카테고리를 바꾸면 1쪽으로)
   const [page, setPage] = useState(1);
-  useEffect(() => setPage(1), [sel, catSel]);
+  useEffect(() => setPage(1), [sel, catSel, sort]);
   const pages = Math.max(1, Math.ceil(shown.length / PAGE));
   const cur = Math.min(page, pages);
   const start = (cur - 1) * PAGE;
@@ -138,14 +186,22 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
         <span className="text-sm text-zinc-500">{admin ? "모든 공정 · 상비품" : trades.length ? `내 공정: ${trades.join(" · ")}` : ""}</span>
       </div>
       {admin && setup && ex.trades.length + ex.categories.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-xl bg-zinc-100 px-3 py-2 text-xs dark:bg-zinc-800">
-          <span className="font-bold text-zinc-600 dark:text-zinc-300">장비조사에서 제외된 항목</span>
-          {ex.trades.map(t => (
-            <button key={"t" + t} type="button" disabled={busy} onClick={() => void toggleEx("trade", t)} title="다시 장비조사에 넣기" className="rounded-full border border-red-300 bg-white px-2.5 py-1 font-semibold text-red-600 disabled:opacity-50 dark:border-red-500/40 dark:bg-zinc-900 dark:text-red-300">{t} 공정 · ＋ 다시 추가</button>
-          ))}
-          {ex.categories.map(c => (
-            <button key={"c" + c} type="button" disabled={busy} onClick={() => void toggleEx("category", c)} title="다시 장비조사에 넣기" className="rounded-full border border-red-300 bg-white px-2.5 py-1 font-semibold text-red-600 disabled:opacity-50 dark:border-red-500/40 dark:bg-zinc-900 dark:text-red-300">{c} 카테고리 · ＋ 다시 추가</button>
-          ))}
+        <div className="mt-2 rounded-xl bg-zinc-100 text-xs dark:bg-zinc-800">
+          <button type="button" onClick={() => setExListOpen(o => !o)} aria-expanded={exListOpen} className="flex w-full items-center gap-2 px-3 py-2 text-left font-bold text-zinc-600 dark:text-zinc-300">
+            <span aria-hidden className="w-3">{exListOpen ? "▼" : "▶"}</span>
+            장비조사에서 제외된 항목 <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-700 dark:bg-red-500/20 dark:text-red-300">{ex.trades.length + ex.categories.length}</span>
+            <span className="font-normal text-zinc-500">{exListOpen ? "눌러서 접기" : "눌러서 펼치고 다시 추가하기"}</span>
+          </button>
+          {exListOpen && (
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-black/5 px-3 py-2 dark:border-white/10">
+              {ex.trades.map(t => (
+                <button key={"t" + t} type="button" disabled={busy} onClick={() => void toggleEx("trade", t)} title="다시 장비조사에 넣기" className="rounded-full border border-red-300 bg-white px-2.5 py-1 font-semibold text-red-600 disabled:opacity-50 dark:border-red-500/40 dark:bg-zinc-900 dark:text-red-300">{t} 공정 · ＋ 다시 추가</button>
+              ))}
+              {ex.categories.map(c => (
+                <button key={"c" + c} type="button" disabled={busy} onClick={() => void toggleEx("category", c)} title="다시 장비조사에 넣기" className="rounded-full border border-red-300 bg-white px-2.5 py-1 font-semibold text-red-600 disabled:opacity-50 dark:border-red-500/40 dark:bg-zinc-900 dark:text-red-300">{c} 카테고리 · ＋ 다시 추가</button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {admin && setup && (
@@ -171,12 +227,27 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
       )}
       <p className="mt-1 text-xs text-zinc-500">필요 없는 상비품은 <b>삭제</b>(창고장비현황 휴지통으로 이동), 필요한 상비품은 맨 위 줄에서 공정·카테고리를 고르고 <b>추가</b>하세요. 추가한 품목은 창고장비현황의 같은 공정·카테고리에 바로 들어가요.</p>
 
-      <div className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500">
+      {checked.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm dark:bg-red-500/10">
+          <b className="text-red-700 dark:text-red-300">{checked.length}개 선택</b>
+          <button type="button" disabled={busy} onClick={() => void delChecked()} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">선택한 품목 삭제</button>
+          <button type="button" onClick={() => setChecked([])} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">선택 해제</button>
+        </div>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-zinc-500">
+        <label className="flex items-center gap-1.5">
+          나열 순서
+          <select value={orderValue} onChange={e => pickOrder(e.target.value)} className="rounded-lg border border-black/15 bg-transparent px-2 py-1 text-xs font-bold text-zinc-800 dark:border-white/15 dark:text-zinc-100" aria-label="나열 순서">
+            {ORDERS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+          </select>
+        </label>
+        <div className="flex items-center gap-1.5">
         행 간격
         <div className="inline-flex overflow-hidden rounded-lg border border-black/10 dark:border-white/10" role="radiogroup" aria-label="행 간격">
           {([["tight", "좁게"], ["normal", "보통"], ["wide", "넓게"]] as const).map(([d, label]) => (
             <button key={d} type="button" role="radio" aria-checked={density === d} onClick={() => pickDensity(d)} className={`px-2.5 py-1 font-bold ${density === d ? "bg-blue-600 text-white" : "bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label}</button>
           ))}
+        </div>
         </div>
       </div>
 
@@ -190,14 +261,16 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
             <table className="w-full min-w-[44rem] border-collapse text-left text-sm">
               <thead>
                 <tr className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-800/60">
+                  <th className={`${cell} w-9 text-center`}><input type="checkbox" aria-label="이 쪽 전체 선택" checked={rows.length > 0 && rows.every(r => checked.includes(r.key))} onChange={e => setChecked(c => (e.target.checked ? [...new Set([...c, ...rows.map(r => r.key)])] : c.filter(k => !rows.some(r => r.key === k))))} className="h-4 w-4 accent-red-600" /></th>
                   <th className={`${cell} w-12 text-center`}>#</th>
-                  <th className={`${cell} w-32`}>공정</th>
-                  <th className={`${cell} w-40`}>카테고리</th>
-                  <th className={cell}>품목</th>
-                  <th className={`${cell} w-24`}>추가한 사람</th>
+                  <th className={`${cell} w-32`} aria-sort={sort?.key === "trade" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("trade")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "trade" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">공정<span aria-hidden className="text-[10px]">{sort?.key === "trade" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
+                  <th className={`${cell} w-40`} aria-sort={sort?.key === "category" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("category")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "category" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">카테고리<span aria-hidden className="text-[10px]">{sort?.key === "category" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
+                  <th className={`${cell}`} aria-sort={sort?.key === "name" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("name")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "name" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">품목<span aria-hidden className="text-[10px]">{sort?.key === "name" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
+                  <th className={`${cell} w-24`} aria-sort={sort?.key === "by" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("by")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "by" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">추가한 사람<span aria-hidden className="text-[10px]">{sort?.key === "by" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
                   <th className={`${cell} w-32`} />
                 </tr>
                 <tr className="bg-blue-50/60 dark:bg-blue-500/10">
+                  <td className={cell} />
                   <td className={`${cell} text-center text-xs font-bold text-blue-700 dark:text-blue-300`}>＋</td>
                   <td className={cell}>
                     <select value={sel} onChange={e => { setSel(e.target.value); setCatSel(firstCat(e.target.value)); }} className={inp} aria-label="공정">
@@ -217,20 +290,21 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
               </thead>
               <tbody>
                 {shown.length === 0 && (
-                  <tr><td colSpan={6} className={`${cell} py-8 text-center text-zinc-500`}>내 공정에 상비품이 없어요. 위에서 추가해 보세요.</td></tr>
+                  <tr><td colSpan={7} className={`${cell} py-8 text-center text-zinc-500`}>내 공정에 상비품이 없어요. 위에서 추가해 보세요.</td></tr>
                 )}
                 {rows.map((p, k) => {
                   const i = start + k;
                   const a = addedBy.get(p.key);
-                  const head = k === 0 || shown[i - 1].trade !== p.trade || shown[i - 1].category !== p.category; // 카테고리가 바뀔 때 제목 줄
+                  const head = !sort && (k === 0 || groupOf(shown[i - 1]) !== groupOf(p)); // 묶음(신규 / 카테고리)이 바뀔 때 제목 줄
                   return (
                     <Fragment key={p.key}>
                     {head && (
                       <tr className="bg-blue-50/60 dark:bg-blue-500/10">
-                        <td colSpan={6} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300">{p.trade} › {p.category}<span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개</span></td>
+                        <td colSpan={7} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300">{freshAt(p) ? <>신규 추가 <span className="font-normal text-zinc-500">{freshCount}개 · 최근 14일 이내에 추가한 품목이에요</span></> : <>{p.trade} › {p.category} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개</span></>}</td>
                       </tr>
                     )}
-                    <tr className="hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40">
+                    <tr className={checked.includes(p.key) ? "bg-red-50/60 dark:bg-red-500/5" : "hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40"}>
+                      <td className={`${cell} text-center`}><input type="checkbox" aria-label={`${p.name} 삭제할 품목으로 선택`} checked={checked.includes(p.key)} onChange={e => setChecked(c => (e.target.checked ? [...c, p.key] : c.filter(k => k !== p.key)))} className="h-4 w-4 accent-red-600" /></td>
                       <td className={`${cell} text-center text-xs text-zinc-400`}>{i + 1}</td>
                       <td className={`${cell} whitespace-nowrap`}>{p.trade}</td>
                       <td className={`${cell} whitespace-nowrap`}>{p.category}</td>

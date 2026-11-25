@@ -13,5 +13,5 @@ create index if not exists audit_log_at_idx on public.audit_log (at desc);
 alter table public.audit_log enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
 
 alter table public.members drop constraint if exists members_menus_check;
-alter table public.members add constraint members_menus_check check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses','equipment','inventory','pricing','history','members','staff','payroll']);
+alter table public.members add constraint members_menus_check check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','expenses','inventory','pricing','history','members','staff','payroll']);
 notify pgrst, 'reload schema';

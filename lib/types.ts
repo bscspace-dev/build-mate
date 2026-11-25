@@ -252,12 +252,10 @@ export type SurveyPayload = {
 
 
 /** 장비조사 기록: 조사자가 상비품을 추가하거나 삭제(휴지통으로)한 내역. 누가 언제 했는지 남긴다. qty = 추가할 때 정한 재고 */
-export type InventoryEntry = { id: string; action: 'add' | 'delete' | 'buy' | 'price'; category: string; productKey: string; name: string; brand: string; qty: number; price: number; oldPrice: number; shipping: number; vendor: string; memo: string; byId: string; byName: string; createdAt: string };
-export type InventoryEntryInput = Omit<InventoryEntry, 'id' | 'createdAt' | 'oldPrice' | 'shipping' | 'vendor'> & { oldPrice?: number; shipping?: number; vendor?: string };
+export type InventoryEntry = { id: string; action: 'add' | 'delete' | 'buy'; category: string; productKey: string; name: string; brand: string; qty: number; price: number; shipping: number; vendor: string; memo: string; byId: string; byName: string; createdAt: string };
+export type InventoryEntryInput = Omit<InventoryEntry, 'id' | 'createdAt' | 'shipping' | 'vendor'> & { shipping?: number; vendor?: string };
 /** 가격조사: 품목별 구매처 이름과 구매 링크 */
 export type PurchaseInfo = { url: string; vendor: string };
-/** 팀별로 맡은(고정) 카테고리: 팀 key → 창고장비현황 카테고리 이름들 */
-export type TeamCategories = Record<string, string[]>;
 
 /** 변경이력: 어느 메뉴에서 누가 언제 무엇을 추가·수정·삭제했는지 */
 export type AuditEntry = { id: string; at: string; menu: string; action: string; target: string; detail: string; byId: string; byName: string };

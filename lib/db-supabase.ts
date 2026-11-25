@@ -2,7 +2,7 @@ import 'server-only';
 import { asIcon, asKind, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, TeamCategories, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo } from './types';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo } from './types';
 import { applyTeamLocks, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type Team } from './roles';
 import { removeImage } from './images';
 import { supabase } from './supabase';
@@ -984,39 +984,18 @@ export async function removeLoadPackage(id: string): Promise<VehicleResult> {
 
 
 // ───────── 장비조사 (inventory_entries) + 팀별 고정 카테고리 (app_settings: team_categories) ─────────
-type InventoryRow = { id: number; action: string | null; price: number | null; old_price: number | null; shipping: number | null; vendor: string | null; category: string; product_key: string; name: string; brand: string | null; qty: number; memo: string | null; by_id: string | null; by_name: string; created_at: string };
-const toInventory = (r: InventoryRow): InventoryEntry => ({ id: String(r.id), action: r.action === 'delete' ? 'delete' : r.action === 'buy' ? 'buy' : r.action === 'price' ? 'price' : 'add', price: r.price ?? 0, oldPrice: r.old_price ?? 0, shipping: r.shipping ?? 0, vendor: r.vendor ?? '', category: r.category, productKey: r.product_key, name: r.name, brand: r.brand ?? '', qty: r.qty, memo: r.memo ?? '', byId: r.by_id ?? '', byName: r.by_name, createdAt: new Date(r.created_at).toISOString() });
+type InventoryRow = { id: number; action: string | null; price: number | null; shipping: number | null; vendor: string | null; category: string; product_key: string; name: string; brand: string | null; qty: number; memo: string | null; by_id: string | null; by_name: string; created_at: string };
+const toInventory = (r: InventoryRow): InventoryEntry => ({ id: String(r.id), action: r.action === 'delete' ? 'delete' : r.action === 'buy' ? 'buy' : 'add', price: r.price ?? 0, shipping: r.shipping ?? 0, vendor: r.vendor ?? '', category: r.category, productKey: r.product_key, name: r.name, brand: r.brand ?? '', qty: r.qty, memo: r.memo ?? '', byId: r.by_id ?? '', byName: r.by_name, createdAt: new Date(r.created_at).toISOString() });
 export async function getInventory(): Promise<InventoryEntry[]> {
   return (await fetchAll<InventoryRow>((a, b) => supabase().from('inventory_entries').select('*').order('id', { ascending: false }).range(a, b), '장비조사 조회')).map(toInventory);
 }
 export async function addInventory(i: InventoryEntryInput): Promise<InventoryEntry> {
-  return toInventory(must(await supabase().from('inventory_entries').insert({ action: i.action, price: i.price, old_price: i.oldPrice ?? 0, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', category: i.category, product_key: i.productKey, name: i.name, brand: i.brand, qty: i.qty, memo: i.memo, by_id: i.byId || null, by_name: i.byName }).select('*').single(), '장비조사 등록') as InventoryRow);
+  return toInventory(must(await supabase().from('inventory_entries').insert({ action: i.action, price: i.price, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', category: i.category, product_key: i.productKey, name: i.name, brand: i.brand, qty: i.qty, memo: i.memo, by_id: i.byId || null, by_name: i.byName }).select('*').single(), '장비조사 등록') as InventoryRow);
 }
 export async function removeInventory(id: string): Promise<boolean> {
   const rows = must(await supabase().from('inventory_entries').delete().eq('id', numId(id)).select('id'), '장비조사 삭제') as { id: number }[];
   return rows.length > 0;
 }
-export async function getTeamCategories(): Promise<TeamCategories> {
-  const row = must(await supabase().from('app_settings').select('value').eq('key', 'team_categories').maybeSingle(), '팀 카테고리 조회') as { value: unknown } | null;
-  const v = row?.value;
-  return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, a]) => [k, Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []])) : {};
-}
-export async function saveTeamCategories(map: TeamCategories): Promise<void> {
-  must(await supabase().from('app_settings').upsert({ key: 'team_categories', value: map }, { onConflict: 'key' }), '팀 카테고리 저장');
-}
-
-// ───────── 가격조사 — 품목별 구매 예정 수량 (app_settings: pricing_qty) ─────────
-export async function getPricingQty(): Promise<Record<string, number>> {
-  const row = must(await supabase().from('app_settings').select('value').eq('key', 'pricing_qty').maybeSingle(), '구매 예정 수량 조회') as { value: unknown } | null;
-  const v = row?.value;
-  return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, n]) => typeof n === 'number' && n > 0)) as Record<string, number> : {};
-}
-export async function setPricingQty(key: string, qty: number): Promise<void> {
-  const cur = await getPricingQty();
-  if (qty > 0) cur[key] = qty; else delete cur[key];
-  must(await supabase().from('app_settings').upsert({ key: 'pricing_qty', value: cur }, { onConflict: 'key' }), '구매 예정 수량 저장');
-}
-
 // ───────── 가격조사 — 품목별 구매 링크 (app_settings: purchase_links) ─────────
 const toInfo = (u: unknown): PurchaseInfo | null => (typeof u === 'string' ? (u ? { url: u, vendor: '' } : null) : u && typeof u === 'object' ? { url: typeof (u as PurchaseInfo).url === 'string' ? (u as PurchaseInfo).url : '', vendor: typeof (u as PurchaseInfo).vendor === 'string' ? (u as PurchaseInfo).vendor : '' } : null);
 export async function getPurchaseLinks(): Promise<Record<string, PurchaseInfo>> {

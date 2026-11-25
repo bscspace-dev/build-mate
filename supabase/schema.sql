@@ -94,7 +94,7 @@ create table if not exists public.members (
   resign_date          date,                         -- 퇴사일 (있으면 퇴사자: 로그인 불가)
   field_roles          text[] not null default '{}', -- 현장 역할 여러 개 (pm / worker / worker_sub)
   office_status        text   not null default '' check (office_status in ('','probation','regular')),   -- 사무실 구분: 수습 / 정규
-  menus                text[] not null default '{}' check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses','equipment','inventory','pricing','history','members','staff','payroll']),
+  menus                text[] not null default '{}' check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','expenses','inventory','pricing','history','members','staff','payroll']),
   actions              jsonb  not null default '{}',
   login_id             text,
   pass_hash            text,                  -- 비밀번호 원문은 저장하지 않는다 (scrypt 해시)
@@ -247,23 +247,6 @@ create index if not exists leave_requests_member on public.leave_requests (membe
 create index if not exists leave_requests_status on public.leave_requests (status);
 alter table public.leave_requests enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
 
--- ───────── 장비정보 ─────────
-create table if not exists public.equipment (
-  id         bigint generated always as identity primary key,
-  name       text not null,
-  brand      text not null default '',
-  model      text not null default '',
-  category   text not null default '',
-  spec       text not null default '',
-  query      text not null default '',
-  offers     jsonb not null default '[]'::jsonb,
-  naver      jsonb,
-  history    jsonb not null default '[]'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-alter table public.equipment enable row level security;
-
 -- ───────── 적재 패키지 ─────────
 create table if not exists public.load_packages (
   id         bigint generated always as identity primary key,
@@ -272,32 +255,6 @@ create table if not exists public.load_packages (
   created_at timestamptz not null default now()
 );
 alter table public.load_packages enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
-
--- ───────── 구매관리 ─────────
-create table if not exists public.purchases (
-  id         bigint generated always as identity primary key,
-  name       text not null,                          -- 품목명
-  brand      text not null default '',               -- 브랜드
-  url        text not null default '',               -- 구매 링크
-  price      integer not null default 0 check (price >= 0),   -- 개당 가격(원)
-  qty        integer not null default 1 check (qty >= 1),     -- 수량
-  shipping     text not null default 'included' check (shipping in ('included','separate')),   -- 배송비 포함 여부
-  shipping_fee integer not null default 0 check (shipping_fee >= 0),                          -- 배송비 별도일 때 금액(원)
-  memo       text not null default '',
-  tags       text[] not null default '{}',           -- 묶어 보기용 태그
-  status     text not null default 'requested' check (status in ('requested','rejected','done')),   -- 요청 / 반려 / 완료
-  photos     text[] not null default '{}',           -- 요청 사진 주소들
-  decision_note text not null default '',            -- 반려 사유
-  category   text not null default 'supplies',       -- 분류 (경비관리 분류와 같은 값)
-  site       text not null default '',               -- 이 물품이 필요한 현장 이름
-  requested_at timestamptz,                          -- 요청한 시각
-  handled_by text not null default '',               -- 확인·구매한 담당자 이름
-  created_by text not null default '',               -- 등록한 사람 이름
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-create index if not exists purchases_status on public.purchases (status);
-alter table public.purchases enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
 
 -- ───────── 경비관리 ─────────
 create table if not exists public.expenses (

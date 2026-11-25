@@ -15,13 +15,12 @@ create table if not exists public.inventory_entries (
 create index if not exists inventory_entries_category_idx on public.inventory_entries (category);
 alter table public.inventory_entries add column if not exists action text not null default 'add' check (action in ('add','delete'));
 alter table public.inventory_entries add column if not exists price integer not null default 0;   -- 가격조사: 구매 때 금액(단가)
-alter table public.inventory_entries add column if not exists old_price integer not null default 0;   -- 가격조사: 가격이 바뀌기 전 금액
 alter table public.inventory_entries add column if not exists shipping integer not null default 0;   -- 가격조사: 구매 때 배송비
 alter table public.inventory_entries add column if not exists vendor text not null default '';   -- 가격조사: 구매처
 alter table public.inventory_entries drop constraint if exists inventory_entries_action_check;
-alter table public.inventory_entries add constraint inventory_entries_action_check check (action in ('add','delete','buy','price'));   -- buy = 가격조사에서 구매완료, price = 가격조사에서 금액 변경
+alter table public.inventory_entries add constraint inventory_entries_action_check check (action in ('add','delete','buy'));   -- buy = 가격조사에서 구매완료
 alter table public.inventory_entries enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근
 
 alter table public.members drop constraint if exists members_menus_check;
-alter table public.members add constraint members_menus_check check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses','equipment','inventory','pricing','history','members','staff','payroll']);
+alter table public.members add constraint members_menus_check check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','expenses','inventory','pricing','history','members','staff','payroll']);
 notify pgrst, 'reload schema';
