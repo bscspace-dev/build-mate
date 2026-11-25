@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { getActor, vehiclesFull } from '@/lib/auth';
 import { getProducts, removeLoadPackage, saveLoadPackage } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -7,7 +8,7 @@ import { json, limited, sameOrigin } from '@/lib/guard';
 type Body = { action?: unknown; id?: unknown; name?: unknown; items?: unknown };
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('vehicles');
   if (!actor) return json({ error: '차량정보 메뉴 권한이 필요해요.' }, 401);
@@ -44,3 +45,5 @@ export async function POST(req: Request) {
   const r = await saveLoadPackage({ name, items }, id || null);
   return 'error' in r ? json(r, 400) : json(r);
 }
+
+export const POST = audited('vehicles', handlePOST);

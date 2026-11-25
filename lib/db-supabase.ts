@@ -2,7 +2,7 @@ import 'server-only';
 import { asIcon, asKind, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, Equipment, EquipmentInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput } from './types';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, TeamCategories, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo } from './types';
 import { applyTeamLocks, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type Team } from './roles';
 import { removeImage } from './images';
 import { supabase } from './supabase';
@@ -983,19 +983,88 @@ export async function removeLoadPackage(id: string): Promise<VehicleResult> {
 }
 
 
-// ───────── 장비정보 (equipment) — 연장 정보와 최저가 ─────────
-type EquipmentRow = { id: number; name: string; brand: string | null; model: string | null; category: string | null; spec: string | null; query: string | null; offers: Equipment['offers'] | null; naver: Equipment['naver'] | null; history: Equipment['history'] | null; created_at: string; updated_at: string };
-const toEquipment = (r: EquipmentRow): Equipment => ({ id: String(r.id), name: r.name, brand: r.brand ?? '', model: r.model ?? '', category: r.category ?? '', spec: r.spec ?? '', query: r.query ?? '', offers: Array.isArray(r.offers) ? r.offers : [], naver: r.naver ?? null, history: Array.isArray(r.history) ? r.history : [], createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString() });
-const equipmentCols = (i: EquipmentInput) => ({ name: i.name, brand: i.brand, model: i.model, category: i.category, spec: i.spec, query: i.query, offers: i.offers, naver: i.naver, history: i.history });
-export async function getEquipment(): Promise<Equipment[]> {
-  return (await fetchAll<EquipmentRow>((a, b) => supabase().from('equipment').select('*').order('id', { ascending: false }).range(a, b), '장비정보 조회')).map(toEquipment);
+// ───────── 장비조사 (inventory_entries) + 팀별 고정 카테고리 (app_settings: team_categories) ─────────
+type InventoryRow = { id: number; action: string | null; price: number | null; old_price: number | null; shipping: number | null; vendor: string | null; category: string; product_key: string; name: string; brand: string | null; qty: number; memo: string | null; by_id: string | null; by_name: string; created_at: string };
+const toInventory = (r: InventoryRow): InventoryEntry => ({ id: String(r.id), action: r.action === 'delete' ? 'delete' : r.action === 'buy' ? 'buy' : r.action === 'price' ? 'price' : 'add', price: r.price ?? 0, oldPrice: r.old_price ?? 0, shipping: r.shipping ?? 0, vendor: r.vendor ?? '', category: r.category, productKey: r.product_key, name: r.name, brand: r.brand ?? '', qty: r.qty, memo: r.memo ?? '', byId: r.by_id ?? '', byName: r.by_name, createdAt: new Date(r.created_at).toISOString() });
+export async function getInventory(): Promise<InventoryEntry[]> {
+  return (await fetchAll<InventoryRow>((a, b) => supabase().from('inventory_entries').select('*').order('id', { ascending: false }).range(a, b), '장비조사 조회')).map(toInventory);
 }
-export async function saveEquipment(id: string | null, i: EquipmentInput): Promise<Equipment | null> {
-  if (!id) return toEquipment(must(await supabase().from('equipment').insert(equipmentCols(i)).select('*').single(), '장비 등록') as EquipmentRow);
-  const rows = must(await supabase().from('equipment').update({ ...equipmentCols(i), updated_at: new Date().toISOString() }).eq('id', numId(id)).select('*'), '장비 수정') as EquipmentRow[];
-  return rows[0] ? toEquipment(rows[0]) : null;
+export async function addInventory(i: InventoryEntryInput): Promise<InventoryEntry> {
+  return toInventory(must(await supabase().from('inventory_entries').insert({ action: i.action, price: i.price, old_price: i.oldPrice ?? 0, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', category: i.category, product_key: i.productKey, name: i.name, brand: i.brand, qty: i.qty, memo: i.memo, by_id: i.byId || null, by_name: i.byName }).select('*').single(), '장비조사 등록') as InventoryRow);
 }
-export async function removeEquipment(id: string): Promise<boolean> {
-  const rows = must(await supabase().from('equipment').delete().eq('id', numId(id)).select('id'), '장비 삭제') as { id: number }[];
+export async function removeInventory(id: string): Promise<boolean> {
+  const rows = must(await supabase().from('inventory_entries').delete().eq('id', numId(id)).select('id'), '장비조사 삭제') as { id: number }[];
   return rows.length > 0;
+}
+export async function getTeamCategories(): Promise<TeamCategories> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'team_categories').maybeSingle(), '팀 카테고리 조회') as { value: unknown } | null;
+  const v = row?.value;
+  return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, a]) => [k, Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []])) : {};
+}
+export async function saveTeamCategories(map: TeamCategories): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'team_categories', value: map }, { onConflict: 'key' }), '팀 카테고리 저장');
+}
+
+// ───────── 가격조사 — 품목별 구매 예정 수량 (app_settings: pricing_qty) ─────────
+export async function getPricingQty(): Promise<Record<string, number>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'pricing_qty').maybeSingle(), '구매 예정 수량 조회') as { value: unknown } | null;
+  const v = row?.value;
+  return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, n]) => typeof n === 'number' && n > 0)) as Record<string, number> : {};
+}
+export async function setPricingQty(key: string, qty: number): Promise<void> {
+  const cur = await getPricingQty();
+  if (qty > 0) cur[key] = qty; else delete cur[key];
+  must(await supabase().from('app_settings').upsert({ key: 'pricing_qty', value: cur }, { onConflict: 'key' }), '구매 예정 수량 저장');
+}
+
+// ───────── 가격조사 — 품목별 구매 링크 (app_settings: purchase_links) ─────────
+const toInfo = (u: unknown): PurchaseInfo | null => (typeof u === 'string' ? (u ? { url: u, vendor: '' } : null) : u && typeof u === 'object' ? { url: typeof (u as PurchaseInfo).url === 'string' ? (u as PurchaseInfo).url : '', vendor: typeof (u as PurchaseInfo).vendor === 'string' ? (u as PurchaseInfo).vendor : '' } : null);
+export async function getPurchaseLinks(): Promise<Record<string, PurchaseInfo>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'purchase_links').maybeSingle(), '구매 링크 조회') as { value: unknown } | null;
+  const v = row?.value;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, u]) => { const i = toInfo(u); return i && (i.url || i.vendor) ? [[k, i] as [string, PurchaseInfo]] : []; }));
+}
+export async function setPurchaseLink(key: string, info: PurchaseInfo | null): Promise<void> {
+  const cur = await getPurchaseLinks();
+  if (info && (info.url || info.vendor)) cur[key] = info; else delete cur[key];
+  must(await supabase().from('app_settings').upsert({ key: 'purchase_links', value: cur }, { onConflict: 'key' }), '구매 링크 저장');
+}
+
+// ───────── 변경이력 (audit_log) ─────────
+type AuditRow = { id: number; at: string; menu: string; action: string; target: string | null; detail: string | null; by_id: string | null; by_name: string };
+const toAudit = (r: AuditRow): AuditEntry => ({ id: String(r.id), at: new Date(r.at).toISOString(), menu: r.menu, action: r.action, target: r.target ?? '', detail: r.detail ?? '', byId: r.by_id ?? '', byName: r.by_name });
+/** 최근 기록부터 (최대 5000건) */
+export async function getAudit(): Promise<AuditEntry[]> {
+  const { data, error } = await supabase().from('audit_log').select('*').order('id', { ascending: false }).limit(5000);
+  if (error) throw new Error(`Supabase 변경이력 조회 실패: ${error.message}`);
+  return (data as AuditRow[]).map(toAudit);
+}
+export async function addAudit(i: AuditInput): Promise<void> {
+  must(await supabase().from('audit_log').insert({ menu: i.menu, action: i.action, target: i.target, detail: i.detail, by_id: i.byId || null, by_name: i.byName }), '변경이력 기록');
+}
+
+// ───────── 가격조사 — 저장해 둔 금액·수량 (app_settings: pricing_snapshots) ─────────
+export async function getPricingSnapshots(): Promise<PricingSnapshot[]> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'pricing_snapshots').maybeSingle(), '저장한 금액·수량 조회') as { value: unknown } | null;
+  return Array.isArray(row?.value) ? (row!.value as PricingSnapshot[]) : [];
+}
+export async function savePricingSnapshots(list: PricingSnapshot[]): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'pricing_snapshots', value: list }, { onConflict: 'key' }), '저장한 금액·수량 저장');
+}
+
+// ───────── 장비조사 — 제외할 공정·카테고리 (app_settings: inventory_excluded) ─────────
+export async function getInventoryExcluded(): Promise<InventoryExcluded> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'inventory_excluded').maybeSingle(), '장비조사 제외 설정 조회') as { value: { trades?: unknown; categories?: unknown } | null } | null;
+  const strs = (x: unknown) => (Array.isArray(x) ? x.filter((k): k is string => typeof k === 'string') : []);
+  return { trades: strs(row?.value?.trades), categories: strs(row?.value?.categories) };
+}
+export async function saveInventoryExcluded(v: InventoryExcluded): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'inventory_excluded', value: v }, { onConflict: 'key' }), '장비조사 제외 설정 저장');
+}
+export async function removeAudit(ids: string[]): Promise<number> {
+  const nums = ids.map(i => Number(i)).filter(n => Number.isInteger(n));
+  if (nums.length === 0) return 0;
+  const rows = must(await supabase().from('audit_log').delete().in('id', nums).select('id'), '변경이력 삭제') as { id: number }[];
+  return rows.length;
 }

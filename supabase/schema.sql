@@ -94,7 +94,7 @@ create table if not exists public.members (
   resign_date          date,                         -- 퇴사일 (있으면 퇴사자: 로그인 불가)
   field_roles          text[] not null default '{}', -- 현장 역할 여러 개 (pm / worker / worker_sub)
   office_status        text   not null default '' check (office_status in ('','probation','regular')),   -- 사무실 구분: 수습 / 정규
-  menus                text[] not null default '{}' check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses','equipment','members','staff','payroll']),
+  menus                text[] not null default '{}' check (menus <@ array['catalog','survey','requests','vehicles','suppliers','sites','placements','attendance','leave','purchases','expenses','equipment','inventory','pricing','history','members','staff','payroll']),
   actions              jsonb  not null default '{}',
   login_id             text,
   pass_hash            text,                  -- 비밀번호 원문은 저장하지 않는다 (scrypt 해시)

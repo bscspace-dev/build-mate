@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import type { Actor } from '@/lib/member-utils';
 import { addSitePost, getActiveMembers, getPlacementNotes, getPlacements, getSitePost, getSitePosts, getSites, getTeams, removeSitePost } from '@/lib/db';
@@ -56,7 +57,7 @@ export async function GET(req: Request) {
   return json({ ok: true, posts: await getSitePosts(siteId), ...(await powers(actor)) });
 }
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('sites');
   if (!actor) return json({ error: '현장정보 메뉴 권한이 필요해요.' }, 401);
@@ -107,3 +108,5 @@ export async function POST(req: Request) {
     throw e;
   }
 }
+
+export const POST = audited('sites', handlePOST);

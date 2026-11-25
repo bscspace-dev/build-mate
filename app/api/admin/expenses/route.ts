@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { addExpense, getExpenses, getSites, removeExpense, updateExpense } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -39,7 +40,7 @@ function cleanUrl(raw: unknown): string | null {
 }
 const amountOf = (v: unknown) => { const n = Number(clip(v, 12)); return Number.isInteger(n) && n >= 0 && n <= 99_999_999 ? n : NaN; };
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('expenses');
   if (!actor) return json({ error: '경비관리 메뉴 권한이 필요해요.' }, 401);
@@ -202,3 +203,5 @@ export async function POST(req: Request) {
     return failMsg(e);
   }
 }
+
+export const POST = audited('expenses', handlePOST);

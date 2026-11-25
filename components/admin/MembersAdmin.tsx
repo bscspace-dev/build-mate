@@ -67,6 +67,7 @@ function workDays(hire: string, end?: string): number | null {
 const TPL_KEY = "bm-menu-templates";
 type MenuTpl = { id: string; name: string; menus: MenuKey[]; actions: GrantedActions };
 type Mode = "none" | "partial" | "all";
+type SortKey = "name" | "team" | "position" | "loginId" | "phone" | "hire" | "created";
 type Creds = { loginId: string; password: string };
 type ApiResult = { ok: boolean; member?: PublicMember; credentials?: Creds | null; annual?: { total: number | null; used: number }; error?: string };
 type Issued = { name: string; kind: "new" | "reset"; creds: Creds };
@@ -154,6 +155,11 @@ export default function MembersAdmin({
   const [q, setQ] = useState(""); // 이름 검색
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // 메뉴 권한 일괄 수정: 목록에서 여러 회원을 고르고, 메뉴마다 '변경 안 함 / 회수 / 보기만 / 모든 권한'을 정해 한 번에 적용한다
+  type BulkLevel = "keep" | "none" | "view" | "all";
+  const [selIds, setSelIds] = useState<string[]>([]);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkSel, setBulkSel] = useState<Partial<Record<MenuKey, BulkLevel>>>({});
   const [origin, setOrigin] = useState("");
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const [confirmDel, setConfirmDel] = useState<PublicMember | null>(null);
@@ -356,7 +362,34 @@ export default function MembersAdmin({
   const tradeOf = (m: PublicMember) => m.trades[0] ?? ""; // 현장 탭: 같은 공정(구조·도장 등) 팀끼리 묶는다
   const fieldKeyOf = (m: PublicMember) => memberRoles(m).find(isFieldRole) ?? "";
   const fieldRank = (r: string) => FIELD_ROLES.findIndex(x => x.key === r);
-  const listed = group === "field" ? [...shown].sort((a, b) => (tradeOf(a) || "\uffff").localeCompare(tradeOf(b) || "\uffff", "ko") || fieldRank(fieldKeyOf(a)) - fieldRank(fieldKeyOf(b))) : shown;
+  // \uc5f4 \uc81c\ubaa9\uc744 \ub20c\ub7ec \uc815\ub82c: \ud55c \ubc88 = \uc624\ub984\ucc28\uc21c, \ub450 \ubc88 = \ub0b4\ub9bc\ucc28\uc21c, \uc138 \ubc88 = \ud574\uc81c. \uc815\ub82c \uc911\uc5d0\ub294 \uacf5\uc815\ubcc4 \ubb36\uc74c\uc744 \ud480\uace0 \ud55c \uc904\ub85c \ub298\uc5b4\ub193\ub294\ub2e4.
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
+  const clickSort = (key: SortKey) => setSort(s => (!s || s.key !== key ? { key, dir: 1 } : s.dir === 1 ? { key, dir: -1 } : null));
+  const sortVal = (m: PublicMember, key: SortKey): string => {
+    switch (key) {
+      case "name": return m.name;
+      case "team": return teamsLabel(teams, m);
+      case "position": return m.position ?? "";
+      case "loginId": return m.loginId ?? "";
+      case "phone": return (m.phone ?? "").replace(/\D/g, "");
+      case "hire": return m.hireDate ?? "";
+      case "created": return m.createdAt ?? "";
+    }
+  };
+  const listed = sort
+    ? [...shown].sort((a, b) => {
+        const x = sortVal(a, sort.key), y = sortVal(b, sort.key);
+        if (!x !== !y) return !x ? 1 : -1; // \ube48 \uac12\uc740 \ubc29\ud5a5\uacfc \uc0c1\uad00\uc5c6\uc774 \ub9e8 \uc544\ub798
+        return sort.dir * x.localeCompare(y, "ko", { numeric: true }) || a.name.localeCompare(b.name, "ko");
+      })
+    : group === "field" ? [...shown].sort((a, b) => (tradeOf(a) || "\uffff").localeCompare(tradeOf(b) || "\uffff", "ko") || fieldRank(fieldKeyOf(a)) - fieldRank(fieldKeyOf(b))) : shown;
+  const SortTh = ({ k, children }: { k: SortKey; children: string }) => (
+    <th className="whitespace-nowrap px-3 py-2.5 font-bold" aria-sort={sort?.key === k ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
+      <button type="button" onClick={() => clickSort(k)} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === k ? "text-blue-700 dark:text-blue-300" : ""}`} title="\ub20c\ub7ec\uc11c \uc624\ub984\ucc28\uc21c / \ub0b4\ub9bc\ucc28\uc21c \uc815\ub82c">
+        {children}<span aria-hidden className="text-[10px]">{sort?.key === k ? (sort.dir === 1 ? "\u25b2" : "\u25bc") : "\u2195"}</span>
+      </button>
+    </th>
+  );
   const pickSide = (s: SideKey | "all") => {
     setDualTab(false);
     setTabResigned(false);
@@ -476,6 +509,35 @@ export default function MembersAdmin({
   function startCreate() {
     resetForm();
     setCreateOpen(true);
+  }
+
+  async function bulkApply() {
+    const ops = (Object.entries(bulkSel) as [MenuKey, BulkLevel][]).filter(([, v]) => v !== "keep");
+    if (ops.length === 0) return say("바꿀 메뉴를 하나 이상 골라 주세요.");
+    const targets = members.filter(m => selIds.includes(m.id));
+    if (targets.length === 0) return;
+    setBusy(true);
+    let ok = 0;
+    const failed: string[] = [];
+    for (const m of targets) { // 한 명씩 차례로 (기존 수정 규칙·검사를 그대로 거친다)
+      const menus = new Set<MenuKey>(m.menus);
+      const actions: GrantedActions = { ...m.actions };
+      for (const [k, v] of ops) {
+        if (v === "none") { menus.delete(k); delete actions[k]; continue; }
+        menus.add(k);
+        if (MENU_ACTIONS[k].length > 0) actions[k] = v === "view" ? ["view"] : [...MENU_ACTIONS[k]];
+      }
+      const r = await call({ action: "update", id: m.id, menus: [...menus], actions });
+      if (r.ok && r.member) {
+        ok++;
+        const saved = r.member;
+        setMembers(prev => prev.map(x => (x.id === saved.id ? saved : x)));
+      } else failed.push(m.name);
+    }
+    setBusy(false);
+    setBulkOpen(false);
+    setSelIds(failed.length ? targets.filter(m => failed.includes(m.name)).map(m => m.id) : []);
+    say(failed.length ? `${ok}명에게 적용했어요. 실패: ${failed.join(", ")}` : `${ok}명의 메뉴 권한을 바꿨어요.`);
   }
 
   async function call(body: object): Promise<ApiResult> {
@@ -1442,6 +1504,8 @@ export default function MembersAdmin({
                   <dl className="mt-3 grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-1 text-sm">
                     <dt className="text-xs font-bold leading-5 text-zinc-500">{tabResigned ? "재직기간" : "입사일"}</dt>
                     <dd>{m.hireDate || <span className="text-zinc-400">—</span>}{tabResigned && m.resignDate && <> ~ {m.resignDate}</>}{tn && <span className="ml-1.5 text-xs text-zinc-500">({tn}{tabResigned ? " 근무" : ""}{wd != null && ` · ${wd.toLocaleString("ko-KR")}일${tabResigned ? "" : "째"}`})</span>}</dd>
+                    <dt className="text-xs font-bold leading-5 text-zinc-500">아이디</dt>
+                    <dd><code className="text-[13px] font-semibold">{m.loginId ?? "—"}</code></dd>
                     <dt className="text-xs font-bold leading-5 text-zinc-500">연락처</dt>
                     <dd>{m.phone || <span className="text-zinc-400">—</span>}</dd>
                     <dt className="text-xs font-bold leading-5 text-zinc-500">{eff === "office" ? "월급" : "일당"}</dt>
@@ -1474,29 +1538,43 @@ export default function MembersAdmin({
             })}
           </div>
         )}
+        {!manage && scope !== "coop" && !tabResigned && selIds.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl bg-blue-50 px-3 py-2 text-sm dark:bg-blue-500/10">
+            <b className="text-blue-700 dark:text-blue-300">{selIds.length}명 선택</b>
+            <button type="button" onClick={() => { setBulkSel({}); setBulkOpen(true); }} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white">메뉴 권한 일괄 수정</button>
+            <button type="button" onClick={() => setSelIds([])} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">선택 해제</button>
+          </div>
+        )}
         {!manage && scope !== "coop" && listed.length > 0 && (
           <div className="no-scrollbar overflow-x-auto rounded-2xl border border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900">
             <table className={`w-full ${manage ? "min-w-[56rem]" : "min-w-[56rem]"} border-collapse text-left text-sm`}>
               <thead>
                 <tr className="border-b border-black/10 bg-zinc-50 text-xs text-zinc-500 dark:border-white/10 dark:bg-zinc-800/60">
-                  <th className="whitespace-nowrap px-3 py-2.5 font-bold">이름</th>
-                  <th className="whitespace-nowrap px-3 py-2.5 font-bold">팀</th>
+                  {!tabResigned && (
+                    <th className="w-9 px-3 py-2.5">
+                      <input type="checkbox" aria-label="이 목록 전체 선택" checked={listed.filter(m => m.id !== selfId).length > 0 && listed.filter(m => m.id !== selfId).every(m => selIds.includes(m.id))} onChange={e => setSelIds(e.target.checked ? listed.filter(m => m.id !== selfId).map(m => m.id) : [])} className="h-4 w-4 accent-blue-600" />
+                    </th>
+                  )}
+                  <th className="w-10 whitespace-nowrap px-2 py-2.5 text-center font-bold">#</th>
+                  <SortTh k="name">이름</SortTh>
+                  <SortTh k="team">팀</SortTh>
                   {manage ? (
                     <>
-                      <th className="whitespace-nowrap px-3 py-2.5 font-bold">직급</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 font-bold">입사일</th>
+                      <SortTh k="position">직급</SortTh>
+                      <SortTh k="loginId">아이디</SortTh>
+                      <SortTh k="hire">입사일</SortTh>
                       <th className="whitespace-nowrap px-3 py-2.5 font-bold">급여</th>
                       <th className="whitespace-nowrap px-3 py-2.5 font-bold">연차 잔여</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 font-bold">연락처</th>
+                      <SortTh k="phone">연락처</SortTh>
                       <th className="whitespace-nowrap px-3 py-2.5 font-bold">주소</th>
                     </>
                   ) : (
                     <>
-                      <th className="whitespace-nowrap px-3 py-2.5 font-bold">직급</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 font-bold">아이디</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 font-bold">연락처</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 font-bold">입사일</th>
-                      <th className="whitespace-nowrap px-3 py-2.5 font-bold">생성일</th>
+                      <SortTh k="position">직급</SortTh>
+                      <SortTh k="loginId">아이디</SortTh>
+                      <SortTh k="phone">연락처</SortTh>
+                      <SortTh k="hire">입사일</SortTh>
+                      <SortTh k="created">생성일</SortTh>
                     </>
                   )}
                   {tabResigned && <th className="whitespace-nowrap px-3 py-2.5 font-bold">퇴사일</th>}
@@ -1506,16 +1584,22 @@ export default function MembersAdmin({
               <tbody>
                 {listed.map((m, i, arr) => {
                   const isMe = m.id === selfId;
-                  const teamHead = group === "field" && (i === 0 || tradeOf(arr[i - 1]) !== tradeOf(m)); // 공정이 바뀔 때 제목 줄을 넣는다
+                  const teamHead = !sort && group === "field" && (i === 0 || tradeOf(arr[i - 1]) !== tradeOf(m)); // 공정이 바뀔 때 제목 줄을 넣는다
                   const bal = balances[m.id];
                   return (
                     <Fragment key={m.id}>
                       {teamHead && (
                         <tr className="border-b border-black/10 bg-blue-50/60 dark:border-white/10 dark:bg-blue-500/10">
-                          <td colSpan={(manage ? 9 : 8) + (tabResigned ? 1 : 0)} className="px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:text-blue-300">{tradeOf(m) ? tradeOf(m) + "팀" : "공정 미지정"} <span className="font-normal text-zinc-500">{arr.filter(x => tradeOf(x) === tradeOf(m)).length}명</span></td>
+                          <td colSpan={(manage ? 10 : 8) + (tabResigned ? 1 : 0) + (tabResigned ? 0 : 1) + 1} className="px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:text-blue-300">{tradeOf(m) ? tradeOf(m) + "팀" : "공정 미지정"} <span className="font-normal text-zinc-500">{arr.filter(x => tradeOf(x) === tradeOf(m)).length}명</span></td>
                         </tr>
                       )}
                       <tr className="border-b border-black/5 align-top last:border-0 hover:bg-zinc-50/70 dark:border-white/5 dark:hover:bg-zinc-800/40">
+                        {!tabResigned && (
+                          <td className="px-3 py-2.5">
+                            <input type="checkbox" aria-label={`${m.name} 선택`} disabled={isMe} title={isMe ? "내 권한은 여기서 바꿀 수 없어요" : undefined} checked={selIds.includes(m.id)} onChange={e => setSelIds(p => (e.target.checked ? [...p, m.id] : p.filter(x => x !== m.id)))} className="h-4 w-4 accent-blue-600 disabled:opacity-30" />
+                          </td>
+                        )}
+                        <td className="px-2 py-2.5 text-center text-xs text-zinc-400">{i + 1}</td>
                         <td className="whitespace-nowrap px-3 py-2.5 font-bold">
                           {m.photo ? <img src={m.photo} alt="" loading="lazy" className="mr-2 inline-block h-7 w-7 rounded-full bg-zinc-100 object-cover align-middle" /> : <span className="mr-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-zinc-100 align-middle text-xs text-zinc-400 dark:bg-zinc-800" aria-hidden>👤</span>}
                           {m.name}
@@ -1537,6 +1621,7 @@ export default function MembersAdmin({
                         {manage ? (
                           <>
                             <td className="whitespace-nowrap px-3 py-2.5">{m.position || <span className="text-zinc-400">—</span>}</td>
+                            <td className="whitespace-nowrap px-3 py-2.5"><code className="text-[13px] font-semibold">{m.loginId ?? "—"}</code></td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-zinc-600 dark:text-zinc-300">{m.hireDate || <span className="text-zinc-400">—</span>}</td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-zinc-600 dark:text-zinc-300">{effectivePay(teams, m) === "office" ? "4대보험 사무직" : "일수제"}{m.payAmount > 0 && <span className="ml-1 font-semibold text-zinc-800 dark:text-zinc-100">· {effectivePay(teams, m) === "office" ? "월 " : "일당 "}{m.payAmount.toLocaleString("ko-KR")}원{effectivePay(teams, m) === "office" && <small className="ml-1 font-normal text-emerald-700 dark:text-emerald-300">(세후 {netPay(m.payAmount).net.toLocaleString("ko-KR")}원)</small>}</span>}</td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-zinc-600 dark:text-zinc-300">{effectivePay(teams, m) === "office" && bal?.total != null ? `${bal.total - bal.used} / ${bal.total}일` : <span className="text-zinc-400">—</span>}</td>
@@ -1574,6 +1659,45 @@ export default function MembersAdmin({
       </motion.div>
       )}
       </AnimatePresence>
+
+      {/* 메뉴 권한 일괄 수정: 고른 회원 모두에게 같은 권한을 적용 */}
+      <Modal open={bulkOpen} onClose={() => !busy && setBulkOpen(false)} wide>
+        <h2 className="text-lg font-bold">메뉴 권한 일괄 수정</h2>
+        <p className="mt-1 text-sm text-zinc-500">{members.filter(m => selIds.includes(m.id)).map(m => m.name).join(", ")} <b>{selIds.length}명</b>에게 적용해요. 고르지 않은 메뉴는 그대로 둬요.</p>
+        <div className="mt-3 space-y-2.5">
+          {(["운영관리", "현장관리", "인사관리", null] as const).map(g => {
+            const list = MENUS.filter(mn => mn.grantable && (menuParent(mn.key) ?? null) === g);
+            if (list.length === 0) return null;
+            return (
+              <div key={g ?? "etc"} className="rounded-xl border border-black/10 p-3 dark:border-white/10">
+                <div className="text-sm font-extrabold text-blue-600 dark:text-blue-300">{g ?? "기타"}</div>
+                <div className="mt-1 divide-y divide-black/5 dark:divide-white/10">
+                  {list.map(mn => {
+                    const k = mn.key;
+                    const cur = bulkSel[k] ?? "keep";
+                    const multi = MENU_ACTIONS[k].length > 1 && k !== "members" && k !== "suppliers" && k !== "catalog";
+                    const opts: [BulkLevel, string][] = multi ? [["keep", "변경 안 함"], ["none", "회수"], ["view", "보기만"], ["all", "모든 권한"]] : [["keep", "변경 안 함"], ["none", "회수"], ["all", "부여"]];
+                    return (
+                      <div key={k} className="flex flex-wrap items-center gap-2 py-2">
+                        <span className="mr-auto text-[15px] font-semibold">{mn.label}</span>
+                        <div className="inline-flex overflow-hidden rounded-lg border border-black/10 text-sm dark:border-white/10" role="radiogroup" aria-label={`${mn.label} 일괄 권한`}>
+                          {opts.map(([v, label]) => (
+                            <button key={v} type="button" role="radio" aria-checked={cur === v} onClick={() => setBulkSel(p => ({ ...p, [k]: v }))} className={`px-3 py-1.5 font-bold ${cur === v ? (v === "keep" || v === "none" ? "bg-zinc-600 text-white" : "bg-blue-600 text-white") : "bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label}</button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button type="button" disabled={busy} onClick={() => setBulkOpen(false)} className="flex-1 rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">취소</button>
+          <button type="button" disabled={busy} onClick={() => void bulkApply()} className="flex-1 rounded-xl bg-blue-600 py-3 font-bold text-white disabled:opacity-50">{busy ? "적용 중…" : `${selIds.length}명에게 적용`}</button>
+        </div>
+      </Modal>
 
       {/* 회원 생성·수정: 팝업 */}
       <Modal open={editId !== null || createOpen} onClose={() => !busy && resetForm()} wide xl>

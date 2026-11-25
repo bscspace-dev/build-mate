@@ -1,9 +1,10 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { json, sameOrigin } from '@/lib/guard';
 import { addTeam, deleteTeam, setTeamTrades } from '@/lib/teams';
 
 // 팀명 추가·삭제 (최고 관리자·개발팀). 구분(사내/협력)·부서(사무실/현장/외주)와 팀 이름 변경은 지원하지 않는다.
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('members');
   if (!actor) return json({ error: '회원 관리 권한이 없어요.' }, 401);
@@ -30,3 +31,5 @@ export async function POST(req: Request) {
   }
   return json({ error: 'bad action' }, 400);
 }
+
+export const POST = audited('members', handlePOST);

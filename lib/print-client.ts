@@ -30,6 +30,7 @@ export async function printElement(el: HTMLElement | null, opts: { title: string
     button, input, select, textarea, [role="tablist"], .no-print { display: none !important; }
     * { box-shadow: none !important; }
     section, tr { break-inside: avoid; }
+    .print-show { display: block !important; } /* 화면에서 접어 둔 부분도 인쇄에는 펼쳐서 넣는다 */
   `;
   doc.head.appendChild(extra);
 

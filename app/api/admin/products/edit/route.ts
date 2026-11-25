@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { updateProduct } from '@/lib/db';
 import { asKind, KINDS } from '@/lib/types';
@@ -16,7 +17,7 @@ const whole = (v: FormDataEntryValue | null, max: number) => {
   return Number.isInteger(n) && n >= 0 && n <= max ? n : NaN;
 };
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('catalog');
   if (!actor) return json({ error: '소모품 메뉴 권한이 필요해요.' }, 401);
@@ -60,3 +61,5 @@ export async function POST(req: Request) {
   if (image && r.prevImage && r.prevImage !== image) await removeImage(r.prevImage).catch(() => undefined);
   return json({ ok: true, name, sub, brand, price, ...(kind ? { kind } : {}), ...(image ? { image } : {}) });
 }
+
+export const POST = audited('catalog', handlePOST);

@@ -1,10 +1,11 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { fillRequestItem } from '@/lib/db';
 import { json, sameOrigin } from '@/lib/guard';
 
 // 재고가 모자랐던 품목을 채운다(입고). 입고 수량이 재고에 들어가고, 이 요청의 부족분이 바로 채워진다.
 // '현장요청' 메뉴의 수정(처리) 권한이 필요하다.
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('requests');
   if (!actor) return json({ error: '로그인이 필요해요.' }, 401);
@@ -20,3 +21,5 @@ export async function POST(req: Request) {
   const r = await fillRequestItem(id, k, received);
   return 'error' in r ? json({ error: r.error }, 400) : json({ ok: true, request: r.request });
 }
+
+export const POST = audited('requests', handlePOST);

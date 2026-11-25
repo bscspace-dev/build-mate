@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import AdminNav from "@/components/admin/AdminNav";
-import RequestAlerts from "@/components/admin/RequestAlerts";
 
 export const metadata: Metadata = {
   title: "관리자 · 빌드메이트",
@@ -12,7 +11,6 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
     <>
       <AdminNav />
       {children}
-      <RequestAlerts />
     </>
   );
 }

@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { getLeaves, getTeams as getTeamsForPay, setAnnualLeave } from '@/lib/db';
 import { leaveUsage } from '@/lib/leave';
@@ -7,7 +8,7 @@ import { json, sameOrigin } from '@/lib/guard';
 import { actorPowers, addMember, deleteMember, resetMember, resignMember, updateMember } from '@/lib/members';
 
 // 회원 관리 (최고 관리자·개발팀 전용): 생성(아이디·임시 비밀번호 발급) / 수정 / 임시 비밀번호 재발급 / 삭제
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('members');
   if (!actor) return json({ error: '회원 관리 권한이 없어요. 최고 관리자나 개발팀 계정으로 로그인해 주세요.' }, 401);
@@ -89,3 +90,5 @@ export async function POST(req: Request) {
   }
   return json({ error: 'bad action' }, 400);
 }
+
+export const POST = audited('members', handlePOST);

@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { getActor, hasRootSession, vehiclesFull } from '@/lib/auth';
 import { addVehiclePhoto, getVehicles, removeVehiclePhoto } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -14,7 +15,7 @@ const MAX_PER_UPLOAD = 4;
 const TYPES = ['image/webp', 'image/jpeg', 'image/png'];
 const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const root = await hasRootSession();
   const member = root ? null : await getSessionMember();
@@ -81,3 +82,5 @@ export async function POST(req: Request) {
     return json({ error: e instanceof Error ? e.message : '사진을 올리지 못했어요.' }, 500);
   }
 }
+
+export const POST = audited('vehicles', handlePOST);

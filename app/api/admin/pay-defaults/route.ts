@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { savePayDefaults } from '@/lib/db';
 import { json, sameOrigin } from '@/lib/guard';
@@ -5,7 +6,7 @@ import { json, sameOrigin } from '@/lib/guard';
 // 기본 급여 설정 (최고 관리자·개발팀): 새 회원을 등록할 때 급여 칸에 미리 들어가는 금액 — 일수제는 일당, 사무직 기준은 월급
 const num = (v: unknown): number => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : 0);
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('members');
   if (!actor) return json({ error: '회원등록 권한이 없어요.' }, 401);
@@ -18,3 +19,5 @@ export async function POST(req: Request) {
   await savePayDefaults(out);
   return json({ ok: true, ...out });
 }
+
+export const POST = audited('payroll', handlePOST);

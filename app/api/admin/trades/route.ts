@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { addTrade, getTrades, removeTrade, reorderTrades } from '@/lib/db';
 import { json, sameOrigin } from '@/lib/guard';
@@ -8,7 +9,7 @@ const MAX_LEN = 10;
 const MAX_COUNT = 30; // 설문 화면이 공정을 비트마스크(32비트)로 다루므로 30개까지
 const clean = (v: unknown) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '');
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('catalog');
   if (!actor) return json({ error: '소모품 메뉴 권한이 필요해요.' }, 401);
@@ -41,3 +42,5 @@ export async function POST(req: Request) {
   if ('notFound' in r) return json({ error: '없는 공정이에요.' }, 404);
   return json({ ok: true, count: 'count' in r ? r.count : 0 });
 }
+
+export const POST = audited('catalog', handlePOST);

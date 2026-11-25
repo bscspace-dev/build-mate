@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { headOf } from '@/lib/sub-path';
 import { getCategoryTrades, getProducts, getTrades, setSubs, deleteProducts, moveProducts, setKind, purgeProducts, renameProduct, reorderProducts, restoreProducts, setStock, swapProducts } from '@/lib/db';
@@ -6,7 +7,7 @@ import { json, sameOrigin } from '@/lib/guard';
 
 // 소모품: 삭제(휴지통으로 이동) / 복원 / 영구 삭제(휴지통의 것만, 이미지까지 완전 삭제) → '삭제' 권한
 //        카테고리 이동 · 이름 변경 · 재고 수량 → '수정' 권한
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('catalog');
   if (!actor) return json({ error: '소모품 메뉴 권한이 필요해요.' }, 401);
@@ -86,3 +87,5 @@ export async function POST(req: Request) {
   const count = a === 'delete' ? await deleteProducts(keys) : a === 'restore' ? await restoreProducts(keys) : await purgeProducts(keys);
   return json({ ok: true, count });
 }
+
+export const POST = audited('catalog', handlePOST);

@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { getActor, placementsFull } from '@/lib/auth';
 import { assignPlacements, copyPlacements, getLeaves, getActiveMembers, getPlacements, getSites, getTeams, removePlacement, removePlacementsRange, setPlacementNote } from '@/lib/db';
 import { leaveSlots } from '@/lib/leave';
@@ -20,7 +21,7 @@ const REST = '일요일은 쉬는 날이라 배치할 수 없어요.';
 // 승인된 휴가 중인 회원 (그 날짜·시간대를 휴가가 가리는 경우)
 const onLeaveAt = async (date: string, slots: Slot[]) => new Set((await getLeaves()).filter(l => l.status === 'approved' && date >= l.startDate && date <= l.endDate && slots.some(s => leaveSlots(l.kind).includes(s))).map(l => l.memberId));
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('placements');
   if (!actor) return json({ error: '현장배치 메뉴 권한이 필요해요.' }, 401);
@@ -99,3 +100,5 @@ export async function POST(req: Request) {
   }
   return json({ ok: true, count: await assignPlacements(b.date, b.siteId, ids, slots) });
 }
+
+export const POST = audited('placements', handlePOST);

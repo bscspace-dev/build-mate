@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { headOf, rewriteSub } from '@/lib/sub-path';
 import { getProducts, setSubs, addCategory, getCategories, getCategoryTrades, getTrades, removeCategory, renameCategory, saveCategoryOrder, setCategoryTrade } from '@/lib/db';
@@ -8,7 +9,7 @@ import { json, sameOrigin } from '@/lib/guard';
 const MAX = 20;
 const clean = (v: unknown) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '');
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('catalog');
   if (!actor) return json({ error: '소모품 메뉴 권한이 필요해요.' }, 401);
@@ -81,3 +82,5 @@ export async function POST(req: Request) {
   if ('notFound' in r) return json({ error: '없는 카테고리예요.' }, 404);
   return json({ ok: true, count: 'count' in r ? r.count : 0 }); // 그 카테고리의 소모품은 휴지통으로 옮겨졌다
 }
+
+export const POST = audited('catalog', handlePOST);

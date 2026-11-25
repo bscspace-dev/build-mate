@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { getActor, vehiclesFull } from '@/lib/auth';
 import { addVehicle, assignItem, getActiveMembers, getTeams, removeVehicle, returnItem, updateVehicle } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -11,7 +12,7 @@ const kmOf = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 const qtyOf = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 99_999 ? v : 0);
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('vehicles');
   if (!actor) return json({ error: '차량정보 메뉴 권한이 필요해요.' }, 401);
@@ -75,3 +76,5 @@ export async function POST(req: Request) {
   const r = await returnItem(id, qty);
   return 'error' in r ? json(r, 400) : json(r);
 }
+
+export const POST = audited('vehicles', handlePOST);

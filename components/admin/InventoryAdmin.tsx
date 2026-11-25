@@ -1,0 +1,258 @@
+"use client";
+
+import { Fragment, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { InventoryEntry } from "@/lib/types";
+
+type Prod = { key: string; trade: string; category: string; name: string };
+
+const PICK_KEY = "bm_inventory_pick";
+const PAGE = 20; // 한 쪽에 보여 줄 품목 수
+const BASE = "border border-black/10 px-2.5 dark:border-white/10";
+// 행 간격(칸 위아래 여백): 좁게 / 보통 / 넓게
+const PADS = { tight: "py-0.5", normal: "py-1.5", wide: "py-3.5" } as const;
+type Density = keyof typeof PADS;
+const DENSITY_KEY = "bm_row_density";
+const inp = "w-full rounded-md border border-black/15 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-blue-500 dark:border-white/15";
+const when = (iso: string) => new Date(iso).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 16);
+
+// 장비조사: 창고장비현황의 상비품이 공정(대분류)별로 엑셀처럼 목록으로 먼저 채워져 있다. 할 수 있는 일은 추가와 삭제뿐이다.
+//  · 필요 없는 상비품 삭제 → 창고장비현황의 휴지통으로 간다(거기서 복원할 수 있다).
+//  · 필요한 상비품 추가 → 고른 공정·카테고리로 창고장비현황에도 같이 등록된다.
+//  · 추가·삭제한 사람과 시각이 남는다. 최고 관리자·개발팀은 모든 공정을 보고, 팀마다 맡을 공정을 정한다.
+type Setup = { trades: string[]; categories: Record<string, string[]>; excluded: { trades: string[]; categories: string[] } };
+export default function InventoryAdmin({ trades, categories, products, log, admin, setup }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: InventoryEntry[]; admin: boolean; setup: Setup | null }) {
+  const router = useRouter();
+  const [density, setDensity] = useState<Density>("normal");
+  useEffect(() => { try { const v = localStorage.getItem(DENSITY_KEY); if (v === "tight" || v === "normal" || v === "wide") setDensity(v); } catch { /* 저장이 막힌 환경 */ } }, []);
+  const pickDensity = (d: Density) => { setDensity(d); try { localStorage.setItem(DENSITY_KEY, d); } catch { /* 저장이 막힌 환경 */ } };
+  const cell = `${BASE} ${PADS[density]}`;
+  const [sel, setSel] = useState(trades.length === 1 ? trades[0] : ""); // 고른 공정: 목록도 그 공정의 품목만 보이고, 추가할 때도 이 공정에 들어간다
+  const firstCat = (t: string) => categories[t]?.[0] ?? ""; // 공정의 첫 카테고리 (창고장비현황 순서)
+  const [catSel, setCatSel] = useState(() => firstCat(sel)); // 고른 카테고리: 목록도 그 카테고리만 보이고, 추가할 때도 여기에 들어간다
+  // 고른 공정·카테고리는 다른 것으로 바꿀 때까지 그대로 둔다 (품목을 추가·삭제해도, 새로고침해도 이 브라우저에 기억한다)
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    try {
+      const t = localStorage.getItem(PICK_KEY + ".trade") ?? "", c = localStorage.getItem(PICK_KEY + ".cat") ?? "";
+      if (trades.includes(t)) { setSel(t); setCatSel(c === "" || (categories[t] ?? []).includes(c) ? c : firstCat(t)); }
+    } catch { /* 저장이 막힌 환경 */ }
+    setReady(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    try { localStorage.setItem(PICK_KEY + ".trade", sel); localStorage.setItem(PICK_KEY + ".cat", catSel); } catch { /* 저장이 막힌 환경 */ }
+  }, [ready, sel, catSel]);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  // 조사 제외 설정(모든 권한이 있는 사람): 장비조사에서 뺄 공정·카테고리를 고른다. 누르면 바로 저장되고, 제외한 것은 모두에게 보이지 않는다.
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [ex, setEx] = useState(setup?.excluded ?? { trades: [], categories: [] });
+  async function toggleEx(kind: "trade" | "category", name: string) {
+    const next = kind === "trade"
+      ? { ...ex, trades: ex.trades.includes(name) ? ex.trades.filter(x => x !== name) : [...ex.trades, name] }
+      : { ...ex, categories: ex.categories.includes(name) ? ex.categories.filter(x => x !== name) : [...ex.categories, name] };
+    const prev = ex;
+    setEx(next);
+    if (await post({ action: "excludeSave", excludedTrades: next.trades, excludedCategories: next.categories })) router.refresh();
+    else setEx(prev);
+  }
+
+  async function post(body: object): Promise<boolean> {
+    if (busy) return false;
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await fetch("/api/admin/inventory", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(j.error ?? "처리하지 못했어요.");
+      return true;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "서버에 연결할 수 없어요.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function add() {
+    if (!sel) return setErr("공정을 골라 주세요.");
+    if (!catSel) return setErr("카테고리를 골라 주세요.");
+    if (!name.trim()) return setErr("품목 이름을 적어 주세요.");
+    if (await post({ action: "add", trade: sel, category: catSel, name })) {
+      setName("");
+      router.refresh();
+    }
+  }
+  // 품목 이름 바꾸기 (창고장비현황에도 같은 이름으로 바뀐다)
+  const [editKey, setEditKey] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  async function rename(p: Prod) {
+    const n = editName.trim().replace(/s+/g, " ");
+    if (!n) return setErr("품목 이름을 적어 주세요.");
+    if (n === p.name) return setEditKey(null);
+    if (await post({ action: "rename", key: p.key, name: n })) {
+      setEditKey(null);
+      router.refresh();
+    }
+  }
+  async function del(p: Prod) {
+    if (!window.confirm(`“${p.name}”을(를) 삭제할까요?\n창고장비현황의 휴지통으로 이동해요. (거기서 복원할 수 있어요)`)) return;
+    if (await post({ action: "delete", key: p.key })) router.refresh();
+  }
+  // 품목마다 가장 최근에 '추가'한 기록 (없으면 처음부터 있던 품목)
+  const addedBy = new Map<string, InventoryEntry>();
+  for (const e of [...log].reverse()) if (e.action === "add") addedBy.set(e.productKey, e); // log 는 최신순이라 뒤집어서 최신 것이 남게
+  const cats = sel ? categories[sel] ?? [] : [];
+  // 공정 → 카테고리 순서로 묶어서 보여 준다 (카테고리 순서는 창고장비현황을 따른다)
+  const catRank = (p: Prod) => (categories[p.trade] ?? []).indexOf(p.category);
+  const shown = products
+    .filter(p => (!sel || p.trade === sel) && (!catSel || p.category === catSel))
+    .map((p, i) => ({ p, i }))
+    .sort((x, y) => trades.indexOf(x.p.trade) - trades.indexOf(y.p.trade) || catRank(x.p) - catRank(y.p) || x.i - y.i)
+    .map(x => x.p);
+  const countIn = (t: string, c: string) => shown.filter(x => x.trade === t && x.category === c).length;
+  // 목록이 길면 쪽으로 나눈다 (공정·카테고리를 바꾸면 1쪽으로)
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [sel, catSel]);
+  const pages = Math.max(1, Math.ceil(shown.length / PAGE));
+  const cur = Math.min(page, pages);
+  const start = (cur - 1) * PAGE;
+  const rows = shown.slice(start, start + PAGE);
+  const pageNums = Array.from({ length: pages }, (_, n) => n + 1).filter(n => n === 1 || n === pages || Math.abs(n - cur) <= 2);
+
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 py-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <h1 className="text-xl font-extrabold">장비조사</h1>
+        <span className="text-sm text-zinc-500">{admin ? "모든 공정 · 상비품" : trades.length ? `내 공정: ${trades.join(" · ")}` : ""}</span>
+      </div>
+      {admin && setup && (
+        <div className="mt-2">
+          <button type="button" onClick={() => setSetupOpen(o => !o)} className="rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">{setupOpen ? "조사 제외 설정 닫기" : `조사 제외 설정${ex.trades.length + ex.categories.length > 0 ? ` (제외 ${ex.trades.length + ex.categories.length})` : ""}`}</button>
+          {setupOpen && (
+            <section className="mt-2 rounded-2xl border border-black/10 p-3 dark:border-white/10">
+              <p className="mb-2 text-xs text-zinc-500">장비조사에서 뺄 <b>공정</b> 또는 <b>카테고리</b>를 누르세요. 누르면 바로 저장되고, 제외한 것은 모든 사람의 장비조사에서 보이지 않아요. (창고장비현황·가격조사에는 영향이 없어요)</p>
+              <div className="space-y-2.5">
+                {setup.trades.map(t => (
+                  <div key={t} className="flex flex-wrap items-center gap-1.5">
+                    <button type="button" disabled={busy} onClick={() => void toggleEx("trade", t)} aria-pressed={ex.trades.includes(t)} className={`rounded-full border px-3 py-1 text-sm font-bold ${ex.trades.includes(t) ? "border-red-300 bg-red-50 text-red-600 line-through dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300" : "border-blue-600 bg-blue-600 text-white"}`}>{t}</button>
+                    <span className="text-zinc-300">›</span>
+                    {(setup.categories[t] ?? []).map(c => (
+                      <button key={c} type="button" disabled={busy || ex.trades.includes(t)} onClick={() => void toggleEx("category", c)} aria-pressed={ex.categories.includes(c)} className={`rounded-full border px-2.5 py-1 text-xs font-semibold disabled:opacity-40 ${ex.categories.includes(c) ? "border-red-300 bg-red-50 text-red-600 line-through dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300" : "border-black/15 dark:border-white/15"}`}>{c}</button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+      <p className="mt-1 text-xs text-zinc-500">필요 없는 상비품은 <b>삭제</b>(창고장비현황 휴지통으로 이동), 필요한 상비품은 맨 위 줄에서 공정·카테고리를 고르고 <b>추가</b>하세요. 추가한 품목은 창고장비현황의 같은 공정·카테고리에 바로 들어가요.</p>
+
+      <div className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500">
+        행 간격
+        <div className="inline-flex overflow-hidden rounded-lg border border-black/10 dark:border-white/10" role="radiogroup" aria-label="행 간격">
+          {([["tight", "좁게"], ["normal", "보통"], ["wide", "넓게"]] as const).map(([d, label]) => (
+            <button key={d} type="button" role="radio" aria-checked={density === d} onClick={() => pickDensity(d)} className={`px-2.5 py-1 font-bold ${density === d ? "bg-blue-600 text-white" : "bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      {err && <p className="mt-3 rounded-xl bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300" role="alert">{err}</p>}
+
+      {trades.length === 0 ? (
+        <p className="mt-6 rounded-2xl border border-dashed border-black/15 p-8 text-center text-sm text-zinc-500 dark:border-white/15">내 팀이 맡은 공정이 아직 없어요. 최고 관리자나 개발팀에 팀의 ‘관여 공정’ 설정을 요청해 주세요.</p>
+      ) : (
+        <>
+          <div className="no-scrollbar mt-4 overflow-x-auto rounded-xl border border-black/10 dark:border-white/10">
+            <table className="w-full min-w-[44rem] border-collapse text-left text-sm">
+              <thead>
+                <tr className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-800/60">
+                  <th className={`${cell} w-12 text-center`}>#</th>
+                  <th className={`${cell} w-32`}>공정</th>
+                  <th className={`${cell} w-40`}>카테고리</th>
+                  <th className={cell}>품목</th>
+                  <th className={`${cell} w-24`}>추가한 사람</th>
+                  <th className={`${cell} w-32`} />
+                </tr>
+                <tr className="bg-blue-50/60 dark:bg-blue-500/10">
+                  <td className={`${cell} text-center text-xs font-bold text-blue-700 dark:text-blue-300`}>＋</td>
+                  <td className={cell}>
+                    <select value={sel} onChange={e => { setSel(e.target.value); setCatSel(firstCat(e.target.value)); }} className={inp} aria-label="공정">
+                      <option value="">공정 선택</option>
+                      {trades.map(t => <option key={t}>{t}</option>)}
+                    </select>
+                  </td>
+                  <td className={cell}>
+                    <select value={catSel} onChange={e => setCatSel(e.target.value)} disabled={!sel} className={inp} aria-label="추가할 카테고리">
+                      <option value="">{sel ? "카테고리 선택" : "공정을 먼저 고르세요"}</option>
+                      {cats.map(c => <option key={c}>{c}</option>)}
+                    </select>
+                  </td>
+                  <td className={cell}><input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름" onKeyDown={e => e.key === "Enter" && add()} /></td>
+                  <td className={cell} colSpan={2}><button type="button" disabled={busy} onClick={add} className="w-full rounded-md bg-blue-600 py-1.5 text-sm font-bold text-white disabled:opacity-50">추가</button></td>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.length === 0 && (
+                  <tr><td colSpan={6} className={`${cell} py-8 text-center text-zinc-500`}>내 공정에 상비품이 없어요. 위에서 추가해 보세요.</td></tr>
+                )}
+                {rows.map((p, k) => {
+                  const i = start + k;
+                  const a = addedBy.get(p.key);
+                  const head = k === 0 || shown[i - 1].trade !== p.trade || shown[i - 1].category !== p.category; // 카테고리가 바뀔 때 제목 줄
+                  return (
+                    <Fragment key={p.key}>
+                    {head && (
+                      <tr className="bg-blue-50/60 dark:bg-blue-500/10">
+                        <td colSpan={6} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300">{p.trade} › {p.category}<span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개</span></td>
+                      </tr>
+                    )}
+                    <tr className="hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40">
+                      <td className={`${cell} text-center text-xs text-zinc-400`}>{i + 1}</td>
+                      <td className={`${cell} whitespace-nowrap`}>{p.trade}</td>
+                      <td className={`${cell} whitespace-nowrap`}>{p.category}</td>
+                      <td className={`${cell} font-semibold`}>{editKey === p.key ? <input autoFocus value={editName} onChange={e => setEditName(e.target.value.slice(0, 100))} onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} className={inp} aria-label="품목 이름 수정" /> : p.name}</td>
+                      <td className={`${cell} whitespace-nowrap`}>{a ? a.byName : <span className="text-zinc-400">기존 품목</span>}</td>
+                      <td className={`${cell} text-center`}>
+                        {editKey === p.key ? (
+                          <div className="flex justify-center gap-1">
+                            <button type="button" disabled={busy} onClick={() => void rename(p)} className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-40">저장</button>
+                            <button type="button" disabled={busy} onClick={() => setEditKey(null)} className="rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold dark:bg-zinc-800">취소</button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-center gap-1">
+                            <button type="button" disabled={busy} onClick={() => { setEditKey(p.key); setEditName(p.name); }} className="rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">수정</button>
+                            <button type="button" disabled={busy} onClick={() => del(p)} className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 disabled:opacity-40 dark:bg-red-500/15 dark:text-red-300">삭제</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {pages > 1 && (
+            <nav className="mt-3 flex flex-wrap items-center justify-center gap-1" aria-label="쪽 이동">
+              <button type="button" disabled={cur === 1} onClick={() => setPage(cur - 1)} className="rounded-lg bg-zinc-100 px-3 py-1.5 text-sm font-bold disabled:opacity-35 dark:bg-zinc-800">이전</button>
+              {pageNums.map((n, j) => (
+                <Fragment key={n}>
+                  {j > 0 && n - pageNums[j - 1] > 1 && <span className="px-1 text-zinc-400">…</span>}
+                  <button type="button" onClick={() => setPage(n)} aria-current={n === cur ? "page" : undefined} className={`min-w-9 rounded-lg px-2.5 py-1.5 text-sm font-bold ${n === cur ? "bg-blue-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}>{n}</button>
+                </Fragment>
+              ))}
+              <button type="button" disabled={cur === pages} onClick={() => setPage(cur + 1)} className="rounded-lg bg-zinc-100 px-3 py-1.5 text-sm font-bold disabled:opacity-35 dark:bg-zinc-800">다음</button>
+              <span className="ml-2 text-xs text-zinc-500">{start + 1}–{Math.min(start + PAGE, shown.length)} / {shown.length}개</span>
+            </nav>
+          )}
+
+        </>
+      )}
+    </div>
+  );
+}

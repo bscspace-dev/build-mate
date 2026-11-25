@@ -1,9 +1,10 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { completeRequest } from '@/lib/db';
 import { json, sameOrigin } from '@/lib/guard';
 
 // 현장 요청을 '준비 완료'로 처리한다. '현장요청' 메뉴의 수정(처리) 권한이 필요하다.
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('requests');
   if (!actor) return json({ error: '로그인이 필요해요.' }, 401);
@@ -19,3 +20,5 @@ export async function POST(req: Request) {
   // 이미 다른 사람이 완료한 요청이면 조용히 성공으로 본다(알림만 정리하면 된다)
   return json({ ok: true });
 }
+
+export const POST = audited('requests', handlePOST);

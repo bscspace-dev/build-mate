@@ -12,7 +12,7 @@ export const metadata = { title: "빌드메이트" };
 // 메인 화면
 //  · 로그인 전                  → 아이디/비밀번호 로그인
 //  · 최고 관리자(내장 계정 포함)  → 메뉴 선택 없이 바로 관리자 화면(/admin)
-//  · 그 밖의 로그인 후           → 메뉴 선택 화면 (직급 기본 메뉴 + 최고 관리자·개발팀이 부여한 메뉴)
+//  · 그 밖의 로그인 후           → 상단 메뉴의 첫 번째 메뉴로 바로 이동 (쓸 수 있는 메뉴가 없으면 안내 화면)
 export default function Home() {
   return (
     <Suspense fallback={<p className="p-8 text-center text-zinc-500">불러오는 중…</p>}>
@@ -41,6 +41,7 @@ async function HomeLoader() {
       granted: member.menus.includes(k), // 직급 기본이 아니라 따로 부여받은 메뉴 표시
     })),
   ];
+  if (items.length > 0) redirect(items[0].href); // 메뉴 선택 없이, 상단 메뉴의 맨 첫 번째 메뉴를 첫 화면으로
   const teams = await getTeams();
   const mine = (await getVehicles()).filter(v => v.driverId === member.id);
   if (mine.length > 0) items.push({ key: "myvehicle", label: "내 차량", desc: `배차된 차량(${mine.map(v => v.nickname || v.name).join(", ")})에 실린 연장·상비품을 확인해요`, href: "/my-vehicle" });

@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { getMember, getTeams, getTrades, patchMember, removeMember } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -10,7 +11,7 @@ type Body = { action?: unknown; id?: unknown; name?: unknown; role?: unknown; ha
 const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 const isCoopTeam = (teams: Team[], key: string) => { const g = teamGroup(teams, key); return g !== null && sideOf(g) === 'coop'; };
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('suppliers');
   if (!actor) return json({ error: '거래처 메뉴 권한이 필요해요.' }, 401);
@@ -46,3 +47,5 @@ export async function POST(req: Request) {
   if ('notFound' in res) return json({ error: '없는 거래처예요.' }, 404);
   return json({ ok: true });
 }
+
+export const POST = audited('suppliers', handlePOST);

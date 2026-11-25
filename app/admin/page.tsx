@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import AdminCatalog from "@/components/admin/AdminCatalog";
+import AdminCatalog, { type InvMark } from "@/components/admin/AdminCatalog";
 import { actorCan, getActor } from "@/lib/auth";
-import { getCategories, getCategoryTrades, getProducts, getTrades, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
+import { getCategories, getCategoryTrades, getInventory, getProducts, getTrades, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
 
 export default function AdminPage() {
   return (
@@ -24,5 +24,14 @@ async function AdminLoader() {
     const v = vmap.get(i.vehicleId);
     if (v) (deployed[i.key] ??= []).push({ icon: v.icon, label: v.nickname || v.name, qty: i.qty });
   }
-  return <AdminCatalog key={products.reduce((n, p) => n + p.stock, 0) + ":" + JSON.stringify(deployed)} deployed={deployed} initialProducts={products} initialTrash={trash} trades={trades} categories={categories} categoryTrades={categoryTrades} canRegister={actorCan(actor, "catalog", "register")} canEdit={actorCan(actor, "catalog", "edit")} canDelete={actorCan(actor, "catalog", "delete")} />;
+  // 장비조사에서 추가·삭제한 품목: 누가 언제 했는지 (최근 기록이 우선). 장비조사 테이블이 아직 없으면 표시만 생략한다.
+  const invMarks: Record<string, InvMark> = {};
+  try {
+    for (const e of await getInventory()) {
+      const m = (invMarks[e.productKey] ??= {});
+      if (e.action === "add" && !m.add) m.add = { by: e.byName, at: e.createdAt, src: e.memo === "pricing" ? "가격조사" : "장비조사" };
+      if (e.action === "delete" && !m.del) m.del = { by: e.byName, at: e.createdAt, src: e.memo === "pricing" ? "가격조사" : "장비조사" };
+    }
+  } catch { /* 표시만 생략 */ }
+  return <AdminCatalog key={products.reduce((n, p) => n + p.stock, 0) + ":" + JSON.stringify(deployed)} deployed={deployed} invMarks={invMarks} initialProducts={products} initialTrash={trash} trades={trades} categories={categories} categoryTrades={categoryTrades} canRegister={actorCan(actor, "catalog", "register")} canEdit={actorCan(actor, "catalog", "edit")} canDelete={actorCan(actor, "catalog", "delete")} />;
 }

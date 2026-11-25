@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { getMember, patchMember } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -8,7 +9,7 @@ import { toPublic } from '@/lib/member-utils';
 const MAX_IMAGE = 3 * 1024 * 1024;
 const TYPES = ['image/webp', 'image/jpeg', 'image/png'];
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('members');
   if (!actor) return json({ error: '회원 관리 권한이 없어요.' }, 401);
@@ -43,3 +44,5 @@ export async function POST(req: Request) {
   if (member[kind]) await removeImage(member[kind]).catch(() => undefined); // 이전 사진 파일 정리
   return json({ ok: true, member: toPublic(r.member) });
 }
+
+export const POST = audited('members', handlePOST);

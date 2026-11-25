@@ -1,9 +1,10 @@
+import { audited } from '@/lib/audit';
 import { getActor } from '@/lib/auth';
 import { getActiveMembers, setPayrollPaidMany } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 
 // 월급 지급 완료 표시 / 취소 (월급관리 메뉴 권한). 선택한 회원들을 한 번에, 어느 달분(ym)을 얼마(실지급)로 지급했는지 남긴다.
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('payroll');
   if (!actor) return json({ error: '월급관리 권한이 없어요.' }, 401);
@@ -28,3 +29,5 @@ export async function POST(req: Request) {
   await setPayrollPaidMany(ym, changes);
   return json({ ok: true, count: changes.length });
 }
+
+export const POST = audited('payroll', handlePOST);

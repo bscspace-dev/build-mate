@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { addLeave, cancelLeave, decideLeave, getAnnualLeave, getLeaves, getActiveMembers, getTeams, removePlacementsRange, setAnnualLeave } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -28,7 +29,7 @@ async function officeShortage(memberId: string, req: { startDate: string; endDat
   return null;
 }
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('leave');
   if (!actor) return json({ error: '휴가신청 메뉴 권한이 필요해요.' }, 401);
@@ -94,3 +95,5 @@ export async function POST(req: Request) {
   if (a === 'approve') removed = await removePlacementsRange(done.memberId, done.startDate, done.endDate, leaveSlots(done.kind)); // 휴가 처리: 그 기간 배치를 뺀다
   return json({ ok: true, removed });
 }
+
+export const POST = audited('leave', handlePOST);

@@ -84,9 +84,14 @@ function StockBox({ value, canEdit, onCommit }: { value: number; canEdit: boolea
 // 끌 때 브라우저가 보여 주는 반투명 그림을 대신할 1px 투명 이미지
 const BLANK_DRAG = typeof Image !== "undefined" ? Object.assign(new Image(), { src: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" }) : (null as unknown as HTMLImageElement);
 
+/** 장비조사에서 이 품목을 추가·삭제한 사람과 때 */
+export type InvMark = { add?: { by: string; at: string; src: string }; del?: { by: string; at: string; src: string } };
+const markTime = (iso: string) => new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
 function ProductCard({
-  p, deployed, selected, starred, onSelect, onStar, onAction, onMove, onRename, onShift, onStock, shiftable, trashMode, canDelete, canEdit, list, reorderable, dragging, onDragStart, onDragEnd, onDropOn,
+  inv, p, deployed, selected, starred, onSelect, onStar, onAction, onMove, onRename, onShift, onStock, shiftable, trashMode, canDelete, canEdit, list, reorderable, dragging, onDragStart, onDragEnd, onDropOn,
 }: {
+  inv?: InvMark; // 장비조사에서 추가·삭제한 기록
   dragging: boolean; // 지금 이 카드를 끌고 있는지
   onDragStart: ((k: string) => void) | null; // null = 끌어서 순서 바꾸기 불가
   onDragEnd: () => void;
@@ -181,6 +186,12 @@ function ProductCard({
           {list && p.brand && <small className="block text-[11px] text-zinc-500">{p.brand}</small>}
         </div>
         {!list && p.brand && <div className="mt-0.5 truncate text-[11px] text-zinc-500">{p.brand}</div>}
+        {inv && (inv.add || (trashMode && inv.del)) && (
+          <div className="mt-0.5 text-[11px] font-semibold leading-snug text-blue-700 dark:text-blue-300">
+            {inv.add && <div suppressHydrationWarning>{inv.add.src} 추가 · {inv.add.by} · {markTime(inv.add.at)}</div>}
+            {trashMode && inv.del && <div className="text-red-600 dark:text-red-300" suppressHydrationWarning>{inv.del.src} 삭제 · {inv.del.by} · {markTime(inv.del.at)}</div>}
+          </div>
+        )}
         {p.kind === "연장" && !trashMode && deployed.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
             {deployed.map((d, i) => <span key={i} className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-800 dark:bg-blue-500/20 dark:text-blue-200">{d.icon} {d.label} 배정{d.qty > 1 ? " ×" + d.qty : ""}</span>)}
@@ -244,8 +255,9 @@ function ProductCard({
 }
 
 export default function AdminCatalog({
-  deployed: deployedMap, initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
+  deployed: deployedMap, invMarks = {}, initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
 }: {
+  invMarks?: Record<string, InvMark>; // 품목 번호 → 장비조사에서 추가·삭제한 사람과 때
   deployed: Record<string, { icon: string; label: string; qty: number }[]>; // 연장 품목 번호 → 배정된 차량
   initialProducts: Product[];
   initialTrash: TrashedProduct[];
@@ -1041,6 +1053,7 @@ export default function AdminCatalog({
               onStock={setStockOf}
               shiftable={!mouseUser && canEdit && !trashMode && sort === "no" ? { prev: list[0]?.key !== p.key, next: list[list.length - 1]?.key !== p.key } : null}
               p={p}
+              inv={invMarks[p.key]}
               deployed={deployedMap[p.key] ?? []}
               selected={selected.has(p.key)}
               starred={starSet.has(p.key)}

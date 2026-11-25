@@ -1,3 +1,4 @@
+import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
 import { addSite, getActiveMembers, getSites, removeSite, removeSitePostsOf, setSiteMark, updateSite } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -16,7 +17,7 @@ const MAX_DRAWINGS = 10;
 const clip = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   if (!sameOrigin(req)) return json({ error: 'forbidden' }, 403);
   const actor = await getActor('sites');
   if (!actor) return json({ error: '현장정보 메뉴 권한이 필요해요.' }, 401);
@@ -129,3 +130,5 @@ export async function POST(req: Request) {
     throw e;
   }
 }
+
+export const POST = audited('sites', handlePOST);

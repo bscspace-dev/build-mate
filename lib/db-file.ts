@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { asIcon, asKind, EMPTY_SPEC, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, Equipment, EquipmentInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput } from './types';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, TeamCategories, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo } from './types';
 import { removeImage } from './images';
 import { applyTeamLocks, DEFAULT_TEAMS, type Team } from './roles';
 
@@ -1115,29 +1115,113 @@ export function removeLoadPackage(id: string): Promise<VehicleResult> {
 }
 
 
-// ───────── 장비정보 (data/equipment.json) — 연장 정보와 최저가 ─────────
-export const getEquipment = async (): Promise<Equipment[]> => (await readList<Partial<Equipment> & { id: string; createdAt: string; updatedAt: string }>('equipment.json')).map(e => ({ id: e.id, name: e.name ?? '', brand: e.brand ?? '', model: e.model ?? '', category: e.category ?? '', spec: e.spec ?? '', query: e.query ?? '', offers: e.offers ?? [], naver: e.naver ?? null, history: e.history ?? [], createdAt: e.createdAt, updatedAt: e.updatedAt }));
-export function saveEquipment(id: string | null, i: EquipmentInput): Promise<Equipment | null> {
+// ───────── 장비조사 (data/inventory.json) — 조사 수량 기록 + 팀별 고정 카테고리 (data/team-categories.json) ─────────
+export const getInventory = async (): Promise<InventoryEntry[]> => (await readList<InventoryEntry>('inventory.json')).map(e => ({ ...e, action: e.action === 'delete' ? 'delete' as const : e.action === 'buy' ? 'buy' as const : e.action === 'price' ? 'price' as const : 'add' as const, qty: Number(e.qty) || 0, price: Number(e.price) || 0, oldPrice: Number(e.oldPrice) || 0, shipping: Number(e.shipping) || 0, vendor: typeof e.vendor === 'string' ? e.vendor : '' }));
+export function addInventory(i: InventoryEntryInput): Promise<InventoryEntry> {
   return withLock(async () => {
-    const list = await getEquipment();
-    const now = new Date().toISOString();
-    if (!id) {
-      const row: Equipment = { id: crypto.randomBytes(6).toString('hex'), ...i, createdAt: now, updatedAt: now };
-      await writeJson('equipment.json', [row, ...list]);
-      return row;
-    }
-    const cur = list.find(x => x.id === id);
-    if (!cur) return null;
-    const row: Equipment = { ...cur, ...i, updatedAt: now };
-    await writeJson('equipment.json', list.map(x => (x.id === id ? row : x)));
+    const row: InventoryEntry = { id: crypto.randomBytes(6).toString('hex'), ...i, oldPrice: i.oldPrice ?? 0, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', createdAt: new Date().toISOString() };
+    await writeJson('inventory.json', [row, ...(await getInventory())]);
     return row;
   });
 }
-export function removeEquipment(id: string): Promise<boolean> {
+export function removeInventory(id: string): Promise<boolean> {
   return withLock(async () => {
-    const list = await getEquipment();
+    const list = await getInventory();
     if (!list.some(x => x.id === id)) return false;
-    await writeJson('equipment.json', list.filter(x => x.id !== id));
+    await writeJson('inventory.json', list.filter(x => x.id !== id));
     return true;
+  });
+}
+export async function getTeamCategories(): Promise<TeamCategories> {
+  try {
+    const v = await readJson<unknown>('team-categories.json');
+    return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, a]) => [k, Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []])) : {};
+  } catch {
+    return {};
+  }
+}
+export function saveTeamCategories(map: TeamCategories): Promise<void> {
+  return withLock(async () => {
+    await writeJson('team-categories.json', map);
+  });
+}
+
+// ───────── 가격조사 — 품목별 구매 예정 수량 (data/pricing-qty.json). 구매완료를 누르면 창고 재고에 더해지고 비워진다. ─────────
+export async function getPricingQty(): Promise<Record<string, number>> {
+  try {
+    const v = await readJson<unknown>('pricing-qty.json');
+    return v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, n]) => typeof n === 'number' && n > 0)) as Record<string, number> : {};
+  } catch {
+    return {};
+  }
+}
+/** 한 품목의 구매 예정 수량 정하기 (0 이하는 지운다) */
+export function setPricingQty(key: string, qty: number): Promise<void> {
+  return withLock(async () => {
+    const cur = await getPricingQty();
+    if (qty > 0) cur[key] = qty; else delete cur[key];
+    await writeJson('pricing-qty.json', cur);
+  });
+}
+
+// ───────── 가격조사 — 품목별 구매 링크 (data/purchase-links.json) ─────────
+/** 예전에는 주소(문자열)만 저장했다 — 그 값도 그대로 읽는다 */
+const toInfo = (u: unknown): PurchaseInfo | null => (typeof u === 'string' ? (u ? { url: u, vendor: '' } : null) : u && typeof u === 'object' ? { url: typeof (u as PurchaseInfo).url === 'string' ? (u as PurchaseInfo).url : '', vendor: typeof (u as PurchaseInfo).vendor === 'string' ? (u as PurchaseInfo).vendor : '' } : null);
+export async function getPurchaseLinks(): Promise<Record<string, PurchaseInfo>> {
+  try {
+    const v = await readJson<unknown>('purchase-links.json');
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, u]) => { const i = toInfo(u); return i && (i.url || i.vendor) ? [[k, i] as [string, PurchaseInfo]] : []; }));
+  } catch {
+    return {};
+  }
+}
+/** 한 품목의 구매 링크 정하기 (빈 값이면 지운다) */
+export function setPurchaseLink(key: string, info: PurchaseInfo | null): Promise<void> {
+  return withLock(async () => {
+    const cur = await getPurchaseLinks();
+    if (info && (info.url || info.vendor)) cur[key] = info; else delete cur[key];
+    await writeJson('purchase-links.json', cur);
+  });
+}
+
+// ───────── 변경이력 (data/audit.json) — 최근 기록부터 (최대 5000건) ─────────
+export const getAudit = async (): Promise<AuditEntry[]> => readList<AuditEntry>('audit.json');
+export function addAudit(i: AuditInput): Promise<void> {
+  return withLock(async () => {
+    const row: AuditEntry = { id: crypto.randomBytes(6).toString('hex'), at: new Date().toISOString(), ...i };
+    await writeJson('audit.json', [row, ...(await getAudit())].slice(0, 5000));
+  });
+}
+
+// ───────── 가격조사 — 저장해 둔 금액·수량 (data/pricing-snapshots.json) ─────────
+export const getPricingSnapshots = async (): Promise<PricingSnapshot[]> => readList<PricingSnapshot>('pricing-snapshots.json');
+export function savePricingSnapshots(list: PricingSnapshot[]): Promise<void> {
+  return withLock(async () => {
+    await writeJson('pricing-snapshots.json', list);
+  });
+}
+
+// ───────── 장비조사 — 제외할 공정·카테고리 (data/inventory-excluded.json) ─────────
+export async function getInventoryExcluded(): Promise<InventoryExcluded> {
+  try {
+    const v = await readJson<{ trades?: unknown; categories?: unknown }>('inventory-excluded.json');
+    const strs = (x: unknown) => (Array.isArray(x) ? x.filter((k): k is string => typeof k === 'string') : []);
+    return { trades: strs(v?.trades), categories: strs(v?.categories) };
+  } catch {
+    return { trades: [], categories: [] };
+  }
+}
+export function saveInventoryExcluded(v: InventoryExcluded): Promise<void> {
+  return withLock(async () => {
+    await writeJson('inventory-excluded.json', v);
+  });
+}
+export function removeAudit(ids: string[]): Promise<number> {
+  return withLock(async () => {
+    const list = await getAudit();
+    const next = list.filter(e => !ids.includes(e.id));
+    if (next.length !== list.length) await writeJson('audit.json', next);
+    return list.length - next.length;
   });
 }

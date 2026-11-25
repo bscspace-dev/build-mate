@@ -250,22 +250,21 @@ export type SurveyPayload = {
   custom: { n: string; m: string }[];
 };
 
-/** 장비정보: 연장(공구)의 정보와 최저가를 모아 두는 목록 */
-export type EquipmentOffer = { id: string; mall: string; price: number; url: string; at: string; auto?: boolean }; // 판매처 가격 (auto: 링크에서 읽어 오는 가격 — 갱신 때마다 다시 읽는다)
-export type EquipmentNaver = { price: number; mall: string; url: string; title: string; at: string }; // 네이버 쇼핑에서 가져온 최저가
-export type EquipmentHistory = { at: string; price: number; mall: string }; // 최저가가 바뀐 기록 (오래된 것부터)
-export type Equipment = {
-  id: string;
-  name: string; // 장비명
-  brand: string; // 브랜드
-  model: string; // 모델명 (최저가를 찾을 때 이 이름이 제목에 있는 상품만 본다)
-  category: string; // 용도·분류 (예: 전동공구, 측정, 절단)
-  spec: string; // 스펙·메모
-  query: string; // 네이버 검색어 (비우면 브랜드 + 모델명)
-  offers: EquipmentOffer[];
-  naver: EquipmentNaver | null;
-  history: EquipmentHistory[];
-  createdAt: string;
-  updatedAt: string;
-};
-export type EquipmentInput = Omit<Equipment, 'id' | 'createdAt' | 'updatedAt'>;
+
+/** 장비조사 기록: 조사자가 상비품을 추가하거나 삭제(휴지통으로)한 내역. 누가 언제 했는지 남긴다. qty = 추가할 때 정한 재고 */
+export type InventoryEntry = { id: string; action: 'add' | 'delete' | 'buy' | 'price'; category: string; productKey: string; name: string; brand: string; qty: number; price: number; oldPrice: number; shipping: number; vendor: string; memo: string; byId: string; byName: string; createdAt: string };
+export type InventoryEntryInput = Omit<InventoryEntry, 'id' | 'createdAt' | 'oldPrice' | 'shipping' | 'vendor'> & { oldPrice?: number; shipping?: number; vendor?: string };
+/** 가격조사: 품목별 구매처 이름과 구매 링크 */
+export type PurchaseInfo = { url: string; vendor: string };
+/** 팀별로 맡은(고정) 카테고리: 팀 key → 창고장비현황 카테고리 이름들 */
+export type TeamCategories = Record<string, string[]>;
+
+/** 변경이력: 어느 메뉴에서 누가 언제 무엇을 추가·수정·삭제했는지 */
+export type AuditEntry = { id: string; at: string; menu: string; action: string; target: string; detail: string; byId: string; byName: string };
+export type AuditInput = Omit<AuditEntry, 'id' | 'at'>;
+
+/** 가격조사에서 저장해 둔 금액·수량 (나중에 불러와 그대로 되돌린다) */
+export type PricingSnapshot = { id: string; name: string; at: string; byName: string; items: { key: string; price: number; qty: number; ship?: number }[]; excluded?: string[] };
+
+/** 장비조사에서 제외할 공정·카테고리 (최고 관리자·개발팀이 정한다) */
+export type InventoryExcluded = { trades: string[]; categories: string[] };
