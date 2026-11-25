@@ -20,7 +20,7 @@ export default function PricingPage() {
 async function Loader() {
   const actor = await getActor("pricing");
   if (!actor) redirect("/"); // '가격조사' 메뉴를 쓸 수 없으면 메인으로
-  const { admin, trades } = await inventoryTrades(actor);
+  const { admin, trades } = await inventoryTrades(actor, "pricing");
   const [products, catTrades, log, allCats, links, snaps] = await Promise.all([getProducts(), getCategoryTrades(), getInventory(), getCategories(), getPurchaseLinks(), getPricingSnapshots().catch(() => [])]);
   const categories = Object.fromEntries(trades.map(t => [t, allCats.filter(c => catTrades[c] === t)]));
   const catOf = new Map(products.map(p => [p.key, p.category]));

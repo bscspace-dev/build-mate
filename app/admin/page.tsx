@@ -35,6 +35,6 @@ async function AdminLoader() {
     }
   } catch { /* 표시만 생략 */ }
   const invExcluded = await getInventoryExcluded().catch(() => ({ trades: [], categories: [] })); // 장비조사에서 제외한 공정·카테고리
-  const canSetInvExclude = actor.kind === "root" || isStaffAdmin(memberRoles(actor.member)); // 모든 권한이 있는 사람만 바꾼다
+  const canSetInvExclude = actor.kind === "root" || isStaffAdmin(memberRoles(actor.member)) || actorCan(actor, "inventory", "edit"); // 장비조사 '모든 권한'이 있는 사람만 바꾼다
   return <AdminCatalog key={products.reduce((n, p) => n + p.stock, 0) + ":" + JSON.stringify(deployed)} deployed={deployed} invMarks={invMarks} invExcluded={invExcluded} canSetInvExclude={canSetInvExclude} initialProducts={products} initialTrash={trash} trades={trades} categories={categories} categoryTrades={categoryTrades} canRegister={actorCan(actor, "catalog", "register")} canEdit={actorCan(actor, "catalog", "edit")} canDelete={actorCan(actor, "catalog", "delete")} />;
 }

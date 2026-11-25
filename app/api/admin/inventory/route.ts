@@ -27,7 +27,7 @@ export async function POST(req: Request) {
   if (limited(req, menu, 300, 10 * 60 * 1000)) return json({ error: '잠시 후 다시 해 주세요.' }, 429);
   // 서로 상관없는 조회는 동시에 한다 (한 번 왕복에 약 0.2초씩 걸려서, 차례로 하면 그만큼 더해진다)
   const [scope, excl] = await Promise.all([
-    inventoryTrades(actor),
+    inventoryTrades(actor, menu),
     // 장비조사에서 제외한 공정·카테고리는 보이지도, 추가·수정·삭제도 안 된다 (가격조사는 해당 없음)
     pricing ? Promise.resolve({ trades: [] as string[], categories: [] as string[] }) : getInventoryExcluded(),
   ]);

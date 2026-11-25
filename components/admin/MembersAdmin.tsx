@@ -1676,7 +1676,7 @@ export default function MembersAdmin({
                     const k = mn.key;
                     const cur = bulkSel[k] ?? "keep";
                     const multi = MENU_ACTIONS[k].length > 1 && k !== "members" && k !== "suppliers" && k !== "catalog";
-                    const opts: [BulkLevel, string][] = multi ? [["keep", "변경 안 함"], ["none", "회수"], ["view", "보기만"], ["all", "모든 권한"]] : [["keep", "변경 안 함"], ["none", "회수"], ["all", "부여"]];
+                    const opts: [BulkLevel, string][] = multi ? [["keep", "변경 안 함"], ["none", k === "inventory" ? "부여 안 함" : "회수"], ["view", k === "inventory" ? "일부" : "보기만"], ["all", "모든 권한"]] : [["keep", "변경 안 함"], ["none", "회수"], ["all", "부여"]];
                     return (
                       <div key={k} className="flex flex-wrap items-center gap-2 py-2">
                         <span className="mr-auto text-[15px] font-semibold">{mn.label}</span>

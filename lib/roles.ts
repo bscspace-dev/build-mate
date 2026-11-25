@@ -230,7 +230,7 @@ export type ActionKey = (typeof ACTIONS)[number]['key'];
 export const isAction = (v: unknown): v is ActionKey => ACTIONS.some(a => a.key === v);
 export const actionLabel = (k: ActionKey): string => ACTIONS.find(a => a.key === k)?.label ?? k;
 /** 메뉴마다 동작 이름이 다르게 보여야 할 때 (예: 출근관리의 '수정' 칸은 '전체 조회') */
-const ACTION_LABELS: Partial<Record<MenuKey, Partial<Record<ActionKey, string>>>> = { attendance: { view: '본인 출근만 보기', register: '조회 기준 등록·수정', edit: '전체 인원 조회' }, leave: { view: '내 신청 보기', register: '휴가 신청', edit: '승인·반려 (전체 신청 조회)' }, expenses: { view: '내 서류 보기', register: '서류·구매요청 올리기 (내 것 수정·삭제)', edit: '전체 조회·구매 완료 처리·엑셀 (담당자·경리)', delete: '전체 삭제' } };
+const ACTION_LABELS: Partial<Record<MenuKey, Partial<Record<ActionKey, string>>>> = { attendance: { view: '본인 출근만 보기', register: '조회 기준 등록·수정', edit: '전체 인원 조회' }, leave: { view: '내 신청 보기', register: '휴가 신청', edit: '승인·반려 (전체 신청 조회)' }, expenses: { view: '내 서류 보기', register: '서류·구매요청 올리기 (내 것 수정·삭제)', edit: '전체 조회·구매 완료 처리·엑셀 (담당자·경리)', delete: '전체 삭제' }, inventory: { view: '조사 목록 사용 (보기·추가·수정·삭제)', edit: '조사 제외 설정 · 모든 공정' } };
 export const menuActionLabel = (menu: MenuKey, k: ActionKey): string => ACTION_LABELS[menu]?.[k] ?? actionLabel(k);
 
 /** 그 메뉴에서 권한을 따로 줄 수 있는 동작. 설문 참여에는 등록/수정/삭제 개념이 없다. */
@@ -247,7 +247,7 @@ export const MENU_ACTIONS: Record<MenuKey, ActionKey[]> = {
   members: ['view', 'register', 'edit', 'delete'],
   staff: ['view'], // 회원정보는 보기만 — 부여 / 부여 안 함으로 나눈다
   payroll: ['view'], // 월급관리도 보기만 — 부여 / 부여 안 함
-  inventory: ['view'], // 장비조사도 부여 / 부여 안 함 — 부여받으면 내 팀 카테고리 안에서 등록·삭제
+  inventory: ['view', 'edit'], // 장비조사: 부여 안 함 / 일부(view = 내 공정 목록 사용: 보기·추가·수정·삭제 모두) / 모든(+ edit = 조사 제외 설정·모든 공정)
   pricing: ['view'], // 가격조사도 부여 / 부여 안 함 — 부여받으면 내 팀 공정 안에서 금액·수량 등록·수정·삭제
   history: ['view'], // 변경이력은 보기만 — 부여 / 부여 안 함
   survey: [],
