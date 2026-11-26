@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import PricingAdmin from "@/components/admin/PricingAdmin";
 import { getActor } from "@/lib/auth";
-import { getCategories, getCategoryTrades, getInventory, getFavoriteVendors, getPricingSnapshots, getProducts, getPurchaseLinks, getPurchaseOptions, getVendorShipping, getProductModels, getProductBattery, getProductCompat, getProductTags, getProductVoltage } from "@/lib/db";
+import { getCategories, getCategoryTrades, getInventory, getFavoriteVendors, getPricingSnapshots, getProducts, getPurchaseLinks, getPurchaseOptions, getVendorShipping, getProductModels, getProductBattery, getItemSets, getProductCompat, getProductTags, getProductVoltage } from "@/lib/db";
 import type { PurchaseOption, VendorShipping } from "@/lib/types";
 import { inventoryTrades } from "@/lib/inventory";
 
@@ -22,7 +22,7 @@ async function Loader() {
   const actor = await getActor("pricing");
   if (!actor) redirect("/"); // '가격조사' 메뉴를 쓸 수 없으면 메인으로
   const { admin, trades } = await inventoryTrades(actor, "pricing");
-  const [products, catTrades, log, allCats, baseLinks, snaps, favorites, options, vendorShip, models, batteries, voltages, compats, tagMap] = await Promise.all([getProducts(), getCategoryTrades(), getInventory(), getCategories(), getPurchaseLinks(), getPricingSnapshots().catch(() => []), getFavoriteVendors().catch(() => [] as string[]), getPurchaseOptions().catch((): Record<string, PurchaseOption[]> => ({})), getVendorShipping().catch((): Record<string, VendorShipping> => ({})), getProductModels().catch((): Record<string, string> => ({})), getProductBattery().catch((): Record<string, string> => ({})), getProductVoltage().catch((): Record<string, string> => ({})), getProductCompat().catch((): Record<string, string> => ({})), getProductTags().catch((): Record<string, string[]> => ({}))]);
+  const [products, catTrades, log, allCats, baseLinks, snaps, favorites, options, vendorShip, models, batteries, voltages, compats, tagMap, itemSets] = await Promise.all([getProducts(), getCategoryTrades(), getInventory(), getCategories(), getPurchaseLinks(), getPricingSnapshots().catch(() => []), getFavoriteVendors().catch(() => [] as string[]), getPurchaseOptions().catch((): Record<string, PurchaseOption[]> => ({})), getVendorShipping().catch((): Record<string, VendorShipping> => ({})), getProductModels().catch((): Record<string, string> => ({})), getProductBattery().catch((): Record<string, string> => ({})), getProductVoltage().catch((): Record<string, string> => ({})), getProductCompat().catch((): Record<string, string> => ({})), getProductTags().catch((): Record<string, string[]> => ({})), getItemSets().catch(() => [])]);
   // 판매 옵션(묶음·단품 등): 품목 아래에 옵션 행으로 이어 붙이고, 구매처·링크는 옵션 행 키(품목키#옵션id)로 합친다
   const links = { ...baseLinks };
   for (const [k, list] of Object.entries(options)) for (const o of list) links[`${k}#${o.id}`] = { url: o.url, vendor: o.vendor, unit: o.unit };
@@ -41,6 +41,7 @@ async function Loader() {
       })}
       log={log.filter(e => trades.includes(e.category)).map(e => ({ ...e, productCategory: catOf.get(e.productKey) ?? "" }))}
       links={links}
+      itemSets={itemSets}
       vendorShip={vendorShip}
       favorites={favorites}
       snapshots={snaps.map(x => ({ id: x.id, name: x.name, at: x.at, byName: x.byName, count: x.items.length, excluded: (x.excluded ?? []).length }))}

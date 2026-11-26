@@ -6,7 +6,7 @@ import { Modal } from "@/components/Sheet";
 import { printElement } from "@/lib/print-client";
 import { vendorColor } from "@/lib/vendor-color";
 import { buildXlsx, downloadBlob } from "@/lib/xlsx-export";
-import type { InventoryEntry, VendorShipping } from "@/lib/types";
+import type { InventoryEntry, ItemSet, VendorShipping } from "@/lib/types";
 
 type Prod = { key: string; kind: "상비품" | "자재" | "연장"; stock: number; trade: string; category: string; name: string; price: number; incl: number | null; base?: string; image?: string; brand?: string; model?: string; battery?: string; voltage?: string; compat?: string; tags?: string[] }; // base = 판매 옵션 행이면 원래 품목 키 // incl = 포함가로 직접 적어 둔 금액 (없으면 null)
 type Entry = InventoryEntry & { productCategory: string };
@@ -50,7 +50,7 @@ const entryMoney = (e: { price: number; qty: number; shipping: number; createdAt
 //  · 수량·배송비는 '구매 예정' 값으로, 적는 즉시 이 브라우저에 자동 저장된다(새로 조사 시작·구매완료 때 비워진다). 저장본을 불러오면 그 값으로 채워진다.
 //  · 구매처 칸을 누르면 구매처 이름과 구매 링크를 등록한다 (품목마다 한 번만, 바꿀 때까지 유지).
 //  · 구매완료를 누르면 수량이 창고장비현황 재고에 더해지고, 구매완료 탭에 구매처·배송비와 함께 남는다.
-export default function PricingAdmin({ trades, categories, products: productsProp, log, links, vendorShip, favorites, snapshots, admin }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: Entry[]; links: Record<string, Info>; vendorShip: Record<string, VendorShipping>; favorites: string[]; snapshots: { id: string; name: string; at: string; byName: string; count: number; excluded: number }[]; admin: boolean }) {
+export default function PricingAdmin({ trades, categories, products: productsProp, log, links, vendorShip, itemSets, favorites, snapshots, admin }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: Entry[]; links: Record<string, Info>; vendorShip: Record<string, VendorShipping>; itemSets: ItemSet[]; favorites: string[]; snapshots: { id: string; name: string; at: string; byName: string; count: number; excluded: number }[]; admin: boolean }) {
   const router = useRouter();
   // 연장은 공정만으로 구분한다: 카테고리를 비워서 묶음·제목에 카테고리가 나오지 않게 한다
   const products = productsProp.map(p => (p.kind === "연장" ? { ...p, category: "" } : p));
@@ -138,6 +138,12 @@ export default function PricingAdmin({ trades, categories, products: productsPro
   const [vsOpen, setVsOpen] = useState(false);
   const [kindTab, setKindTab] = useState<"상비품" | "자재" | "연장">("상비품"); // 가격조사의 종류 탭: 상비품 / 자재 (이 브라우저에 기억)
   useEffect(() => { try { const v = localStorage.getItem("bm_pricing_kind"); if (v === "상비품" || v === "자재" || v === "연장") setKindTab(v); } catch { /* 저장이 막힌 환경 */ } }, []);
+  // 선택 목록: 장비조사에서 체크해 저장한 품목 묶음. 불러오면 그 품목만 (종류·공정·카테고리와 상관없이) 모아 보여 준다.
+  const [setsOpen, setSetsOpen] = useState(false);
+  const [activeSetId, setActiveSetId] = useState("");
+  const activeSet = itemSets.find(x => x.id === activeSetId);
+  const activeKeys = activeSet ? new Set(activeSet.keys) : null;
+  const [toolQ, setToolQ] = useState(""); // 연장 검색어 (품목·브랜드·제품명·전압·배터리·호환성·태그)
   const [tagSel, setTagSel] = useState(""); // 연장 태그로 묶어 보기 (빈 값 = 전체)
   const [holdTab, setHoldTab] = useState<"all" | "own" | "none">("all"); // 보유(재고 1개 이상) / 미보유(재고 0) 구분
   useEffect(() => { try { const v = localStorage.getItem("bm_pricing_hold"); if (v === "all" || v === "own" || v === "none") setHoldTab(v); } catch { /* 저장이 막힌 환경 */ } }, []);
@@ -334,6 +340,10 @@ export default function PricingAdmin({ trades, categories, products: productsPro
     setVsNew("");
     setVsQ(name);
   }
+  async function delSet(x: ItemSet) {
+    if (!window.confirm(`선택 목록 “${x.name}”(${x.keys.length}개)을(를) 삭제할까요?\n품목은 그대로 두고 목록만 지워져요.`)) return;
+    if (await post({ action: "setDelete", id: x.id })) { if (activeSetId === x.id) setActiveSetId(""); router.refresh(); }
+  }
   async function saveVs(name: string) {
     const k = normV(name), d = vsDraft[k];
     if (!d) return;
@@ -469,10 +479,12 @@ export default function PricingAdmin({ trades, categories, products: productsPro
   // 연장 태그: 지금 공정의 연장에 붙은 태그와 개수 (옵션 행은 세지 않는다)
   const tagCounts = (() => { const m = new Map<string, number>(); products.filter(p => p.kind === "연장" && !p.base && (!sel || p.trade === sel)).forEach(p => (p.tags ?? []).forEach(t => m.set(t, (m.get(t) ?? 0) + 1))); return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko")); })();
   const tagNow = kindTab === "연장" && tagCounts.some(([t]) => t === tagSel) ? tagSel : "";
-  const inScope = (p: Prod) => p.kind === kindTab && (!sel || p.trade === sel) && (kindTab === "연장" || !catSel || p.category === catSel) && (!tagNow || (p.tags ?? []).includes(tagNow));
+  const toolKw = toolQ.trim().replace(/s+/g, "").toLowerCase();
+  const toolMatch = (p: Prod) => !toolKw || `${p.name} ${p.brand ?? ""} ${p.model ?? ""} ${p.voltage ?? ""} ${p.battery ?? ""} ${p.compat ?? ""} ${(p.tags ?? []).join(" ")}`.replace(/s+/g, "").toLowerCase().includes(toolKw);
+  const inScope = (p: Prod) => p.kind === kindTab && (!sel || p.trade === sel) && (kindTab === "연장" || !catSel || p.category === catSel) && (!tagNow || (p.tags ?? []).includes(tagNow)) && (kindTab !== "연장" || toolMatch(p));
   const holdCounts = { all: products.filter(p => !p.base && inScope(p) && !hidden.includes(p.key)).length, own: products.filter(p => !p.base && inScope(p) && !hidden.includes(p.key) && p.stock > 0).length, none: products.filter(p => !p.base && inScope(p) && !hidden.includes(p.key) && p.stock <= 0).length };
   const shown = products
-    .filter(p => inScope(p) && !hidden.includes(p.key) && (kindTab !== "연장" || holdTab === "all" || (holdTab === "own") === (p.stock > 0)))
+    .filter(p => activeKeys ? activeKeys.has(p.base ?? p.key) && !hidden.includes(p.key) : inScope(p) && !hidden.includes(p.key) && (kindTab !== "연장" || holdTab === "all" || (holdTab === "own") === (p.stock > 0)))
     .map((p, i) => ({ p, i }))
     .sort((x, y) => trades.indexOf(x.p.trade) - trades.indexOf(y.p.trade) || catRank(x.p) - catRank(y.p) || x.i - y.i)
     .map(x => x.p);
@@ -597,8 +609,9 @@ export default function PricingAdmin({ trades, categories, products: productsPro
       <button type="button" disabled={sheetRows.length === 0} onClick={exportSurvey} title={`${sheetScope} 품목을 엑셀로`} className="rounded-lg bg-emerald-600 px-3 py-1.5 font-bold text-white disabled:opacity-40">엑셀</button>
       <button type="button" disabled={sheetRows.length === 0} onClick={printSurvey} title={`${sheetScope} 품목을 PDF·인쇄로`} className="rounded-lg bg-zinc-100 px-3 py-1.5 font-bold disabled:opacity-40 dark:bg-zinc-800">PDF·인쇄</button>
       <button type="button" onClick={() => saveColW({})} title="표 열 너비를 처음 상태로" className="rounded-lg bg-zinc-100 px-3 py-1.5 font-bold text-zinc-500 dark:bg-zinc-800">열 너비 초기화</button>
+      <button type="button" onClick={() => setSetsOpen(true)} title="장비조사에서 체크해 저장한 선택 목록을 불러와요" className="rounded-lg bg-violet-600 px-3 py-1.5 font-bold text-white hover:bg-violet-700">📋 선택 목록 불러오기{itemSets.length > 0 && <span className="ml-1 opacity-80">{itemSets.length}</span>}</button>
       <button type="button" onClick={() => setVsOpen(true)} title="구매처마다 기본 배송비와 무료배송 기준 금액을 정해요" className="rounded-lg bg-zinc-100 px-3 py-1.5 font-bold dark:bg-zinc-800">🚚 구매처 배송비</button>
-      <button type="button" onClick={() => setSnapOpen(true)} className="rounded-lg bg-zinc-100 px-3 py-1.5 font-bold dark:bg-zinc-800">불러오기 {snapshots.length > 0 && <span className="text-zinc-500">{snapshots.length}</span>}</button>
+      <button type="button" onClick={() => setSnapOpen(true)} title="저장해 둔 금액·수량(구매 계획)을 불러와요" className="rounded-lg bg-zinc-100 px-3 py-1.5 font-bold dark:bg-zinc-800">금액·수량 불러오기 {snapshots.length > 0 && <span className="text-zinc-500">{snapshots.length}</span>}</button>
     </div>
   );
   const qtyRows = shown.filter(x => qtyOf(x) > 0);
@@ -746,11 +759,26 @@ export default function PricingAdmin({ trades, categories, products: productsPro
               <button key={k} type="button" role="tab" aria-selected={holdTab === k} onClick={() => pickHold(k)} title={k === "own" ? "창고장비현황 재고가 1개 이상" : k === "none" ? "창고장비현황 재고가 0" : "보유·미보유 모두"} className={`rounded-t-lg border border-b-0 px-4 py-1.5 text-xs font-bold ${holdTab === k ? "border-zinc-700 bg-zinc-700 text-white dark:border-zinc-200 dark:bg-zinc-200 dark:text-zinc-900" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label} <small className="opacity-70">{holdCounts[k]}</small></button>
             ))}
           </div>}
+          {kindTab === "연장" && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input type="search" value={toolQ} onChange={e => setToolQ(e.target.value.slice(0, 60))} placeholder="🔍 연장 검색 (품목·브랜드·제품명·전압·호환성·태그)" aria-label="연장 검색" className="min-w-[14rem] flex-1 rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 sm:max-w-md dark:border-white/15" />
+              {toolKw && <span className="text-xs text-zinc-500">검색 결과 {products.filter(p => !p.base && p.kind === "연장" && toolMatch(p) && (!sel || p.trade === sel)).length}개</span>}
+              {toolKw && <button type="button" onClick={() => setToolQ("")} className="rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-bold dark:bg-zinc-800">지우기</button>}
+            </div>
+          )}
           {kindTab === "연장" && tagCounts.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="태그로 묶어 보기">
               <span className="font-bold text-zinc-500">태그</span>
               <button type="button" aria-pressed={tagNow === ""} onClick={() => setTagSel("")} className={`rounded-full border px-2.5 py-1 font-bold ${tagNow === "" ? "border-violet-600 bg-violet-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>전체</button>
               {tagCounts.map(([t, n]) => <button key={t} type="button" aria-pressed={tagNow === t} onClick={() => setTagSel(tagNow === t ? "" : t)} className={`rounded-full border px-2.5 py-1 font-bold ${tagNow === t ? "border-violet-600 bg-violet-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>#{t} <span className="opacity-70">{n}</span></button>)}
+            </div>
+          )}
+          {activeSet && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-violet-50 px-3 py-2 text-sm dark:bg-violet-500/10">
+              <b className="text-violet-800 dark:text-violet-200">📋 선택 목록 “{activeSet.name}”</b>
+              <span className="text-xs text-zinc-500">{shown.filter(p => !p.base).length}개 품목만 보고 있어요 (종류·공정·카테고리와 상관없이)</span>
+              <button type="button" onClick={() => toggle(shown.map(x => x.key), true)} className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white">전체 체크</button>
+              <button type="button" onClick={() => setActiveSetId("")} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">목록 해제</button>
             </div>
           )}
           {saveBar}
@@ -1081,6 +1109,27 @@ export default function PricingAdmin({ trades, categories, products: productsPro
           <img src={peek.src} alt="" className="h-28 w-28 rounded-lg bg-white object-contain" />
         </div>
       )}
+
+      {/* 선택 목록 불러오기 */}
+      <Modal open={setsOpen} onClose={() => !busy && setSetsOpen(false)} wide>
+        <h2 className="text-lg font-bold">선택 목록 불러오기</h2>
+        <p className="mt-1 text-sm text-zinc-500">장비조사에서 품목을 체크하고 <b>선택 목록으로 저장</b>해 두면 여기서 불러올 수 있어요. 불러오면 그 품목만 모아 보여 줘요.</p>
+        {err && <p className="mt-2 text-sm text-red-500" role="alert">{err}</p>}
+        <ul className="mt-3 max-h-[55vh] divide-y divide-black/5 overflow-y-auto rounded-xl border border-black/10 dark:divide-white/10 dark:border-white/10">
+          {itemSets.length === 0 && <li className="px-4 py-6 text-center text-sm text-zinc-500">저장한 선택 목록이 없어요. 장비조사에서 품목을 체크하고 “선택 목록으로 저장”을 눌러 보세요.</li>}
+          {itemSets.map(x => (
+            <li key={x.id} className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+              <div className="mr-auto min-w-0">
+                <div className="truncate font-bold">{x.name}</div>
+                <div className="text-xs text-zinc-500">{when(x.at)} · {x.byName} · {x.keys.length}개 품목</div>
+              </div>
+              <button type="button" onClick={() => { setActiveSetId(x.id); setSetsOpen(false); setTab("survey"); }} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-bold text-white">불러오기</button>
+              <button type="button" disabled={busy} onClick={() => void delSet(x)} className="rounded-lg bg-red-50 px-3 py-1.5 text-sm font-bold text-red-600 disabled:opacity-50 dark:bg-red-500/15 dark:text-red-300">삭제</button>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4"><button type="button" onClick={() => setSetsOpen(false)} className="w-full rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">닫기</button></div>
+      </Modal>
 
       {/* 구매처별 배송비·무료배송 기준 */}
       <Modal open={vsOpen} onClose={() => !busy && setVsOpen(false)} wide>

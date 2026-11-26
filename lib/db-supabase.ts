@@ -2,7 +2,7 @@ import 'server-only';
 import { asIcon, asKind, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo, VehicleLayout, PurchaseOption, VendorShipping } from './types';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo, VehicleLayout, PurchaseOption, VendorShipping, ItemSet } from './types';
 import { applyTeamLocks, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type Team } from './roles';
 import { removeImage } from './images';
 import { supabase } from './supabase';
@@ -1193,4 +1193,34 @@ export async function setProductTags(key: string, tags: string[]): Promise<void>
   const cur = await getProductTags();
   if (tags.length) cur[key] = tags; else delete cur[key];
   must(await supabase().from('app_settings').upsert({ key: 'product_tags', value: cur }, { onConflict: 'key' }), '태그 저장');
+}
+
+// ───────── 선택 목록 — 장비조사에서 저장, 가격조사에서 불러오기 (app_settings: item_sets) ─────────
+const toItemSets = (v: unknown): ItemSet[] => (Array.isArray(v) ? v.flatMap((x): ItemSet[] => {
+  if (!x || typeof x !== 'object') return [];
+  const o = x as Partial<ItemSet>;
+  if (typeof o.id !== 'string' || typeof o.name !== 'string' || !Array.isArray(o.keys)) return [];
+  return [{ id: o.id, name: o.name, keys: o.keys.filter((k): k is string => typeof k === 'string'), at: typeof o.at === 'string' ? o.at : '', byName: typeof o.byName === 'string' ? o.byName : '' }];
+}) : []);
+export async function getItemSets(): Promise<ItemSet[]> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'item_sets').maybeSingle(), '선택 목록 조회') as { value: unknown } | null;
+  return toItemSets(row?.value);
+}
+export async function saveItemSets(v: ItemSet[]): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'item_sets', value: v }, { onConflict: 'key' }), '선택 목록 저장');
+}
+
+// ───────── 장비조사에서 계정별로 숨긴 품목 (app_settings: inventory_hidden) ─────────
+const toHiddenMap = (v: unknown): Record<string, string[]> => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, a]) => (Array.isArray(a) ? [[k, a.filter((x): x is string => typeof x === 'string')] as [string, string[]]] : [])).filter(([, a]) => a.length > 0));
+};
+export async function getInventoryHidden(): Promise<Record<string, string[]>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'inventory_hidden').maybeSingle(), '숨긴 품목 조회') as { value: unknown } | null;
+  return toHiddenMap(row?.value);
+}
+export async function setInventoryHidden(who: string, keys: string[]): Promise<void> {
+  const cur = await getInventoryHidden();
+  if (keys.length) cur[who] = keys; else delete cur[who];
+  must(await supabase().from('app_settings').upsert({ key: 'inventory_hidden', value: cur }, { onConflict: 'key' }), '숨긴 품목 저장');
 }

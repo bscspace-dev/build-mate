@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { asIcon, asKind, EMPTY_SPEC, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo, VehicleLayout, PurchaseOption, VendorShipping } from './types';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo, VehicleLayout, PurchaseOption, VendorShipping, ItemSet } from './types';
 import { removeImage } from './images';
 import { applyTeamLocks, DEFAULT_TEAMS, type Team } from './roles';
 
@@ -1373,5 +1373,45 @@ export function setProductTags(key: string, tags: string[]): Promise<void> {
     const cur = await getProductTags();
     if (tags.length) cur[key] = tags; else delete cur[key];
     await writeJson('product-tags.json', cur);
+  });
+}
+
+// ───────── 선택 목록 — 장비조사에서 저장, 가격조사에서 불러오기 (data/item-sets.json) ─────────
+const toItemSets = (v: unknown): ItemSet[] => (Array.isArray(v) ? v.flatMap((x): ItemSet[] => {
+  if (!x || typeof x !== 'object') return [];
+  const o = x as Partial<ItemSet>;
+  if (typeof o.id !== 'string' || typeof o.name !== 'string' || !Array.isArray(o.keys)) return [];
+  return [{ id: o.id, name: o.name, keys: o.keys.filter((k): k is string => typeof k === 'string'), at: typeof o.at === 'string' ? o.at : '', byName: typeof o.byName === 'string' ? o.byName : '' }];
+}) : []);
+export async function getItemSets(): Promise<ItemSet[]> {
+  try {
+    return toItemSets(await readJson<unknown>('item-sets.json'));
+  } catch {
+    return [];
+  }
+}
+export function saveItemSets(v: ItemSet[]): Promise<void> {
+  return withLock(async () => {
+    await writeJson('item-sets.json', v);
+  });
+}
+
+// ───────── 장비조사에서 계정별로 숨긴 품목 (data/inventory-hidden.json) ─────────
+const toHiddenMap = (v: unknown): Record<string, string[]> => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, a]) => (Array.isArray(a) ? [[k, a.filter((x): x is string => typeof x === 'string')] as [string, string[]]] : [])).filter(([, a]) => a.length > 0));
+};
+export async function getInventoryHidden(): Promise<Record<string, string[]>> {
+  try {
+    return toHiddenMap(await readJson<unknown>('inventory-hidden.json'));
+  } catch {
+    return {};
+  }
+}
+export function setInventoryHidden(who: string, keys: string[]): Promise<void> {
+  return withLock(async () => {
+    const cur = await getInventoryHidden();
+    if (keys.length) cur[who] = keys; else delete cur[who];
+    await writeJson('inventory-hidden.json', cur);
   });
 }

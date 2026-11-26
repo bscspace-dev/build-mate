@@ -1,5 +1,5 @@
 import { getActor } from '@/lib/auth';
-import { addInventory, addProduct, getPurchaseLinks, setProductModel, setProductBattery, setProductVoltage, setProductCompat, setProductTags, getPurchaseOptions, savePurchaseOptions, getVendorShipping, saveVendorShipping, getInventory, getInventoryExcluded, removeInventory, saveInventoryExcluded, deleteProducts, getCategoryTrades, getProducts, getTrades, getFavoriteVendors, saveFavoriteVendors, getPricingSnapshots, nextProductKey, savePricingSnapshots, setPurchaseLink, setStock, updateProduct } from '@/lib/db';
+import { getCategories, moveProducts, setSubs, addInventory, addProduct, getPurchaseLinks, getInventoryHidden, setInventoryHidden, getItemSets, saveItemSets, setProductModel, setProductBattery, setProductVoltage, setProductCompat, setProductTags, getPurchaseOptions, savePurchaseOptions, getVendorShipping, saveVendorShipping, getInventory, getInventoryExcluded, removeInventory, saveInventoryExcluded, deleteProducts, getCategoryTrades, getProducts, getTrades, getFavoriteVendors, saveFavoriteVendors, getPricingSnapshots, nextProductKey, savePricingSnapshots, setPurchaseLink, setStock, updateProduct } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { inventoryTrades } from '@/lib/inventory';
 import { recordChangeLater } from '@/lib/audit';
@@ -151,6 +151,52 @@ export async function POST(req: Request) {
     await saveVendorShipping(all);
     recordChangeLater(menu, { action: '구매처 배송비 설정', target: vendor, detail: fee > 0 || freeOver > 0 ? `기본 배송비 ${fee.toLocaleString('ko-KR')}원 · 무료배송 ${freeOver > 0 ? freeOver.toLocaleString('ko-KR') + '원 이상' : '기준 없음'}` : '설정 삭제' });
     return json({ ok: true });
+  }
+
+  if (b.action === 'invHide') {
+    // 장비조사에서 품목 숨기기·보이기: 계정마다 따로 (나에게만 적용, 다른 아이디는 그대로 보인다). 가격조사·창고장비현황과 무관.
+    if (pricing) return json({ error: 'bad request' }, 400);
+    const keys = Array.isArray(b.keys) ? [...new Set(b.keys.filter((k): k is string => typeof k === 'string').map(k => clip(k, 40)))].slice(0, 2000) : [];
+    if (keys.length === 0) return json({ error: 'bad request' }, 400);
+    const who = me.id || 'root';
+    const hide = (b as { hide?: unknown }).hide !== false;
+    const cur = new Set((await getInventoryHidden())[who] ?? []);
+    keys.forEach(k => { if (hide) cur.add(k); else cur.delete(k); });
+    await setInventoryHidden(who, [...cur].slice(-5000));
+    return json({ ok: true, count: cur.size });
+  }
+
+  if (b.action === 'setSave' || b.action === 'setDelete') {
+    // 선택 목록: 장비조사에서 체크한 품목을 이름 붙여 저장(같은 이름은 덮어쓰기), 삭제는 누구나 (최대 30개)
+    const sets = await getItemSets();
+    if (b.action === 'setDelete') {
+      const id = clip(b.id, 40);
+      const hit = sets.find(x => x.id === id);
+      if (!hit) return json({ error: '없는 선택 목록이에요.' }, 404);
+      await saveItemSets(sets.filter(x => x.id !== id));
+      recordChangeLater(menu, { action: '선택 목록 삭제', target: hit.name, detail: `${hit.keys.length}개 품목` });
+      return json({ ok: true });
+    }
+    const addToId = clip((b as { addTo?: unknown }).addTo, 40); // 이미 저장한 선택 목록에 계속 추가
+    const name = clip(b.name, 30);
+    if (!addToId && !name) return json({ error: '선택 목록 이름을 적어 주세요.' }, 400);
+    const given = Array.isArray(b.keys) ? b.keys.filter((k): k is string => typeof k === 'string').map(k => clip(k, 40)) : [];
+    const [allP, catT] = await Promise.all([getProducts(), getCategoryTrades()]);
+    const keys = [...new Set(given)].filter(k => { const p = allP.find(x => x.key === k); return !!p && okKind(p.kind) && trades.includes(catT[p.category] ?? ''); }).slice(0, 2000);
+    if (keys.length === 0) return json({ error: '저장할 품목이 없어요. 품목을 먼저 체크해 주세요.' }, 400);
+    if (addToId) {
+      const hit = sets.find(x => x.id === addToId);
+      if (!hit) return json({ error: '없는 선택 목록이에요. 새로고침 후 다시 골라 주세요.' }, 404);
+      const merged = [...new Set([...hit.keys, ...keys])].slice(0, 2000);
+      const added = merged.length - hit.keys.length;
+      await saveItemSets(sets.map(x => (x.id === addToId ? { ...x, keys: merged, at: new Date().toISOString(), byName: me.name } : x)));
+      recordChangeLater(menu, { action: '선택 목록에 추가', target: hit.name, detail: `${added}개 추가 · 총 ${merged.length}개` });
+      return json({ ok: true, id: hit.id, count: merged.length, added, name: hit.name });
+    }
+    const item = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, keys, at: new Date().toISOString(), byName: me.name };
+    await saveItemSets([item, ...sets.filter(x => x.name !== name)].slice(0, 30));
+    recordChangeLater(menu, { action: '선택 목록 저장', target: name, detail: `${keys.length}개 품목` });
+    return json({ ok: true, id: item.id, count: keys.length });
   }
 
   if (b.action === 'optAdd' || b.action === 'optDel') {
@@ -334,6 +380,38 @@ export async function POST(req: Request) {
     await Promise.all(targets.map(p => addInventory({ action: 'delete', category: catT[p.category] ?? '', productKey: p.key, name: p.name, brand: p.brand, qty: p.stock, price: p.price, memo, byId: me.id, byName: me.name }).catch(() => undefined)));
     recordChangeLater(menu, { action: '삭제', target: `${targets.length}개 품목`, detail: `${targets.slice(0, 5).map(p => p.name).join(', ')}${targets.length > 5 ? ` 외 ${targets.length - 5}개` : ''} · 창고장비현황 휴지통으로 이동` });
     return json({ ok: true, removed: targets.map(p => p.key) });
+  }
+
+  if (b.action === 'move') {
+    // 체크한 품목을 다른 공정·카테고리로 이동 (장비조사 전용). 내가 맡은 공정(최고 관리자·개발팀은 전체)의 품목만, 내가 맡은 공정으로만 옮길 수 있다.
+    if (pricing) return json({ error: 'bad request' }, 400);
+    const keys = Array.isArray(b.keys) ? [...new Set(b.keys.filter((k): k is string => typeof k === 'string').map(k => clip(k, 40)))].slice(0, 500) : [];
+    if (keys.length === 0) return json({ error: 'bad request' }, 400);
+    const toTrade = clip(b.trade, 40);
+    if (!trades.includes(toTrade)) return json({ error: '내 팀이 맡은 공정이 아니에요.' }, 403);
+    const [allP, catT, allTrades, allCats] = await Promise.all([getProducts(), getCategoryTrades(), getTrades(), getCategories()]);
+    const toCats = allCats.filter(c => catT[c] === toTrade && !excl.categories.includes(c));
+    const wantCat = clip(b.category, 40);
+    const targets = keys.flatMap(k => { const p = allP.find(x => x.key === k); return p && okKind(p.kind) && trades.includes(catT[p.category] ?? '') && !excl.categories.includes(p.category) ? [p] : []; });
+    if (targets.length === 0) return json({ error: '옮길 수 있는 품목이 없어요.' }, 404);
+    const flatOnly = targets.every(p => p.kind === '연장'); // 연장은 카테고리 구분이 없어서 공정의 첫 카테고리에 둔다
+    const dest = flatOnly ? (toCats[0] ?? '') : wantCat;
+    if (!dest) return json({ error: flatOnly ? '이 공정에는 카테고리가 없어서 옮길 수 없어요.' : '옮길 카테고리를 골라 주세요.' }, 400);
+    if (!toCats.includes(dest)) return json({ error: '이 공정의 카테고리가 아니에요.' }, 400);
+    const moving = targets.map(p => ({ p, to: p.kind === '연장' ? (toCats[0] ?? dest) : dest })).filter(m => m.p.category !== m.to);
+    if (moving.length === 0) return json({ ok: true, moved: [], category: dest });
+    // 같은 이름이 이미 도착 공정에 있으면 옮기지 않는다 (연장은 중복 허용)
+    const names = new Set(allP.filter(x => catT[x.category] === toTrade).map(x => x.name));
+    const clash = moving.filter(m => m.p.kind !== '연장' && catT[m.p.category] !== toTrade && names.has(m.p.name));
+    if (clash.length) return json({ error: `도착 공정에 이미 있는 품목 이름이에요: ${clash.slice(0, 3).map(m => m.p.name).join(', ')}${clash.length > 3 ? ' 외' : ''}` }, 400);
+    for (const to of [...new Set(moving.map(m => m.to))]) {
+      const ks = moving.filter(m => m.to === to).map(m => m.p.key);
+      const r = await moveProducts(ks, to);
+      if ('notFound' in r) return json({ error: '없는 카테고리예요.' }, 404);
+      await setSubs(ks.map(key => ({ key, sub: headOf(to, catT, allTrades) })));
+    }
+    recordChangeLater(menu, { action: '이동', target: `${moving.length}개 품목`, detail: `${moving.slice(0, 5).map(m => m.p.name).join(', ')}${moving.length > 5 ? ` 외 ${moving.length - 5}개` : ''} → ${toTrade} › ${dest}` });
+    return json({ ok: true, moved: moving.map(m => ({ key: m.p.key, category: m.to })), category: dest });
   }
 
   if (b.action === 'delete') {

@@ -280,3 +280,6 @@ export type PurchaseOption = { id: string; unit: string; vendor: string; url: st
 
 /** 구매처별 배송 정책: fee = 기본 배송비, freeOver = 이 금액(부가세 포함 물품 합계) 이상이면 무료배송 (0 = 무료 기준 없음). 키는 구매처 이름(소문자·공백 정리) */
 export type VendorShipping = { fee: number; freeOver: number };
+
+/** 장비조사에서 체크해 저장해 두는 선택 목록: 가격조사에서 불러와 그 품목만 모아 본다 */
+export type ItemSet = { id: string; name: string; keys: string[]; at: string; byName: string };

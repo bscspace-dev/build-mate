@@ -1,8 +1,10 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { shrink } from "@/components/admin/AddProduct";
+import { buildXlsx, downloadBlob } from "@/lib/xlsx-export";
+import { readXlsx } from "@/lib/xlsx-import";
 import { normTags } from "@/lib/tags";
 import type { InventoryEntry } from "@/lib/types";
 
@@ -27,7 +29,7 @@ const when = (iso: string) => new Date(iso).toLocaleString("sv-SE", { timeZone: 
 //  · 필요한 상비품 추가 → 고른 공정·카테고리로 창고장비현황에도 같이 등록된다.
 //  · 추가·삭제한 사람과 시각이 남는다. 최고 관리자·개발팀은 모든 공정을 보고, 팀마다 맡을 공정을 정한다.
 type Setup = { trades: string[]; categories: Record<string, string[]>; excluded: { trades: string[]; categories: string[] } };
-export default function InventoryAdmin({ trades, categories, products, log, admin, setup }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: InventoryEntry[]; admin: boolean; setup: Setup | null }) {
+export default function InventoryAdmin({ trades, categories, products, log, admin, setup, itemSets, hidden }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: InventoryEntry[]; admin: boolean; setup: Setup | null; itemSets: { id: string; name: string; count: number }[]; hidden: string[] }) {
   const router = useRouter();
   const [checked, setChecked] = useState<string[]>([]); // 삭제하려고 체크한 품목
   const [kindTab, setKindTab] = useState<KindTab>("상비품"); // 장비조사의 종류 탭: 상비품 / 자재
@@ -127,6 +129,23 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const [newModel, setNewModel] = useState("");
   const [newTags, setNewTags] = useState(""); // 연장 태그 (쉼표로 구분)
   const [editTags, setEditTags] = useState("");
+  // 숨기기: 내가 숨긴 품목은 장비조사에서만 안 보인다 (계정마다 따로 저장되어 다른 아이디로 들어오면 그대로 보인다)
+  const [hiddenKeys, setHiddenKeys] = useState<string[]>(hidden);
+  useEffect(() => setHiddenKeys(hidden), [hidden]);
+  const [showHidden, setShowHidden] = useState(false); // 숨긴 품목만 보기
+  const hiddenSet = new Set(hiddenKeys);
+  async function hideKeys(keys: string[], hide: boolean) {
+    if (keys.length === 0) return;
+    const prev = hiddenKeys;
+    setHiddenKeys(h => (hide ? [...new Set([...h, ...keys])] : h.filter(k => !keys.includes(k))));
+    setChecked(c => c.filter(k => !keys.includes(k)));
+    const j = await post({ action: "invHide", keys, hide });
+    if (!j) setHiddenKeys(prev); // 저장하지 못하면 되돌린다
+  }
+  const [listName, setListName] = useState(""); // 선택 목록 이름
+  const [addToId, setAddToId] = useState(""); // 기존 선택 목록에 추가할 때 그 목록 (빈 값 = 새 목록)
+  const [setMsg, setSetMsg] = useState("");
+  const [toolQ, setToolQ] = useState(""); // 연장 검색어 (품목·브랜드·제품명·전압·배터리·호환성·태그)
   const [tagSel, setTagSel] = useState(""); // 태그로 묶어 보기 (빈 값 = 전체)
   const tagChips = (p: Prod) => p.tags.length > 0 ? (
     <div className="mt-0.5 flex flex-wrap gap-1">
@@ -220,6 +239,67 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
       router.refresh(); // 뒤에서 서버 값으로 맞춘다
     }
   }
+  // 엑셀 일괄 등록: 「양식 받기」로 받은 시트를 채워 올리면 한 줄마다 품목이 추가된다 (직접 추가할 때와 같은 검사: 내 공정만, 같은 이름 중복 불가·연장은 허용).
+  const importRef = useRef<HTMLInputElement>(null);
+  const [importMsg, setImportMsg] = useState("");
+  const [importing, setImporting] = useState(false);
+  const IMPORT_HEAD = ["종류", "공정", "카테고리", "품목", "가격(원)", "구매 링크", "브랜드", "제품명", "전압", "배터리", "호환성", "태그"];
+  function downloadTemplate() {
+    const t = sel || trades[0] || "";
+    const c = categories[t]?.[0] ?? "";
+    downloadBlob(buildXlsx([
+      { name: "일괄등록", header: IMPORT_HEAD, widths: [9, 10, 14, 30, 12, 36, 12, 16, 8, 10, 18, 20], rows: [[kindTab, t, kindTab === "연장" ? "" : c, "(예시) 이 줄은 지우고 입력하세요", 10000, "https://", kindTab === "연장" ? "브랜드" : "", "", kindTab === "연장" ? "18V" : "", kindTab === "연장" ? "포함" : "", "", kindTab === "연장" ? "그라인더, 18V" : ""]] },
+      { name: "공정·카테고리", header: ["공정", "카테고리"], widths: [14, 24], rows: trades.flatMap(tr => (categories[tr] ?? [""]).map(ca => [tr, ca])) },
+      { name: "작성방법", header: ["안내"], widths: [90], rows: [["1. 「일괄등록」 시트에 한 줄에 품목 하나씩 적어요. 예시 줄은 지우세요."], ["2. 종류는 상비품 · 자재 · 연장 중 하나 (비우면 지금 보는 탭 종류)."], ["3. 공정·카테고리는 「공정·카테고리」 시트에 있는 이름 그대로 적어요. 내가 맡은 공정만 올릴 수 있어요."], ["4. 연장은 카테고리를 비워 두세요. 브랜드·제품명·전압·배터리(포함/미포함)·호환성·태그(쉼표로)는 연장만 써요."], ["5. 공정·품목 이름은 꼭 적어야 해요. 가격·구매 링크는 비워도 돼요."], ["6. 첫 줄(머리글)은 고치지 마세요. 채운 뒤 「엑셀로 일괄 등록」으로 올려요."]] },
+    ]), `장비조사_양식_${new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" })}.xlsx`);
+  }
+  async function importSheet(file: File) {
+    setImportMsg(""); setErr(""); setImporting(true);
+    const call = async (body: object): Promise<{ ok: boolean; j: Record<string, unknown> }> => {
+      try {
+        const r = await fetch("/api/admin/inventory", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        const j = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+        return { ok: r.ok, j };
+      } catch { return { ok: false, j: { error: "서버에 연결할 수 없어요." } }; }
+    };
+    try {
+      const sheets = await readXlsx(file);
+      const sh = sheets.find(s => s.name === "일괄등록") ?? sheets[0];
+      const head = (sh?.rows[0] ?? []).map(h => String(h ?? "").trim());
+      const col = (n: string) => head.findIndex(h => h.startsWith(n));
+      const c = { kind: col("종류"), trade: col("공정"), cat: col("카테고리"), name: col("품목"), price: col("가격"), url: col("구매 링크"), brand: col("브랜드"), model: col("제품명"), volt: col("전압"), bat: col("배터리"), compat: col("호환성"), tags: col("태그") };
+      if (c.trade < 0 || c.name < 0) return setErr("양식이 달라요. 「양식 받기」로 받은 파일을 써 주세요.");
+      const sq = (r: string[], i: number) => (i < 0 ? "" : String(r[i] ?? "").trim().replace(/\s+/g, " "));
+      let done = 0; const bad: string[] = [];
+      for (const [i, r] of sh.rows.slice(1).entries()) {
+        const nm = sq(r, c.name), tr = sq(r, c.trade);
+        if (!nm && !tr) continue;
+        const no = `${i + 2}줄 ${nm || "(품목 없음)"}`;
+        if (nm.startsWith("(예시)")) continue;
+        const kindIn = sq(r, c.kind) || kindTab;
+        if (kindIn !== "상비품" && kindIn !== "자재" && kindIn !== "연장") { bad.push(`${no} — 종류는 상비품·자재·연장 중 하나`); continue; }
+        if (!nm) { bad.push(`${no} — 품목 이름이 없어요`); continue; }
+        if (!trades.includes(tr)) { bad.push(`${no} — 내가 맡은 공정이 아니에요 (${tr || "비어 있음"})`); continue; }
+        const flat = kindIn === "연장";
+        const cat = flat ? firstCat(tr) : sq(r, c.cat);
+        if (!cat || !(categories[tr] ?? []).includes(cat)) { bad.push(`${no} — 카테고리를 확인해 주세요 (${sq(r, c.cat) || "비어 있음"})`); continue; }
+        const priceRaw = sq(r, c.price).replace(/[,원\s]/g, ""); const price = priceRaw === "" ? 0 : Number(priceRaw);
+        if (!Number.isInteger(price) || price < 0) { bad.push(`${no} — 가격이 숫자가 아니에요`); continue; }
+        const bat = sq(r, c.bat);
+        const a = await call({ action: "add", trade: tr, category: cat, name: nm, kind: kindIn, price, ...(flat ? { brand: sq(r, c.brand), model: sq(r, c.model), battery: bat === "포함" || bat === "미포함" ? bat : "", voltage: sq(r, c.volt), compat: sq(r, c.compat), tags: normTags(sq(r, c.tags)) } : {}) });
+        if (!a.ok || typeof a.j.key !== "string") { bad.push(`${no} — ${typeof a.j.error === "string" ? a.j.error : "추가하지 못했어요"}`); continue; }
+        const url = sq(r, c.url);
+        if (url) { const l = await call({ action: "link", key: a.j.key, url }); if (!l.ok) bad.push(`${no} — 추가는 됐지만 링크를 저장하지 못했어요`); }
+        done++;
+      }
+      setImportMsg(`${done}개 품목을 추가했어요${bad.length ? ` · 못 올린 줄 ${bad.length}개: ${bad.slice(0, 5).join(" / ")}${bad.length > 5 ? " 외" : ""}` : ""}`);
+      router.refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "엑셀 파일을 읽지 못했어요.");
+    } finally {
+      setImporting(false);
+    }
+  }
   // 품목 이름 바꾸기 (창고장비현황에도 같은 이름으로 바뀐다)
   const [editKey, setEditKey] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
@@ -242,6 +322,39 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     setItems(x => x.map(i => (i.key === p.key ? { ...i, name: n, price: pr, image: img, link: linkNow, ...(isTool ? { brand: br, model: md, battery: editBattery, voltage: editVoltage.trim(), compat: editCompat.trim(), tags: normTags(editTags) } : {}) } : i)));
     setEditKey(null); setEditPhoto(null);
     router.refresh();
+  }
+  // 체크한 품목을 이름 붙여 저장해 두면 가격조사에서 불러와 그 품목만 모아 볼 수 있다
+  async function saveSet() {
+    const keys = checked.filter(k => items.some(i => i.key === k));
+    if (keys.length === 0) return;
+    const target = itemSets.find(x => x.id === addToId);
+    if (!target && !listName.trim()) return setErr("선택 목록 이름을 적어 주세요.");
+    const j = await post(target ? { action: "setSave", addTo: target.id, keys } : { action: "setSave", name: listName, keys });
+    if (j) {
+      setSetMsg(target ? `“${target.name}”에 ${typeof j.added === "number" ? j.added : keys.length}개를 추가했어요 (총 ${typeof j.count === "number" ? j.count : "?"}개).` : `“${listName.trim()}” ${keys.length}개를 저장했어요. 가격조사의 「선택 목록」에서 불러올 수 있어요.`);
+      setListName("");
+      router.refresh(); // 목록 개수를 새로 받는다
+    }
+  }
+  // 체크한 품목을 다른 공정·카테고리로 이동 (내가 맡은 공정으로만 — trades 가 이미 내 공정만 담고 있다. 서버에서도 한 번 더 확인한다)
+  const [moveTrade, setMoveTrade] = useState("");
+  const [moveCat, setMoveCat] = useState("");
+  const moveCats = moveTrade ? categories[moveTrade] ?? [] : [];
+  async function moveChecked() {
+    const list = items.filter(i => checked.includes(i.key));
+    if (list.length === 0) return;
+    const onlyTools = list.every(i => i.kind === "연장");
+    if (!moveTrade) return setErr("옮길 공정을 골라 주세요.");
+    if (!onlyTools && !moveCat) return setErr("옮길 카테고리를 골라 주세요.");
+    const j = await post({ action: "move", keys: list.map(i => i.key), trade: moveTrade, category: moveCat });
+    if (j) {
+      const moved = (Array.isArray(j.moved) ? j.moved : []) as { key: string; category: string }[];
+      const to = new Map(moved.map(m => [m.key, m.category]));
+      setItems(x => x.map(i => (to.has(i.key) ? { ...i, trade: moveTrade, category: i.kind === "연장" ? "" : to.get(i.key)! } : i)));
+      setChecked([]);
+      setSetMsg(moved.length ? `${moved.length}개를 ${moveTrade}${onlyTools ? "" : ` › ${moveCat}`}(으)로 옮겼어요.` : "이미 그 공정·카테고리에 있어요.");
+      router.refresh();
+    }
   }
   async function delChecked() {
     const keys = checked.filter(k => items.some(i => i.key === k));
@@ -280,9 +393,11 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const sortVal = (p: Prod, key: SortKey): string => (key === "trade" ? p.trade : key === "category" ? p.category : key === "name" ? p.name : key === "by" ? addedBy.get(p.key)?.byName ?? "기존 품목" : "");
   // 지금 고른 종류·공정·카테고리 안에서 보유(재고 1개 이상) / 미보유(재고 0) 개수
   // 연장 태그: 지금 공정의 연장에 붙은 태그와 개수 (없어진 태그를 골라 둔 상태면 전체로)
-  const tagCounts = (() => { const m = new Map<string, number>(); items.filter(p => p.kind === "연장" && (!sel || p.trade === sel)).forEach(p => p.tags.forEach(t => m.set(t, (m.get(t) ?? 0) + 1))); return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko")); })();
+  const tagCounts = (() => { const m = new Map<string, number>(); items.filter(p => p.kind === "연장" && !hiddenSet.has(p.key) && (!sel || p.trade === sel)).forEach(p => p.tags.forEach(t => m.set(t, (m.get(t) ?? 0) + 1))); return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko")); })();
   const tagNow = kindTab === "연장" && tagCounts.some(([t]) => t === tagSel) ? tagSel : "";
-  const inScope = (p: Prod) => p.kind === kindTab && (!sel || p.trade === sel) && (kindTab === "연장" || !catSel || p.category === catSel) && (!tagNow || p.tags.includes(tagNow));
+  const toolKw = toolQ.trim().replace(/s+/g, "").toLowerCase();
+  const toolMatch = (p: Prod) => !toolKw || `${p.name} ${p.brand} ${p.model} ${p.voltage} ${p.battery} ${p.compat} ${p.tags.join(" ")}`.replace(/s+/g, "").toLowerCase().includes(toolKw);
+  const inScope = (p: Prod) => p.kind === kindTab && (!sel || p.trade === sel) && (kindTab === "연장" || !catSel || p.category === catSel) && (!tagNow || p.tags.includes(tagNow)) && (kindTab !== "연장" || toolMatch(p)) && (showHidden ? hiddenSet.has(p.key) : !hiddenSet.has(p.key));
   const holdCounts = { all: items.filter(inScope).length, own: items.filter(p => inScope(p) && p.stock > 0).length, none: items.filter(p => inScope(p) && p.stock <= 0).length };
   const shown = items
     .filter(p => inScope(p) && (kindTab !== "연장" || holdTab === "all" || (holdTab === "own") === (p.stock > 0)))
@@ -294,7 +409,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const countIn = (t: string, c: string) => shown.filter(x => !freshAt(x) && x.trade === t && x.category === c).length;
   // 목록이 길면 쪽으로 나눈다 (공정·카테고리를 바꾸면 1쪽으로)
   const [page, setPage] = useState(1);
-  useEffect(() => setPage(1), [sel, catSel, sort, holdTab, kindTab]);
+  useEffect(() => setPage(1), [sel, catSel, sort, holdTab, kindTab, toolQ]);
   const pages = Math.max(1, Math.ceil(shown.length / PAGE));
   const cur = Math.min(page, pages);
   const start = (cur - 1) * PAGE;
@@ -309,7 +424,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
       </div>
       <div className="mt-3 flex items-end gap-1 border-b border-black/15 dark:border-white/15" role="tablist" aria-label="품목 종류">
         {(["상비품", "자재", "연장"] as const).map(k => (
-          <button key={k} type="button" role="tab" aria-selected={kindTab === k} onClick={() => pickKind(k)} className={`rounded-t-lg border border-b-0 px-5 py-2 text-sm font-extrabold ${kindTab === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{k} <small className="font-bold opacity-70">{items.filter(p => p.kind === k).length}</small></button>
+          <button key={k} type="button" role="tab" aria-selected={kindTab === k} onClick={() => pickKind(k)} className={`rounded-t-lg border border-b-0 px-5 py-2 text-sm font-extrabold ${kindTab === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{k} <small className="font-bold opacity-70">{items.filter(p => p.kind === k && !hiddenSet.has(p.key)).length}</small></button>
         ))}
       </div>
       {kindTab === "연장" && <div className="mt-2 flex items-end gap-1 border-b border-black/15 dark:border-white/15" role="tablist" aria-label="보유 여부">
@@ -317,6 +432,13 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
           <button key={k} type="button" role="tab" aria-selected={holdTab === k} onClick={() => pickHold(k)} title={k === "own" ? "창고장비현황 재고가 1개 이상" : k === "none" ? "창고장비현황 재고가 0" : "보유·미보유 모두"} className={`rounded-t-lg border border-b-0 px-4 py-1.5 text-xs font-bold ${holdTab === k ? "border-zinc-700 bg-zinc-700 text-white dark:border-zinc-200 dark:bg-zinc-200 dark:text-zinc-900" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label} <small className="opacity-70">{holdCounts[k]}</small></button>
         ))}
       </div>}
+      {kindTab === "연장" && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input type="search" value={toolQ} onChange={e => setToolQ(e.target.value.slice(0, 60))} placeholder="🔍 연장 검색 (품목·브랜드·제품명·전압·호환성·태그)" aria-label="연장 검색" className="min-w-[14rem] flex-1 rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 sm:max-w-md dark:border-white/15" />
+          {toolKw && <span className="text-xs text-zinc-500">검색 결과 {items.filter(p => p.kind === "연장" && toolMatch(p) && (!sel || p.trade === sel)).length}개</span>}
+          {toolKw && <button type="button" onClick={() => setToolQ("")} className="rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-bold dark:bg-zinc-800">지우기</button>}
+        </div>
+      )}
       {kindTab === "연장" && tagCounts.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="태그로 묶어 보기">
           <span className="font-bold text-zinc-500">태그</span>
@@ -366,13 +488,73 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
       )}
       <p className="mt-1 text-xs text-zinc-500">필요 없는 {kindTab}은(는) <b>삭제</b>(창고장비현황 휴지통으로 이동), 필요한 {kindTab}은(는) 맨 위 줄에서 공정·카테고리를 고르고 <b>추가</b>하세요. 추가한 품목은 창고장비현황의 같은 공정·카테고리에 바로 들어가요.</p>
 
-      {checked.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm dark:bg-red-500/10">
-          <b className="text-red-700 dark:text-red-300">{checked.length}개 선택</b>
-          <button type="button" disabled={busy} onClick={() => void delChecked()} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">선택한 품목 삭제</button>
-          <button type="button" onClick={() => setChecked([])} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">선택 해제</button>
+      {(hiddenKeys.length > 0 || showHidden) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-bold text-zinc-600 dark:text-zinc-300">🙈 내가 숨긴 {kindTab} {items.filter(p => p.kind === kindTab && hiddenSet.has(p.key)).length}개</span>
+          <span className="text-zinc-500">나에게만 적용돼요 (다른 아이디에는 그대로 보여요)</span>
+          <button type="button" onClick={() => { setShowHidden(v => !v); setChecked([]); }} className="rounded-lg bg-zinc-100 px-2.5 py-1 font-bold dark:bg-zinc-800">{showHidden ? "← 목록으로 돌아가기" : "숨긴 품목 보기"}</button>
         </div>
       )}
+      {checked.length > 0 && (
+        <div className="mt-3 divide-y divide-black/10 rounded-xl border border-red-200 bg-red-50 text-sm dark:divide-white/10 dark:border-red-500/30 dark:bg-red-500/10">
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <b className="text-red-700 dark:text-red-300">{checked.length}개 선택</b>
+            <button type="button" onClick={() => setChecked([])} className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold dark:bg-zinc-800">선택 해제</button>
+            {setMsg && <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">{setMsg}</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="w-20 shrink-0 text-xs font-extrabold text-zinc-600 dark:text-zinc-300">공정 이동</span>
+            <select value={moveTrade} onChange={e => { setMoveTrade(e.target.value); setMoveCat(""); setSetMsg(""); }} aria-label="옮길 공정" className="max-w-[9rem] rounded-lg border border-black/15 bg-white px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900">
+              <option value="">옮길 공정</option>
+              {trades.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            {moveTrade && !checked.every(k => items.find(i => i.key === k)?.kind === "연장") && (
+              <select value={moveCat} onChange={e => { setMoveCat(e.target.value); setSetMsg(""); }} aria-label="옮길 카테고리" className="max-w-[9rem] rounded-lg border border-black/15 bg-white px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900">
+                <option value="">옮길 카테고리</option>
+                {moveCats.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            )}
+            <button type="button" disabled={busy || !moveTrade} onClick={() => void moveChecked()} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">선택한 품목 이동</button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="w-20 shrink-0 text-xs font-extrabold text-zinc-600 dark:text-zinc-300">선택 목록</span>
+            <select value={addToId} onChange={e => { setAddToId(e.target.value); setSetMsg(""); }} aria-label="저장할 선택 목록" className="max-w-[11rem] rounded-lg border border-black/15 bg-white px-2 py-1.5 text-xs font-bold outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900">
+              <option value="">새 목록으로 저장</option>
+              {itemSets.map(x => <option key={x.id} value={x.id}>{x.name} ({x.count}개)에 추가</option>)}
+            </select>
+            {!addToId && <input value={listName} onChange={e => { setListName(e.target.value.slice(0, 30)); setSetMsg(""); }} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void saveSet(); }} placeholder="선택 목록 이름" aria-label="선택 목록 이름" className="w-40 rounded-lg border border-black/15 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900" />}
+            <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => void saveSet()} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">{addToId ? "선택한 목록에 추가" : "선택 목록으로 저장"}</button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="w-20 shrink-0 text-xs font-extrabold text-zinc-600 dark:text-zinc-300">숨기기·삭제</span>
+            <button type="button" disabled={busy} onClick={() => void hideKeys(checked, !showHidden)} className="rounded-lg bg-zinc-700 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50 dark:bg-zinc-200 dark:text-zinc-900">{showHidden ? "선택 보이기" : "선택 숨기기"}</button>
+            <button type="button" disabled={busy} onClick={() => void delChecked()} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">선택한 품목 삭제</button>
+          </div>
+        </div>
+      )}
+      {checked.length > 0 && (() => {
+        const sel2 = items.filter(i => checked.includes(i.key)); // 체크한 품목의 가격 합계 (가격 미등록은 0원으로 본다)
+        const total = sel2.reduce((n, i) => n + i.price, 0);
+        const none = sel2.filter(i => !(i.price > 0)).length;
+        return (
+          <>
+            <div className="h-20" aria-hidden />
+            <div className="fixed inset-x-0 bottom-0 z-40 border-t border-black/10 bg-white/95 shadow-[0_-4px_16px_rgba(0,0,0,0.12)] backdrop-blur dark:border-white/10 dark:bg-zinc-900/95" role="status" aria-live="polite">
+              <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-3">
+                <span className="text-sm font-extrabold text-red-700 dark:text-red-300">{checked.length}개 선택</span>
+                <span className="text-sm text-zinc-500">{none > 0 && `가격 미등록 ${none}개 제외 · `}선택한 품목 합계 <b className="ml-1 text-lg font-extrabold tabular-nums text-zinc-900 dark:text-zinc-50">{won(total)}원</b></span>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-extrabold text-zinc-600 dark:text-zinc-300">엑셀 일괄 등록</span>
+        <button type="button" onClick={downloadTemplate} disabled={trades.length === 0} title="공정·카테고리 목록이 들어 있는 엑셀 양식을 받아요" className="rounded-lg bg-emerald-100 px-3 py-1.5 font-bold text-emerald-800 disabled:opacity-40 dark:bg-emerald-500/20 dark:text-emerald-200">양식 받기</button>
+        <button type="button" onClick={() => importRef.current?.click()} disabled={importing || busy || trades.length === 0} title="양식을 채워 올리면 한 줄마다 품목이 추가돼요" className="rounded-lg bg-emerald-700 px-3 py-1.5 font-bold text-white disabled:opacity-50">{importing ? "올리는 중…" : "엑셀로 일괄 등록"}</button>
+        <input ref={importRef} type="file" accept=".xlsx" className="sr-only" aria-label="일괄 등록 엑셀 올리기" onChange={ev => { const fl = ev.target.files?.[0]; ev.target.value = ""; if (fl) void importSheet(fl); }} />
+      </div>
+      {importMsg && <p className="mt-2 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200" role="status">{importMsg}</p>}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-zinc-500">
         <label className="flex items-center gap-1.5">
           나열 순서
@@ -431,9 +613,10 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
               {kindTab === "연장" && <input value={newCompat} onChange={e => setNewCompat(e.target.value.slice(0, 100))} placeholder="호환성 (예: M18 배터리 호환)" className={inp} aria-label="호환성 (모바일)" />}
               <div className="flex gap-2">
                 <input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름 (모바일)" onKeyDown={e => e.key === "Enter" && !e.nativeEvent.isComposing && add()} />
-                <button type="button" disabled={busy} onClick={add} className="shrink-0 rounded-md bg-blue-600 px-5 text-sm font-bold text-white disabled:opacity-50">추가</button>
+                <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={add} className="shrink-0 rounded-md bg-blue-600 px-5 text-sm font-bold text-white disabled:opacity-50">추가</button>
               </div>
             </div>
+            {shown.length > 0 && <label className="flex cursor-pointer items-center gap-2 px-1 text-xs font-bold text-zinc-600 dark:text-zinc-300"><input type="checkbox" aria-label="목록 전체 선택 (모든 쪽)" checked={shown.every(r => checked.includes(r.key))} onChange={e => setChecked(c => (e.target.checked ? [...new Set([...c, ...shown.map(r => r.key)])] : c.filter(k => !shown.some(r => r.key === k))))} className="h-4 w-4 accent-red-600" />목록 전체 선택 ({shown.length}개)</label>}
             {shown.length === 0 && <p className="rounded-xl border border-dashed border-black/15 p-6 text-center text-sm text-zinc-500 dark:border-white/15">내 공정에 {kindTab}이(가) 없어요. 위에서 추가해 보세요.</p>}
             {rows.map((p, k) => {
               const i = start + k;
@@ -462,13 +645,14 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                     <div className="flex shrink-0 gap-1">
                       {editKey === p.key ? (
                         <>
-                          <button type="button" disabled={busy} onClick={() => void rename(p)} className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-40">저장</button>
+                          <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => void rename(p)} className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-40">저장</button>
                           <button type="button" disabled={busy} onClick={() => setEditKey(null)} className="rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold dark:bg-zinc-800">취소</button>
                         </>
                       ) : (
                         <>
                           <button type="button" disabled={busy} onClick={() => startEdit(p)} className="whitespace-nowrap rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">수정</button>
-                          <button type="button" disabled={busy} onClick={() => del(p)} className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 disabled:opacity-40 dark:bg-red-500/15 dark:text-red-300">삭제</button>
+                          <button type="button" disabled={busy} onClick={() => del(p)} className="whitespace-nowrap rounded-md bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 disabled:opacity-40 dark:bg-red-500/15 dark:text-red-300">삭제</button>
+                            <button type="button" disabled={busy} onClick={() => void hideKeys([p.key], !showHidden)} title={showHidden ? "다시 보이게 하기" : "내 장비조사에서만 안 보이게 하기"} className="whitespace-nowrap rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">{showHidden ? "보이기" : "숨기기"}</button>
                         </>
                       )}
                     </div>
@@ -481,7 +665,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
             <table className="w-full min-w-[44rem] border-collapse text-left text-sm">
               <thead>
                 <tr className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-800/60">
-                  <th className={`${cell} w-9 text-center`}><input type="checkbox" aria-label="이 쪽 전체 선택" checked={rows.length > 0 && rows.every(r => checked.includes(r.key))} onChange={e => setChecked(c => (e.target.checked ? [...new Set([...c, ...rows.map(r => r.key)])] : c.filter(k => !rows.some(r => r.key === k))))} className="h-4 w-4 accent-red-600" /></th>
+                  <th className={`${cell} w-9 text-center`}><input type="checkbox" aria-label="목록 전체 선택 (모든 쪽)" title={`목록의 ${shown.length}개 품목을 모두 선택 (다른 쪽 포함)`} checked={shown.length > 0 && shown.every(r => checked.includes(r.key))} onChange={e => setChecked(c => (e.target.checked ? [...new Set([...c, ...shown.map(r => r.key)])] : c.filter(k => !shown.some(r => r.key === k))))} className="h-4 w-4 accent-red-600" /></th>
                   <th className={`${cell} ${kindTab === "연장" ? "w-8" : "w-12"} text-center`}>#</th>
                   <th className={`${cell} ${kindTab === "연장" ? "w-12" : "w-14"} text-center`}>사진</th>
                   <th className={`${cell} ${kindTab === "연장" ? "w-20" : "w-32"}`} aria-sort={sort?.key === "trade" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("trade")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "trade" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">공정<span aria-hidden className="text-[10px]">{sort?.key === "trade" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
@@ -491,7 +675,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                   <th className={`${cell} ${kindTab === "연장" ? "w-20" : "w-28"} text-right`}>가격</th>
                   <th className={`${cell} ${kindTab === "연장" ? "w-12" : "w-24"} text-center`}>링크</th>
                   <th className={`${cell} ${kindTab === "연장" ? "w-16" : "w-24"}`} aria-sort={sort?.key === "by" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("by")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "by" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">추가한 사람<span aria-hidden className="text-[10px]">{sort?.key === "by" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
-                  <th className={`${cell} ${kindTab === "연장" ? "w-28" : "w-32"}`} />
+                  <th className={`${cell} ${kindTab === "연장" ? "w-40" : "w-40"}`} />
                 </tr>
                 <tr className="bg-blue-50/60 dark:bg-blue-500/10">
                   <td className={cell} colSpan={kindTab === "연장" ? 14 : 10}>
@@ -520,7 +704,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                   {kindTab === "연장" && <><td className={cell}><input value={newBrand} onChange={e => setNewBrand(e.target.value.slice(0, 50))} placeholder="브랜드" className={inp} aria-label="브랜드" onKeyDown={e => e.key === "Enter" && !e.nativeEvent.isComposing && add()} /></td><td className={cell}><input value={newModel} onChange={e => setNewModel(e.target.value.slice(0, 100))} placeholder="제품명" className={inp} aria-label="제품명" onKeyDown={e => e.key === "Enter" && !e.nativeEvent.isComposing && add()} /></td><td className={cell}><input list="voltage-list" value={newVoltage} onChange={e => setNewVoltage(e.target.value.slice(0, 20))} placeholder="18V" className={inp} aria-label="전압" onKeyDown={e => e.key === "Enter" && !e.nativeEvent.isComposing && add()} /></td><td className={cell}>{batterySelect(newBattery, setNewBattery, "배터리 포함 여부")}</td><td className={cell}><input value={newCompat} onChange={e => setNewCompat(e.target.value.slice(0, 100))} placeholder="호환성" className={inp} aria-label="호환성" onKeyDown={e => e.key === "Enter" && !e.nativeEvent.isComposing && add()} /></td></>}
                   <td className={cell}><input value={newPrice} onChange={e => setNewPrice(priceNum(e.target.value))} inputMode="numeric" placeholder="가격(원)" className={`${inp} text-right`} aria-label="가격" onKeyDown={e => e.key === "Enter" && !e.nativeEvent.isComposing && add()} /></td>
                   <td className={cell}><input value={newLink} onChange={e => setNewLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크" onKeyDown={e => e.key === "Enter" && !e.nativeEvent.isComposing && add()} /></td>
-                  <td className={cell} colSpan={2}><button type="button" disabled={busy} onClick={add} className="w-full rounded-md bg-blue-600 py-1.5 text-sm font-bold text-white disabled:opacity-50">추가</button></td>
+                  <td className={cell} colSpan={2}><button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={add} className="w-full rounded-md bg-blue-600 py-1.5 text-sm font-bold text-white disabled:opacity-50">추가</button></td>
                 </tr>
               </thead>
               <tbody>
@@ -571,13 +755,14 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                       <td className={`${cell} text-center`}>
                         {editKey === p.key ? (
                           <div className="flex justify-center gap-1">
-                            <button type="button" disabled={busy} onClick={() => void rename(p)} className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-40">저장</button>
+                            <button type="button" disabled={busy} onMouseDown={e => e.preventDefault()} onClick={() => void rename(p)} className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-bold text-white disabled:opacity-40">저장</button>
                             <button type="button" disabled={busy} onClick={() => setEditKey(null)} className="rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold dark:bg-zinc-800">취소</button>
                           </div>
                         ) : (
                           <div className="flex justify-center gap-1">
                             <button type="button" disabled={busy} onClick={() => startEdit(p)} className="whitespace-nowrap rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">수정</button>
-                            <button type="button" disabled={busy} onClick={() => del(p)} className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 disabled:opacity-40 dark:bg-red-500/15 dark:text-red-300">삭제</button>
+                            <button type="button" disabled={busy} onClick={() => del(p)} className="whitespace-nowrap rounded-md bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 disabled:opacity-40 dark:bg-red-500/15 dark:text-red-300">삭제</button>
+                            <button type="button" disabled={busy} onClick={() => void hideKeys([p.key], !showHidden)} title={showHidden ? "다시 보이게 하기" : "내 장비조사에서만 안 보이게 하기"} className="whitespace-nowrap rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">{showHidden ? "보이기" : "숨기기"}</button>
                           </div>
                         )}
                       </td>
