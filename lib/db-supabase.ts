@@ -1155,3 +1155,16 @@ export async function setProductBattery(key: string, battery: string): Promise<v
   if (b) cur[key] = b; else delete cur[key];
   must(await supabase().from('app_settings').upsert({ key: 'product_battery', value: cur }, { onConflict: 'key' }), '배터리 여부 저장');
 }
+
+// ───────── 연장 전압 — 품목별 자유 입력, 예: 18V (app_settings: product_voltage) ─────────
+export async function getProductVoltage(): Promise<Record<string, string>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'product_voltage').maybeSingle(), '전압 조회') as { value: unknown } | null;
+  const v = row?.value;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, m]) => typeof m === 'string' && m) as [string, string][]);
+}
+export async function setProductVoltage(key: string, voltage: string): Promise<void> {
+  const cur = await getProductVoltage();
+  if (voltage) cur[key] = voltage; else delete cur[key];
+  must(await supabase().from('app_settings').upsert({ key: 'product_voltage', value: cur }, { onConflict: 'key' }), '전압 저장');
+}

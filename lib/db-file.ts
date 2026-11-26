@@ -1321,3 +1321,21 @@ export function setProductBattery(key: string, battery: string): Promise<void> {
     await writeJson('product-battery.json', cur);
   });
 }
+
+// ───────── 연장 전압 — 품목별 자유 입력, 예: 18V (data/product-voltage.json) ─────────
+export async function getProductVoltage(): Promise<Record<string, string>> {
+  try {
+    const v = await readJson<unknown>('product-voltage.json');
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, m]) => typeof m === 'string' && m) as [string, string][]);
+  } catch {
+    return {};
+  }
+}
+export function setProductVoltage(key: string, voltage: string): Promise<void> {
+  return withLock(async () => {
+    const cur = await getProductVoltage();
+    if (voltage) cur[key] = voltage; else delete cur[key];
+    await writeJson('product-voltage.json', cur);
+  });
+}

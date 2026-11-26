@@ -1,6 +1,6 @@
 import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
-import { setProductBattery, setProductModel, updateProduct } from '@/lib/db';
+import { setProductBattery, setProductModel, setProductVoltage, updateProduct } from '@/lib/db';
 import { asKind, KINDS } from '@/lib/types';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { removeImage, saveImage } from '@/lib/images';
@@ -60,12 +60,15 @@ async function handlePOST(req: Request) {
   const hasModel = form.has('model');
   const model = text(form.get('model'), 100); // 연장 제품명(모델명): 비우면 지운다
   if (hasModel) await setProductModel(key, model);
+  const hasVoltage = form.has('voltage');
+  const voltage = text(form.get('voltage'), 20); // 연장 전압: 비우면 지운다
+  if (hasVoltage) await setProductVoltage(key, voltage);
   const hasBattery = form.has('battery');
   const battery = text(form.get('battery'), 10); // 연장 배터리 포함 여부: 비우면 지운다
   if (hasBattery) await setProductBattery(key, battery);
   // 사진을 바꿨으면 예전 사진 파일은 지운다 (같은 파일 이름에 덮어쓴 경우는 그대로 둔다)
   if (image && r.prevImage && r.prevImage !== image) await removeImage(r.prevImage).catch(() => undefined);
-  return json({ ok: true, name, sub, brand, price, ...(hasModel ? { model } : {}), ...(hasBattery ? { battery: battery === '포함' || battery === '미포함' ? battery : '' } : {}), ...(kind ? { kind } : {}), ...(image ? { image } : {}) });
+  return json({ ok: true, name, sub, brand, price, ...(hasModel ? { model } : {}), ...(hasVoltage ? { voltage } : {}), ...(hasBattery ? { battery: battery === '포함' || battery === '미포함' ? battery : '' } : {}), ...(kind ? { kind } : {}), ...(image ? { image } : {}) });
 }
 
 export const POST = audited('catalog', handlePOST);

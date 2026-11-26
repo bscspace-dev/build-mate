@@ -1,5 +1,5 @@
 import { getActor } from '@/lib/auth';
-import { addInventory, addProduct, getPurchaseLinks, setProductModel, setProductBattery, getPurchaseOptions, savePurchaseOptions, getVendorShipping, saveVendorShipping, getInventory, getInventoryExcluded, removeInventory, saveInventoryExcluded, deleteProducts, getCategoryTrades, getProducts, getTrades, getFavoriteVendors, saveFavoriteVendors, getPricingSnapshots, nextProductKey, savePricingSnapshots, setPurchaseLink, setStock, updateProduct } from '@/lib/db';
+import { addInventory, addProduct, getPurchaseLinks, setProductModel, setProductBattery, setProductVoltage, getPurchaseOptions, savePurchaseOptions, getVendorShipping, saveVendorShipping, getInventory, getInventoryExcluded, removeInventory, saveInventoryExcluded, deleteProducts, getCategoryTrades, getProducts, getTrades, getFavoriteVendors, saveFavoriteVendors, getPricingSnapshots, nextProductKey, savePricingSnapshots, setPurchaseLink, setStock, updateProduct } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { inventoryTrades } from '@/lib/inventory';
 import { recordChangeLater } from '@/lib/audit';
@@ -64,6 +64,8 @@ export async function POST(req: Request) {
     recordChangeLater(menu, { action: '추가', target: name, detail: `${trade} › ${category}${pricing ? ` · 금액 ${price.toLocaleString('ko-KR')} · 구매 예정 수량 ${qty}` : ''}` });
     const modelIn = clip((b as { model?: unknown }).model, 100);
     if (modelIn) await setProductModel(product.key, modelIn); // 연장 제품명(모델명)
+    const voltageIn = clip((b as { voltage?: unknown }).voltage, 20);
+    if (voltageIn) await setProductVoltage(product.key, voltageIn); // 연장 전압 (예: 18V)
     const batteryIn = clip((b as { battery?: unknown }).battery, 10);
     if (batteryIn === '포함' || batteryIn === '미포함') await setProductBattery(product.key, batteryIn); // 연장 배터리 포함 여부
     return json({ ok: true, key: product.key });
@@ -106,6 +108,7 @@ export async function POST(req: Request) {
     const brandNew = typeof (b as { brand?: unknown }).brand === 'string' ? clip((b as { brand?: unknown }).brand, 50) : p.brand;
     if (!(await updateProduct(p.key, { name, sub: p.sub, brand: brandNew, price, priceInclVat }))) return json({ error: '없는 상비품이에요.' }, 404);
     if (typeof (b as { model?: unknown }).model === 'string') await setProductModel(p.key, clip((b as { model?: unknown }).model, 100));
+    if (typeof (b as { voltage?: unknown }).voltage === 'string') await setProductVoltage(p.key, clip((b as { voltage?: unknown }).voltage, 20));
     if (typeof (b as { battery?: unknown }).battery === 'string') await setProductBattery(p.key, clip((b as { battery?: unknown }).battery, 10));
     const changes: string[] = [];
     if (name !== p.name) changes.push(`이름 ${p.name} → ${name}`);

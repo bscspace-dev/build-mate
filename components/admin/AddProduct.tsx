@@ -51,6 +51,7 @@ export default function AddProduct({
   const subShown = sub ?? (category ? headOfCat(category) : "");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
+  const [voltage, setVoltage] = useState(""); // 연장 전압
   const [battery, setBattery] = useState(""); // 연장 배터리 포함 여부 // 연장 제품명(모델명)
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("0");
@@ -104,7 +105,7 @@ export default function AddProduct({
       fd.set("category", category);
       fd.set("sub", subShown);
       fd.set("brand", brand);
-      if (kind === "연장") { fd.set("model", model); fd.set("battery", battery); }
+      if (kind === "연장") { fd.set("model", model); fd.set("voltage", voltage); fd.set("battery", battery); }
       fd.set("price", price);
       fd.set("stock", stock);
       const r = await fetch("/api/admin/products/new", { method: "POST", body: fd });
@@ -165,6 +166,9 @@ export default function AddProduct({
             {kind === "연장" && (<>
               <label htmlFor="np-model" className="mt-4 block text-sm font-bold">제품명 <span className="font-normal text-zinc-500">(모델명, 선택)</span></label>
               <input id="np-model" value={model} onChange={e => setModel(e.target.value)} maxLength={100} autoComplete="off" className={inputCls} />
+              <label htmlFor="np-voltage" className="mt-4 block text-sm font-bold">전압 <span className="font-normal text-zinc-500">(예: 18V, 20V · 선택)</span></label>
+              <input id="np-voltage" value={voltage} onChange={e => setVoltage(e.target.value)} maxLength={20} autoComplete="off" list="np-voltage-list" className={inputCls} />
+              <datalist id="np-voltage-list"><option value="12V" /><option value="14.4V" /><option value="18V" /><option value="20V" /><option value="21V" /><option value="36V" /></datalist>
               <label htmlFor="np-battery" className="mt-4 block text-sm font-bold">배터리 <span className="font-normal text-zinc-500">(선택)</span></label>
               <select id="np-battery" value={battery} onChange={e => setBattery(e.target.value)} className={inputCls}><option value="">선택 안 함</option><option value="포함">포함</option><option value="미포함">미포함</option></select>
             </>)}
