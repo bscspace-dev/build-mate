@@ -39,14 +39,14 @@ export async function POST(req: Request) {
   const trades = scope.trades.filter(t => !excl.trades.includes(t));
   const me = actor.kind === 'member' ? { id: actor.member.id, name: actor.member.name } : { id: '', name: '최고 관리자' };
   const memo = pricing ? 'pricing' : ''; // 기록에 어느 메뉴에서 했는지 남긴다
-  const okKind = (k: string) => k === '상비품' || k === '자재'; // 장비조사·가격조사 모두 상비품과 자재를 다룬다
+  const okKind = (k: string) => k === '상비품' || k === '자재' || k === '연장'; // 장비조사·가격조사 모두 상비품·자재·연장을 다룬다
 
   if (b.action === 'add') {
     const trade = clip(b.trade, 40);
     if (!trades.includes(trade)) return json({ error: '내 팀이 맡은 공정이 아니에요.' }, 403);
     const name = clip(b.name, 100);
     if (!name) return json({ error: '품목 이름을 적어 주세요.' }, 400);
-    const price = pricing ? whole(b.price, 99_999_999) : 0;
+    const price = whole(b.price, 99_999_999); // 장비조사도 가격을 함께 등록할 수 있다
     const qty = pricing ? whole(b.qty, 9_999_999) : 0;
     if (Number.isNaN(price)) return json({ error: '금액은 0 이상의 숫자로 적어 주세요.' }, 400);
     if (Number.isNaN(qty)) return json({ error: '수량은 0 이상의 숫자로 적어 주세요.' }, 400);
@@ -56,7 +56,8 @@ export async function POST(req: Request) {
     if (catTrades[category] !== trade) return json({ error: '이 공정의 카테고리가 아니에요.' }, 400);
     if (excl.categories.includes(category)) return json({ error: '장비조사에서 제외된 카테고리예요.' }, 403);
     if (allProducts.some(p => catTrades[p.category] === trade && p.name === name)) return json({ error: '이 공정에 이미 있는 품목이에요.' }, 400);
-    const kind = (b as { kind?: unknown }).kind === '자재' ? '자재' : '상비품';
+    const wantKind = (b as { kind?: unknown }).kind;
+    const kind = wantKind === '자재' || wantKind === '연장' ? wantKind : '상비품';
     const product = await addProduct({ key, kind, category, sub: rewriteSub('', '', headOf(category, catTrades, allTrades)), name, brand: '', price, priceInclVat: null, vatBasis: '', soldout: false, stock: 0, image: '', trades: [trade] });
     await addInventory({ action: 'add', category: trade, productKey: product.key, name, brand: '', qty, price, memo, byId: me.id, byName: me.name }).catch(() => undefined); // 기록 저장 실패는 작업을 막지 않는다
     recordChangeLater(menu, { action: '추가', target: name, detail: `${trade} › ${category}${pricing ? ` · 금액 ${price.toLocaleString('ko-KR')} · 구매 예정 수량 ${qty}` : ''}` });
@@ -91,7 +92,7 @@ export async function POST(req: Request) {
     if (excl.categories.includes(p.category)) return json({ error: '장비조사에서 제외된 카테고리예요.' }, 403);
     const name = clip(b.name, 100);
     if (!name) return json({ error: '품목 이름을 적어 주세요.' }, 400);
-    const price = pricing ? whole(b.price, 99_999_999) : p.price;
+    const price = b.price === undefined ? p.price : whole(b.price, 99_999_999); // 장비조사는 가격을 보냈을 때만 바꾼다
     if (Number.isNaN(price)) return json({ error: '금액은 0 이상의 숫자로 적어 주세요.' }, 400);
     if (all.some(x => x.key !== p.key && catTrades[x.category] === trade && x.name === name)) return json({ error: '이 공정에 이미 있는 품목 이름이에요.' }, 400);
     // 부가세 포함가를 직접 적었으면(incl) 그 값을 그대로 저장한다. 공급가와 맞지 않으면 저장하지 않고, 적지 않았으면 (금액이 그대로일 때만) 기존 값을 유지한다.
@@ -100,7 +101,7 @@ export async function POST(req: Request) {
     if (!(await updateProduct(p.key, { name, sub: p.sub, brand: p.brand, price, priceInclVat }))) return json({ error: '없는 상비품이에요.' }, 404);
     const changes: string[] = [];
     if (name !== p.name) changes.push(`이름 ${p.name} → ${name}`);
-    if (pricing && price !== p.price) changes.push(`금액 ${p.price.toLocaleString('ko-KR')} → ${price.toLocaleString('ko-KR')}`);
+    if (price !== p.price) changes.push(`금액 ${p.price.toLocaleString('ko-KR')} → ${price.toLocaleString('ko-KR')}`);
     if (changes.length) recordChangeLater(menu, { action: '수정', target: name, detail: changes.join(' · ') });
     return json({ ok: true, name, price });
   }
@@ -160,8 +161,7 @@ export async function POST(req: Request) {
   }
 
   if (b.action === 'link') {
-    // 구매 링크 등록·수정·삭제(빈 값): 내 공정의 품목만
-    if (!pricing) return json({ error: 'bad request' }, 400);
+    // 구매 링크 등록·수정·삭제(빈 값): 내 공정의 품목만 (장비조사에서는 링크만 바꾸고 구매처·판매단위는 그대로 둔다)
     const lk = splitKey(clip(b.key, 60));
     const p = (await getProducts()).find(x => x.key === lk.base);
     if (!p) return json({ error: '없는 상비품이에요.' }, 404);
@@ -178,8 +178,13 @@ export async function POST(req: Request) {
         return json({ error: '링크는 http:// 또는 https:// 주소로 적어 주세요.' }, 400);
       }
     }
-    const vendor = clip(b.vendor, 40);
-    const unit = clip(b.unit, 20); // 판매단위 (예: 박스, 10개입)
+    let vendor = clip(b.vendor, 40);
+    let unit = clip(b.unit, 20); // 판매단위 (예: 박스, 10개입)
+    if (!pricing) {
+      if (excl.categories.includes(p.category)) return json({ error: '장비조사에서 제외된 카테고리예요.' }, 403);
+      const curInfo = (await getPurchaseLinks())[p.key];
+      vendor = curInfo?.vendor ?? ''; unit = curInfo?.unit ?? '';
+    }
     if (lk.opt) {
       // 판매 옵션 행: 이 옵션의 구매처·판매단위·링크만 바꾼다
       const opts = await getPurchaseOptions();

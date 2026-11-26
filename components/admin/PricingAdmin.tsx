@@ -8,7 +8,7 @@ import { vendorColor } from "@/lib/vendor-color";
 import { buildXlsx, downloadBlob } from "@/lib/xlsx-export";
 import type { InventoryEntry, VendorShipping } from "@/lib/types";
 
-type Prod = { key: string; kind: "상비품" | "자재"; trade: string; category: string; name: string; price: number; incl: number | null; base?: string; image?: string }; // base = 판매 옵션 행이면 원래 품목 키 // incl = 포함가로 직접 적어 둔 금액 (없으면 null)
+type Prod = { key: string; kind: "상비품" | "자재" | "연장"; stock: number; trade: string; category: string; name: string; price: number; incl: number | null; base?: string; image?: string }; // base = 판매 옵션 행이면 원래 품목 키 // incl = 포함가로 직접 적어 둔 금액 (없으면 null)
 type Entry = InventoryEntry & { productCategory: string };
 type Info = { url: string; vendor: string; unit: string };
 type Field = "price" | "qty" | "ship";
@@ -49,8 +49,10 @@ const entryMoney = (e: { price: number; qty: number; shipping: number }) => { co
 //  · 수량·배송비는 '구매 예정' 값으로, 적는 즉시 이 브라우저에 자동 저장된다(새로 조사 시작·구매완료 때 비워진다). 저장본을 불러오면 그 값으로 채워진다.
 //  · 구매처 칸을 누르면 구매처 이름과 구매 링크를 등록한다 (품목마다 한 번만, 바꿀 때까지 유지).
 //  · 구매완료를 누르면 수량이 창고장비현황 재고에 더해지고, 구매완료 탭에 구매처·배송비와 함께 남는다.
-export default function PricingAdmin({ trades, categories, products, log, links, vendorShip, favorites, snapshots, admin }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: Entry[]; links: Record<string, Info>; vendorShip: Record<string, VendorShipping>; favorites: string[]; snapshots: { id: string; name: string; at: string; byName: string; count: number; excluded: number }[]; admin: boolean }) {
+export default function PricingAdmin({ trades, categories, products: productsProp, log, links, vendorShip, favorites, snapshots, admin }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: Entry[]; links: Record<string, Info>; vendorShip: Record<string, VendorShipping>; favorites: string[]; snapshots: { id: string; name: string; at: string; byName: string; count: number; excluded: number }[]; admin: boolean }) {
   const router = useRouter();
+  // 연장은 공정만으로 구분한다: 카테고리를 비워서 묶음·제목에 카테고리가 나오지 않게 한다
+  const products = productsProp.map(p => (p.kind === "연장" ? { ...p, category: "" } : p));
   const [density, setDensity] = useState<Density>("normal");
   useEffect(() => { try { const v = localStorage.getItem(DENSITY_KEY); if (v === "tight" || v === "normal" || v === "wide") setDensity(v); } catch { /* 저장이 막힌 환경 */ } }, []);
   const pickDensity = (d: Density) => { setDensity(d); try { localStorage.setItem(DENSITY_KEY, d); } catch { /* 저장이 막힌 환경 */ } };
@@ -135,13 +137,16 @@ export default function PricingAdmin({ trades, categories, products, log, links,
   const [vsMap, setVsMap] = useState(vendorShip);
   useEffect(() => setVsMap(vendorShip), [vendorShip]);
   const [vsOpen, setVsOpen] = useState(false);
-  const [kindTab, setKindTab] = useState<"상비품" | "자재">("상비품"); // 가격조사의 종류 탭: 상비품 / 자재 (이 브라우저에 기억)
-  useEffect(() => { try { const v = localStorage.getItem("bm_pricing_kind"); if (v === "상비품" || v === "자재") setKindTab(v); } catch { /* 저장이 막힌 환경 */ } }, []);
-  const pickKind = (k: "상비품" | "자재") => {
+  const [kindTab, setKindTab] = useState<"상비품" | "자재" | "연장">("상비품"); // 가격조사의 종류 탭: 상비품 / 자재 (이 브라우저에 기억)
+  useEffect(() => { try { const v = localStorage.getItem("bm_pricing_kind"); if (v === "상비품" || v === "자재" || v === "연장") setKindTab(v); } catch { /* 저장이 막힌 환경 */ } }, []);
+  const [holdTab, setHoldTab] = useState<"all" | "own" | "none">("all"); // 보유(재고 1개 이상) / 미보유(재고 0) 구분
+  useEffect(() => { try { const v = localStorage.getItem("bm_pricing_hold"); if (v === "all" || v === "own" || v === "none") setHoldTab(v); } catch { /* 저장이 막힌 환경 */ } }, []);
+  const pickHold = (h: "all" | "own" | "none") => { setHoldTab(h); setChecked([]); try { localStorage.setItem("bm_pricing_hold", h); } catch { /* 저장이 막힌 환경 */ } };
+  const pickKind = (k: "상비품" | "자재" | "연장") => {
     setKindTab(k); setChecked([]);
     // 지금 고른 카테고리에 이 종류의 품목이 없으면, 품목이 있는 카테고리로 옮긴다 (없으면 전체)
     const has = (c: string) => products.some(p => p.kind === k && (!sel || p.trade === sel) && (!c || p.category === c));
-    if (catSel && !has(catSel)) setCatSel((categories[sel] ?? []).find(has) ?? ""); try { localStorage.setItem("bm_pricing_kind", k); } catch { /* 저장이 막힌 환경 */ } };
+    if (k !== "연장" && catSel && !has(catSel)) setCatSel((categories[sel] ?? []).find(has) ?? ""); try { localStorage.setItem("bm_pricing_kind", k); } catch { /* 저장이 막힌 환경 */ } };
   // 품목 사진 미리보기: 사진이 등록된 품목 이름에 마우스를 올리면 커서 옆에 큰 사진을 띄운다
   const [peek, setPeek] = useState<{ src: string; x: number; y: number } | null>(null);
   const peekEditing = useRef(false); // 이름을 고치는 중에는 사진을 띄우지 않는다
@@ -460,8 +465,11 @@ export default function PricingAdmin({ trades, categories, products, log, links,
   }
   const cats = sel ? categories[sel] ?? [] : [];
   const catRank = (p: Prod) => (categories[p.trade] ?? []).indexOf(p.category);
+  // 지금 고른 종류·공정·카테고리 안에서 보유(재고 1개 이상) / 미보유(재고 0) 개수 (옵션 행은 세지 않는다)
+  const inScope = (p: Prod) => p.kind === kindTab && (!sel || p.trade === sel) && (kindTab === "연장" || !catSel || p.category === catSel);
+  const holdCounts = { all: products.filter(p => !p.base && inScope(p) && !hidden.includes(p.key)).length, own: products.filter(p => !p.base && inScope(p) && !hidden.includes(p.key) && p.stock > 0).length, none: products.filter(p => !p.base && inScope(p) && !hidden.includes(p.key) && p.stock <= 0).length };
   const shown = products
-    .filter(p => p.kind === kindTab && (!sel || p.trade === sel) && (!catSel || p.category === catSel) && !hidden.includes(p.key))
+    .filter(p => inScope(p) && !hidden.includes(p.key) && (kindTab !== "연장" || holdTab === "all" || (holdTab === "own") === (p.stock > 0)))
     .map((p, i) => ({ p, i }))
     .sort((x, y) => trades.indexOf(x.p.trade) - trades.indexOf(y.p.trade) || catRank(x.p) - catRank(y.p) || x.i - y.i)
     .map(x => x.p);
@@ -735,10 +743,15 @@ export default function PricingAdmin({ trades, categories, products, log, links,
       ) : tab === "survey" ? (
         <>
           <div className="mt-4 flex items-end gap-1 border-b border-black/15 dark:border-white/15" role="tablist" aria-label="품목 종류">
-            {(["상비품", "자재"] as const).map(k => (
+            {(["상비품", "자재", "연장"] as const).map(k => (
               <button key={k} type="button" role="tab" aria-selected={kindTab === k} onClick={() => pickKind(k)} className={`rounded-t-lg border border-b-0 px-5 py-2 text-sm font-extrabold ${kindTab === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{k} <small className="font-bold opacity-70">{products.filter(p => p.kind === k && !p.base).length}</small></button>
             ))}
           </div>
+          {kindTab === "연장" && <div className="mt-2 flex items-end gap-1 border-b border-black/15 dark:border-white/15" role="tablist" aria-label="보유 여부">
+            {([["all", "전체"], ["own", "보유"], ["none", "미보유"]] as const).map(([k, label]) => (
+              <button key={k} type="button" role="tab" aria-selected={holdTab === k} onClick={() => pickHold(k)} title={k === "own" ? "창고장비현황 재고가 1개 이상" : k === "none" ? "창고장비현황 재고가 0" : "보유·미보유 모두"} className={`rounded-t-lg border border-b-0 px-4 py-1.5 text-xs font-bold ${holdTab === k ? "border-zinc-700 bg-zinc-700 text-white dark:border-zinc-200 dark:bg-zinc-200 dark:text-zinc-900" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label} <small className="opacity-70">{holdCounts[k]}</small></button>
+            ))}
+          </div>}
           {saveBar}
           {hidden.length > 0 && (
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-zinc-100 px-3 py-2 text-sm dark:bg-zinc-800">
@@ -789,7 +802,7 @@ export default function PricingAdmin({ trades, categories, products, log, links,
               {trades.length !== 1 && <option value="">전체 공정</option>}
               {trades.map(t => <option key={t}>{t}</option>)}
             </select>
-            {sel && (
+            {sel && kindTab !== "연장" && (
               <div className="no-scrollbar flex items-end gap-1 overflow-x-auto border-b border-black/15 dark:border-white/15" role="tablist" aria-label="카테고리 선택 (모바일)">
                 {["", ...cats].map(c => (
                   <button key={c || "__all"} type="button" role="tab" aria-selected={catSel === c} onClick={() => setCatSel(c)} className={`shrink-0 rounded-t-lg border border-b-0 px-3.5 py-1.5 text-xs font-bold ${catSel === c ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 text-zinc-600 dark:border-white/15 dark:text-zinc-300"}`}>{c || "전체"}</button>
@@ -806,7 +819,7 @@ export default function PricingAdmin({ trades, categories, products, log, links,
                   {head && (
                     <label className="flex cursor-pointer items-center gap-2 px-1 pt-2 text-xs font-extrabold text-blue-700 dark:text-blue-300">
                       <input type="checkbox" aria-label={`${p.category} 전체 체크`} checked={checkedIn(p.trade, p.category) === countIn(p.trade, p.category)} onChange={e => toggle(inGroup(p.trade, p.category).map(x => x.key), e.target.checked)} className="h-5 w-5 accent-blue-600" />
-                      <span>{p.trade} › {p.category} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개{checkedIn(p.trade, p.category) > 0 && <> · 체크 {checkedIn(p.trade, p.category)}개 {won(sumIn(p.trade, p.category))}원</>}</span></span>
+                      <span>{p.trade}{p.category ? ` › ${p.category}` : ""} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개{checkedIn(p.trade, p.category) > 0 && <> · 체크 {checkedIn(p.trade, p.category)}개 {won(sumIn(p.trade, p.category))}원</>}</span></span>
                     </label>
                   )}
                   <div className={`rounded-xl border p-3 ${on(p) ? "border-blue-300 bg-blue-50/50 dark:border-blue-500/40 dark:bg-blue-500/5" : "border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900"}`}>
@@ -874,7 +887,7 @@ export default function PricingAdmin({ trades, categories, products, log, links,
                         {trades.map(t => <option key={t}>{t}</option>)}
                       </select>
                       카테고리
-                      {sel ? (
+                      {sel && kindTab === "연장" ? <span className="font-normal text-zinc-500">연장은 공정별로만 구분해요 (카테고리 없음)</span> : sel ? (
                         <div className="flex flex-1 flex-wrap items-end gap-1 border-b border-black/15 dark:border-white/15 self-end" role="tablist" aria-label="카테고리 선택">
                           {["", ...cats].map(c => (
                             <button key={c || "__all"} type="button" role="tab" aria-selected={catSel === c} onClick={() => setCatSel(c)} className={`rounded-t-lg border border-b-0 px-3.5 py-1.5 text-xs font-bold ${catSel === c ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{c || "전체"}</button>
@@ -897,7 +910,7 @@ export default function PricingAdmin({ trades, categories, products, log, links,
                     <Fragment key={p.key}>
                       {head && (
                         <tr className="bg-blue-50/60 dark:bg-blue-500/10">
-                          <td colSpan={12} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300"><label className="mr-2 inline-flex cursor-pointer items-center gap-1.5 align-middle"><input type="checkbox" aria-label={`${p.category} 전체 체크`} checked={checkedIn(p.trade, p.category) === countIn(p.trade, p.category)} onChange={e => toggle(inGroup(p.trade, p.category).map(x => x.key), e.target.checked)} className="h-4 w-4 accent-blue-600" /></label>{p.trade} › {p.category} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개{checkedIn(p.trade, p.category) > 0 && <> · 체크 {checkedIn(p.trade, p.category)}개 합계 {won(sumIn(p.trade, p.category))}원</>}</span></td>
+                          <td colSpan={12} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300"><label className="mr-2 inline-flex cursor-pointer items-center gap-1.5 align-middle"><input type="checkbox" aria-label={`${p.category} 전체 체크`} checked={checkedIn(p.trade, p.category) === countIn(p.trade, p.category)} onChange={e => toggle(inGroup(p.trade, p.category).map(x => x.key), e.target.checked)} className="h-4 w-4 accent-blue-600" /></label>{p.trade}{p.category ? ` › ${p.category}` : ""} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개{checkedIn(p.trade, p.category) > 0 && <> · 체크 {checkedIn(p.trade, p.category)}개 합계 {won(sumIn(p.trade, p.category))}원</>}</span></td>
                         </tr>
                       )}
                       <tr className={`group ${on(p) ? "bg-blue-50/50 dark:bg-blue-500/5" : "hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40"}`}>
