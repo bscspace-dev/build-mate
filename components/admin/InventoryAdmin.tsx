@@ -3,9 +3,10 @@
 import { Fragment, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { shrink } from "@/components/admin/AddProduct";
+import { normTags } from "@/lib/tags";
 import type { InventoryEntry } from "@/lib/types";
 
-type Prod = { key: string; kind: "상비품" | "자재" | "연장"; stock: number; price: number; image: string; link: string; brand: string; model: string; battery: string; voltage: string; trade: string; category: string; name: string };
+type Prod = { key: string; kind: "상비품" | "자재" | "연장"; stock: number; price: number; image: string; link: string; brand: string; model: string; battery: string; voltage: string; compat: string; tags: string[]; trade: string; category: string; name: string };
 type KindTab = "상비품" | "자재" | "연장";
 const KIND_KEY = "bm_inventory_kind"; // 마지막으로 본 종류 (이 브라우저에 기억)
 
@@ -124,6 +125,16 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const [newLink, setNewLink] = useState("");
   const [newBrand, setNewBrand] = useState(""); // 연장 브랜드·제품명
   const [newModel, setNewModel] = useState("");
+  const [newTags, setNewTags] = useState(""); // 연장 태그 (쉼표로 구분)
+  const [editTags, setEditTags] = useState("");
+  const [tagSel, setTagSel] = useState(""); // 태그로 묶어 보기 (빈 값 = 전체)
+  const tagChips = (p: Prod) => p.tags.length > 0 ? (
+    <div className="mt-0.5 flex flex-wrap gap-1">
+      {p.tags.map(t => <button key={t} type="button" onClick={e => { e.stopPropagation(); setTagSel(x => (x === t ? "" : t)); }} title="이 태그로 묶어 보기" className={`rounded-full px-1.5 py-0 text-[11px] font-bold ${tagSel === t ? "bg-violet-600 text-white" : "bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200"}`}>#{t}</button>)}
+    </div>
+  ) : null;
+  const [newCompat, setNewCompat] = useState(""); // 연장 호환성 (자유 입력)
+  const [editCompat, setEditCompat] = useState("");
   const [newVoltage, setNewVoltage] = useState(""); // 연장 전압 (자유 입력, 예: 18V)
   const [editVoltage, setEditVoltage] = useState("");
   const voltageList = (
@@ -145,7 +156,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const priceNum = (v: string) => v.replace(/\D/g, "").slice(0, 9);
   const won = (n: number) => n.toLocaleString("ko-KR");
   // 이름·가격 칸을 누르면 그 칸이 바로 입력 상태가 된다 (수정 버튼과 같은 수정 모드)
-  const [editFocus, setEditFocus] = useState<"name" | "price" | "link" | "brand" | "model" | "battery" | "voltage">("name");
+  const [editFocus, setEditFocus] = useState<"name" | "price" | "link" | "brand" | "model" | "battery" | "voltage" | "compat" | "tags">("name");
   // 사진 미리보기: 목록의 사진(썸네일)에 마우스를 올리면 커서 왼쪽에 작은 사진을 띄운다 (수정 중에는 띄우지 않는다)
   const [peek, setPeek] = useState<{ src: string; x: number; y: number } | null>(null);
   const peekProps = (p: Prod) => p.image && editKey !== p.key ? {
@@ -153,7 +164,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     onMouseMove: (e: React.MouseEvent) => setPeek({ src: p.image, x: e.clientX, y: e.clientY }),
     onMouseLeave: () => setPeek(null),
   } : {};
-  const startEdit = (p: Prod, f: "name" | "price" | "link" | "brand" | "model" | "battery" | "voltage" = "name") => { setPeek(null); setEditVoltage(p.voltage); setEditLink(p.link); setEditBrand(p.brand); setEditModel(p.model); setEditBattery(p.battery); setEditKey(p.key); setEditName(p.name); setEditPrice(p.price ? String(p.price) : ""); setEditPhoto(null); setEditFocus(f); };
+  const startEdit = (p: Prod, f: "name" | "price" | "link" | "brand" | "model" | "battery" | "voltage" | "compat" | "tags" = "name") => { setPeek(null); setEditTags(p.tags.join(", ")); setEditCompat(p.compat); setEditVoltage(p.voltage); setEditLink(p.link); setEditBrand(p.brand); setEditModel(p.model); setEditBattery(p.battery); setEditKey(p.key); setEditName(p.name); setEditPrice(p.price ? String(p.price) : ""); setEditPhoto(null); setEditFocus(f); };
   async function uploadPhoto(key: string, file: File): Promise<string | null> {
     try {
       const blob = await shrink(file);
@@ -196,7 +207,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     const category = flat ? firstCat(sel) : catSel;
     if (!category) return setErr(flat ? "이 공정에는 카테고리가 없어서 연장을 추가할 수 없어요. 창고장비현황에서 카테고리를 먼저 만들어 주세요." : "카테고리를 골라 주세요.");
     if (!name.trim()) return setErr("품목 이름을 적어 주세요.");
-    const j = await post({ action: "add", trade: sel, category, name, kind: kindTab, price: Number(newPrice || 0), ...(flat ? { brand: newBrand.trim(), model: newModel.trim(), battery: newBattery, voltage: newVoltage.trim() } : {}) });
+    const j = await post({ action: "add", trade: sel, category, name, kind: kindTab, price: Number(newPrice || 0), ...(flat ? { brand: newBrand.trim(), model: newModel.trim(), battery: newBattery, voltage: newVoltage.trim(), compat: newCompat.trim(), tags: normTags(newTags) } : {}) });
     if (j) {
       const newLinkUrl = newLink.trim();
       let linkSaved = "";
@@ -204,8 +215,8 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
       let img = "";
       if (typeof j.key === "string" && newPhoto) img = (await uploadPhoto(j.key, newPhoto)) ?? ""; // 사진은 등록된 품목에 이어서 올린다
       if (typeof j.key === "string") setAddedNow(x => ({ ...x, [j.key as string]: Date.now() }));
-      if (typeof j.key === "string") setItems(x => [...x, { key: j.key as string, kind: kindTab, stock: 0, price: Number(newPrice || 0), image: img, link: linkSaved, brand: flat ? newBrand.trim() : "", model: flat ? newModel.trim() : "", battery: flat ? newBattery : "", voltage: flat ? newVoltage.trim() : "", trade: sel, category: flat ? "" : catSel, name: name.trim().replace(/\s+/g, " ") }]); // 새로고침을 기다리지 않고 바로 보여 준다
-      setName(""); setNewPrice(""); setNewPhoto(null); setNewLink(""); setNewBrand(""); setNewModel(""); setNewBattery(""); setNewVoltage("");
+      if (typeof j.key === "string") setItems(x => [...x, { key: j.key as string, kind: kindTab, stock: 0, price: Number(newPrice || 0), image: img, link: linkSaved, brand: flat ? newBrand.trim() : "", model: flat ? newModel.trim() : "", battery: flat ? newBattery : "", voltage: flat ? newVoltage.trim() : "", compat: flat ? newCompat.trim() : "", tags: flat ? normTags(newTags) : [], trade: sel, category: flat ? "" : catSel, name: name.trim().replace(/\s+/g, " ") }]); // 새로고침을 기다리지 않고 바로 보여 준다
+      setName(""); setNewPrice(""); setNewPhoto(null); setNewLink(""); setNewBrand(""); setNewModel(""); setNewBattery(""); setNewVoltage(""); setNewCompat(""); setNewTags("");
       router.refresh(); // 뒤에서 서버 값으로 맞춘다
     }
   }
@@ -219,16 +230,16 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     const lk = editLink.trim();
     const isTool = p.kind === "연장"; // 연장은 브랜드·제품명도 함께 고친다
     const br = editBrand.trim(), md = editModel.trim();
-    const toolSame = !isTool || (br === p.brand && md === p.model && editBattery === p.battery && editVoltage.trim() === p.voltage);
+    const toolSame = !isTool || (br === p.brand && md === p.model && editBattery === p.battery && editVoltage.trim() === p.voltage && editCompat.trim() === p.compat && normTags(editTags).join("|") === p.tags.join("|"));
     if (n === p.name && pr === p.price && !editPhoto && lk === p.link && toolSame) return setEditKey(null);
     if (n !== p.name || pr !== p.price || !toolSame) {
-      if (!(await post({ action: "rename", key: p.key, name: n, price: pr, ...(isTool ? { brand: br, model: md, battery: editBattery, voltage: editVoltage.trim() } : {}) }))) return;
+      if (!(await post({ action: "rename", key: p.key, name: n, price: pr, ...(isTool ? { brand: br, model: md, battery: editBattery, voltage: editVoltage.trim(), compat: editCompat.trim(), tags: normTags(editTags) } : {}) }))) return;
     }
     let linkNow = p.link;
     if (lk !== p.link) { const lj = await post({ action: "link", key: p.key, url: lk }); if (!lj) return; linkNow = typeof lj.url === "string" ? lj.url : lk; }
     let img = p.image;
     if (editPhoto) { const up = await uploadPhoto(p.key, editPhoto); if (up) img = up; else return; }
-    setItems(x => x.map(i => (i.key === p.key ? { ...i, name: n, price: pr, image: img, link: linkNow, ...(isTool ? { brand: br, model: md, battery: editBattery, voltage: editVoltage.trim() } : {}) } : i)));
+    setItems(x => x.map(i => (i.key === p.key ? { ...i, name: n, price: pr, image: img, link: linkNow, ...(isTool ? { brand: br, model: md, battery: editBattery, voltage: editVoltage.trim(), compat: editCompat.trim(), tags: normTags(editTags) } : {}) } : i)));
     setEditKey(null); setEditPhoto(null);
     router.refresh();
   }
@@ -268,7 +279,10 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const cmpAdded = (x: Prod, y: Prod, dir: 1 | -1): number => { const a = addedAtMs(x), b = addedAtMs(y); return !a || !b ? (a ? -1 : b ? 1 : 0) : dir * (a - b); }; // 추가한 기록이 없는 품목은 항상 맨 뒤
   const sortVal = (p: Prod, key: SortKey): string => (key === "trade" ? p.trade : key === "category" ? p.category : key === "name" ? p.name : key === "by" ? addedBy.get(p.key)?.byName ?? "기존 품목" : "");
   // 지금 고른 종류·공정·카테고리 안에서 보유(재고 1개 이상) / 미보유(재고 0) 개수
-  const inScope = (p: Prod) => p.kind === kindTab && (!sel || p.trade === sel) && (kindTab === "연장" || !catSel || p.category === catSel);
+  // 연장 태그: 지금 공정의 연장에 붙은 태그와 개수 (없어진 태그를 골라 둔 상태면 전체로)
+  const tagCounts = (() => { const m = new Map<string, number>(); items.filter(p => p.kind === "연장" && (!sel || p.trade === sel)).forEach(p => p.tags.forEach(t => m.set(t, (m.get(t) ?? 0) + 1))); return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko")); })();
+  const tagNow = kindTab === "연장" && tagCounts.some(([t]) => t === tagSel) ? tagSel : "";
+  const inScope = (p: Prod) => p.kind === kindTab && (!sel || p.trade === sel) && (kindTab === "연장" || !catSel || p.category === catSel) && (!tagNow || p.tags.includes(tagNow));
   const holdCounts = { all: items.filter(inScope).length, own: items.filter(p => inScope(p) && p.stock > 0).length, none: items.filter(p => inScope(p) && p.stock <= 0).length };
   const shown = items
     .filter(p => inScope(p) && (kindTab !== "연장" || holdTab === "all" || (holdTab === "own") === (p.stock > 0)))
@@ -303,6 +317,13 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
           <button key={k} type="button" role="tab" aria-selected={holdTab === k} onClick={() => pickHold(k)} title={k === "own" ? "창고장비현황 재고가 1개 이상" : k === "none" ? "창고장비현황 재고가 0" : "보유·미보유 모두"} className={`rounded-t-lg border border-b-0 px-4 py-1.5 text-xs font-bold ${holdTab === k ? "border-zinc-700 bg-zinc-700 text-white dark:border-zinc-200 dark:bg-zinc-200 dark:text-zinc-900" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label} <small className="opacity-70">{holdCounts[k]}</small></button>
         ))}
       </div>}
+      {kindTab === "연장" && tagCounts.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="태그로 묶어 보기">
+          <span className="font-bold text-zinc-500">태그</span>
+          <button type="button" aria-pressed={tagNow === ""} onClick={() => setTagSel("")} className={`rounded-full border px-2.5 py-1 font-bold ${tagNow === "" ? "border-violet-600 bg-violet-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>전체</button>
+          {tagCounts.map(([t, n]) => <button key={t} type="button" aria-pressed={tagNow === t} onClick={() => setTagSel(tagNow === t ? "" : t)} className={`rounded-full border px-2.5 py-1 font-bold ${tagNow === t ? "border-violet-600 bg-violet-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>#{t} <span className="opacity-70">{n}</span></button>)}
+        </div>
+      )}
       {admin && setup && ex.trades.length + ex.categories.length > 0 && (
         <div className="mt-2 rounded-xl bg-zinc-100 text-xs dark:bg-zinc-800">
           <button type="button" onClick={() => setExListOpen(o => !o)} aria-expanded={exListOpen} className="flex w-full items-center gap-2 px-3 py-2 text-left font-bold text-zinc-600 dark:text-zinc-300">
@@ -406,6 +427,8 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                   {batterySelect(newBattery, setNewBattery, "배터리 포함 여부 (모바일)")}
                 </div>
               )}
+              {kindTab === "연장" && <input value={newTags} onChange={e => setNewTags(e.target.value.slice(0, 120))} placeholder="태그 (쉼표로, 예: 18V, 그라인더)" className={inp} aria-label="태그 (모바일)" />}
+              {kindTab === "연장" && <input value={newCompat} onChange={e => setNewCompat(e.target.value.slice(0, 100))} placeholder="호환성 (예: M18 배터리 호환)" className={inp} aria-label="호환성 (모바일)" />}
               <div className="flex gap-2">
                 <input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름 (모바일)" onKeyDown={e => e.key === "Enter" && add()} />
                 <button type="button" disabled={busy} onClick={add} className="shrink-0 rounded-md bg-blue-600 px-5 text-sm font-bold text-white disabled:opacity-50">추가</button>
@@ -428,8 +451,10 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                         : <div className="break-words text-sm font-semibold leading-snug" onClick={() => startEdit(p, "name")}>{p.name}</div>}
                       {editKey !== p.key && p.kind === "연장" && (p.brand || p.model) && <div className="text-[11px] text-zinc-500">{[p.brand, p.model].filter(Boolean).join(" · ")}</div>}
                       {editKey !== p.key && p.kind === "연장" && (p.voltage || p.battery) && <div className="text-[11px] font-bold text-zinc-600 dark:text-zinc-300">{[p.voltage, p.battery].filter(Boolean).join(" · ")}</div>}
+                      {editKey !== p.key && p.kind === "연장" && tagChips(p)}
+                      {editKey !== p.key && p.kind === "연장" && p.compat && <div className="text-[11px] text-zinc-500">호환: {p.compat}</div>}
                       {editKey === p.key ? (
-                        <div className="mt-1 space-y-1.5"><div className="flex items-center gap-1.5"><input autoFocus={editFocus === "price"} value={editPrice} onChange={e => setEditPrice(priceNum(e.target.value))} inputMode="numeric" placeholder="가격(원)" className={`${inp} text-right`} aria-label="가격 수정 (모바일)" />{photoPicker(editPhoto, setEditPhoto, "사진")}</div><input autoFocus={editFocus === "link"} value={editLink} onChange={e => setEditLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크 수정 (모바일)" />{p.kind === "연장" && <div className="flex gap-1.5"><input value={editBrand} onChange={e => setEditBrand(e.target.value.slice(0, 50))} placeholder="브랜드" className={inp} aria-label="브랜드 수정 (모바일)" /><input value={editModel} onChange={e => setEditModel(e.target.value.slice(0, 100))} placeholder="제품명" className={inp} aria-label="제품명 수정 (모바일)" /></div>}{p.kind === "연장" && <div className="flex gap-1.5"><input list="voltage-list" value={editVoltage} onChange={e => setEditVoltage(e.target.value.slice(0, 20))} placeholder="전압 (예: 18V)" className={inp} aria-label="전압 수정 (모바일)" />{batterySelect(editBattery, setEditBattery, "배터리 포함 여부 수정 (모바일)")}</div>}</div>
+                        <div className="mt-1 space-y-1.5"><div className="flex items-center gap-1.5"><input autoFocus={editFocus === "price"} value={editPrice} onChange={e => setEditPrice(priceNum(e.target.value))} inputMode="numeric" placeholder="가격(원)" className={`${inp} text-right`} aria-label="가격 수정 (모바일)" />{photoPicker(editPhoto, setEditPhoto, "사진")}</div><input autoFocus={editFocus === "link"} value={editLink} onChange={e => setEditLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크 수정 (모바일)" />{p.kind === "연장" && <div className="flex gap-1.5"><input value={editBrand} onChange={e => setEditBrand(e.target.value.slice(0, 50))} placeholder="브랜드" className={inp} aria-label="브랜드 수정 (모바일)" /><input value={editModel} onChange={e => setEditModel(e.target.value.slice(0, 100))} placeholder="제품명" className={inp} aria-label="제품명 수정 (모바일)" /></div>}{p.kind === "연장" && <div className="flex gap-1.5"><input list="voltage-list" value={editVoltage} onChange={e => setEditVoltage(e.target.value.slice(0, 20))} placeholder="전압 (예: 18V)" className={inp} aria-label="전압 수정 (모바일)" />{batterySelect(editBattery, setEditBattery, "배터리 포함 여부 수정 (모바일)")}</div>}{p.kind === "연장" && <input value={editTags} onChange={e => setEditTags(e.target.value.slice(0, 120))} placeholder="태그 (쉼표로)" className={inp} aria-label="태그 수정 (모바일)" />}{p.kind === "연장" && <input value={editCompat} onChange={e => setEditCompat(e.target.value.slice(0, 100))} placeholder="호환성" className={inp} aria-label="호환성 수정 (모바일)" />}</div>
                       ) : p.price > 0 && <div className="text-xs font-bold text-zinc-600 dark:text-zinc-300" onClick={() => startEdit(p, "price")}>{won(p.price)}원</div>}
                       {editKey !== p.key && p.link && <a href={p.link} target="_blank" rel="noopener noreferrer" className="mt-0.5 inline-block rounded-md bg-orange-500 px-2 py-0.5 text-[11px] font-bold text-white">구매 링크 ↗</a>}
                       {a && <div className="text-[11px] leading-tight text-zinc-500">{a.byName} 추가</div>}
@@ -442,7 +467,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                         </>
                       ) : (
                         <>
-                          <button type="button" disabled={busy} onClick={() => startEdit(p)} className="rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">수정</button>
+                          <button type="button" disabled={busy} onClick={() => startEdit(p)} className="whitespace-nowrap rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">수정</button>
                           <button type="button" disabled={busy} onClick={() => del(p)} className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 disabled:opacity-40 dark:bg-red-500/15 dark:text-red-300">삭제</button>
                         </>
                       )}
@@ -457,19 +482,19 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
               <thead>
                 <tr className="bg-zinc-50 text-xs text-zinc-500 dark:bg-zinc-800/60">
                   <th className={`${cell} w-9 text-center`}><input type="checkbox" aria-label="이 쪽 전체 선택" checked={rows.length > 0 && rows.every(r => checked.includes(r.key))} onChange={e => setChecked(c => (e.target.checked ? [...new Set([...c, ...rows.map(r => r.key)])] : c.filter(k => !rows.some(r => r.key === k))))} className="h-4 w-4 accent-red-600" /></th>
-                  <th className={`${cell} ${kindTab === "연장" ? "w-10" : "w-12"} text-center`}>#</th>
-                  <th className={`${cell} w-14 text-center`}>사진</th>
-                  <th className={`${cell} ${kindTab === "연장" ? "w-24" : "w-32"}`} aria-sort={sort?.key === "trade" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("trade")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "trade" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">공정<span aria-hidden className="text-[10px]">{sort?.key === "trade" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
+                  <th className={`${cell} ${kindTab === "연장" ? "w-8" : "w-12"} text-center`}>#</th>
+                  <th className={`${cell} ${kindTab === "연장" ? "w-12" : "w-14"} text-center`}>사진</th>
+                  <th className={`${cell} ${kindTab === "연장" ? "w-20" : "w-32"}`} aria-sort={sort?.key === "trade" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("trade")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "trade" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">공정<span aria-hidden className="text-[10px]">{sort?.key === "trade" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
                   {kindTab !== "연장" && <th className={`${cell} w-40`} aria-sort={sort?.key === "category" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("category")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "category" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">카테고리<span aria-hidden className="text-[10px]">{sort?.key === "category" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>}
                   <th className={`${cell}`} aria-sort={sort?.key === "name" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("name")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "name" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">품목<span aria-hidden className="text-[10px]">{sort?.key === "name" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
-                  {kindTab === "연장" && <><th className={`${cell} w-24`}>브랜드</th><th className={`${cell} w-28`}>제품명</th><th className={`${cell} w-16`}>전압</th><th className={`${cell} w-24`}>배터리</th></>}
+                  {kindTab === "연장" && <><th className={`${cell} w-20`}>브랜드</th><th className={`${cell} w-24`}>제품명</th><th className={`${cell} w-14`}>전압</th><th className={`${cell} w-20`}>배터리</th><th className={`${cell} w-24`}>호환성</th></>}
                   <th className={`${cell} ${kindTab === "연장" ? "w-20" : "w-28"} text-right`}>가격</th>
-                  <th className={`${cell} ${kindTab === "연장" ? "w-20" : "w-24"} text-center`}>링크</th>
-                  <th className={`${cell} ${kindTab === "연장" ? "w-20" : "w-24"}`} aria-sort={sort?.key === "by" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("by")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "by" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">추가한 사람<span aria-hidden className="text-[10px]">{sort?.key === "by" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
+                  <th className={`${cell} ${kindTab === "연장" ? "w-12" : "w-24"} text-center`}>링크</th>
+                  <th className={`${cell} ${kindTab === "연장" ? "w-16" : "w-24"}`} aria-sort={sort?.key === "by" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("by")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "by" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">추가한 사람<span aria-hidden className="text-[10px]">{sort?.key === "by" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
                   <th className={`${cell} ${kindTab === "연장" ? "w-28" : "w-32"}`} />
                 </tr>
                 <tr className="bg-blue-50/60 dark:bg-blue-500/10">
-                  <td className={cell} colSpan={kindTab === "연장" ? 13 : 10}>
+                  <td className={cell} colSpan={kindTab === "연장" ? 14 : 10}>
                     <div className="flex flex-wrap items-end gap-2 text-xs font-bold text-zinc-600 dark:text-zinc-300">
                       <span className="self-center">공정</span>
                       <select value={sel} onChange={e => { setSel(e.target.value); setCatSel(firstCat(e.target.value)); }} className="self-center rounded-md border border-black/15 bg-transparent px-2 py-1.5 text-sm font-normal outline-none focus:border-blue-500 dark:border-white/15" aria-label="공정">
@@ -491,8 +516,8 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                   <td className={`${cell} text-center text-xs font-bold text-blue-700 dark:text-blue-300`}>＋</td>
                   <td className={`${cell} text-center`}>{photoPicker(newPhoto, setNewPhoto, "")}</td>
                   <td className={`${cell} text-xs font-bold text-zinc-600 dark:text-zinc-300`} colSpan={kindTab === "연장" ? 1 : 2}>{kindTab === "연장" ? (sel ? `${sel} › 연장` : "공정을 고르세요") : sel && catSel ? `${sel} › ${catSel}` : "공정·카테고리를 고르세요"}</td>
-                  <td className={cell}><input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름" onKeyDown={e => e.key === "Enter" && add()} /></td>
-                  {kindTab === "연장" && <><td className={cell}><input value={newBrand} onChange={e => setNewBrand(e.target.value.slice(0, 50))} placeholder="브랜드" className={inp} aria-label="브랜드" onKeyDown={e => e.key === "Enter" && add()} /></td><td className={cell}><input value={newModel} onChange={e => setNewModel(e.target.value.slice(0, 100))} placeholder="제품명" className={inp} aria-label="제품명" onKeyDown={e => e.key === "Enter" && add()} /></td><td className={cell}><input list="voltage-list" value={newVoltage} onChange={e => setNewVoltage(e.target.value.slice(0, 20))} placeholder="18V" className={inp} aria-label="전압" onKeyDown={e => e.key === "Enter" && add()} /></td><td className={cell}>{batterySelect(newBattery, setNewBattery, "배터리 포함 여부")}</td></>}
+                  <td className={cell}><input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름" onKeyDown={e => e.key === "Enter" && add()} />{kindTab === "연장" && <input value={newTags} onChange={e => setNewTags(e.target.value.slice(0, 120))} placeholder="태그 (쉼표로, 예: 18V, 그라인더)" className={`${inp} mt-1`} aria-label="태그" onKeyDown={e => e.key === "Enter" && add()} />}</td>
+                  {kindTab === "연장" && <><td className={cell}><input value={newBrand} onChange={e => setNewBrand(e.target.value.slice(0, 50))} placeholder="브랜드" className={inp} aria-label="브랜드" onKeyDown={e => e.key === "Enter" && add()} /></td><td className={cell}><input value={newModel} onChange={e => setNewModel(e.target.value.slice(0, 100))} placeholder="제품명" className={inp} aria-label="제품명" onKeyDown={e => e.key === "Enter" && add()} /></td><td className={cell}><input list="voltage-list" value={newVoltage} onChange={e => setNewVoltage(e.target.value.slice(0, 20))} placeholder="18V" className={inp} aria-label="전압" onKeyDown={e => e.key === "Enter" && add()} /></td><td className={cell}>{batterySelect(newBattery, setNewBattery, "배터리 포함 여부")}</td><td className={cell}><input value={newCompat} onChange={e => setNewCompat(e.target.value.slice(0, 100))} placeholder="호환성" className={inp} aria-label="호환성" onKeyDown={e => e.key === "Enter" && add()} /></td></>}
                   <td className={cell}><input value={newPrice} onChange={e => setNewPrice(priceNum(e.target.value))} inputMode="numeric" placeholder="가격(원)" className={`${inp} text-right`} aria-label="가격" onKeyDown={e => e.key === "Enter" && add()} /></td>
                   <td className={cell}><input value={newLink} onChange={e => setNewLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크" onKeyDown={e => e.key === "Enter" && add()} /></td>
                   <td className={cell} colSpan={2}><button type="button" disabled={busy} onClick={add} className="w-full rounded-md bg-blue-600 py-1.5 text-sm font-bold text-white disabled:opacity-50">추가</button></td>
@@ -500,7 +525,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
               </thead>
               <tbody>
                 {shown.length === 0 && (
-                  <tr><td colSpan={kindTab === "연장" ? 13 : 10} className={`${cell} py-8 text-center text-zinc-500`}>내 공정에 {kindTab}이(가) 없어요. 위에서 추가해 보세요.</td></tr>
+                  <tr><td colSpan={kindTab === "연장" ? 14 : 10} className={`${cell} py-8 text-center text-zinc-500`}>내 공정에 {kindTab}이(가) 없어요. 위에서 추가해 보세요.</td></tr>
                 )}
                 {rows.map((p, k) => {
                   const i = start + k;
@@ -510,7 +535,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                     <Fragment key={p.key}>
                     {head && (
                       <tr className="bg-blue-50/60 dark:bg-blue-500/10">
-                        <td colSpan={kindTab === "연장" ? 13 : 10} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300">{freshAt(p) ? <>신규 추가 <span className="font-normal text-zinc-500">{freshCount}개 · 최근 14일 이내에 추가한 품목이에요</span></> : <>{p.trade}{p.category ? ` › ${p.category}` : ""} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개</span></>}</td>
+                        <td colSpan={kindTab === "연장" ? 14 : 10} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300">{freshAt(p) ? <>신규 추가 <span className="font-normal text-zinc-500">{freshCount}개 · 최근 14일 이내에 추가한 품목이에요</span></> : <>{p.trade}{p.category ? ` › ${p.category}` : ""} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개</span></>}</td>
                       </tr>
                     )}
                     <tr className={checked.includes(p.key) ? "bg-red-50/60 dark:bg-red-500/5" : "hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40"}>
@@ -519,7 +544,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                       <td className={`${cell} text-center`}>{editKey === p.key ? photoPicker(editPhoto, setEditPhoto, "") : thumbPick(p, "h-9 w-9")}</td>
                       <td className={`${cell} whitespace-nowrap`}>{p.trade}</td>
                       {kindTab !== "연장" && <td className={`${cell} whitespace-nowrap`}>{p.category}</td>}
-                      <td className={`${cell} font-semibold ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : "눌러서 수정"} onClick={() => { if (editKey !== p.key) startEdit(p, "name"); }}>{editKey === p.key ? <input autoFocus={editFocus === "name"} value={editName} onChange={e => setEditName(e.target.value.slice(0, 100))} onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} className={inp} aria-label="품목 이름 수정" /> : p.name}</td>
+                      <td className={`${cell} font-semibold ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : "눌러서 수정"} onClick={() => { if (editKey !== p.key) startEdit(p, "name"); }}>{editKey === p.key ? <><input autoFocus={editFocus === "name"} value={editName} onChange={e => setEditName(e.target.value.slice(0, 100))} onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} className={inp} aria-label="품목 이름 수정" />{p.kind === "연장" && <input autoFocus={editFocus === "tags"} value={editTags} onChange={e => setEditTags(e.target.value.slice(0, 120))} placeholder="태그 (쉼표로, 예: 18V, 그라인더)" className={`${inp} mt-1`} aria-label="태그 수정" onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} />}</> : <>{p.name}{p.kind === "연장" && tagChips(p)}</>}</td>
                       {kindTab === "연장" && (["brand", "model"] as const).map(f => (
                         <td key={f} className={`${cell} text-sm ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : f === "brand" ? "눌러서 브랜드 입력" : "눌러서 제품명 입력"} onClick={() => { if (editKey !== p.key) startEdit(p, f); }}>
                           {editKey === p.key ? <input autoFocus={editFocus === f} value={f === "brand" ? editBrand : editModel} onChange={e => (f === "brand" ? setEditBrand(e.target.value.slice(0, 50)) : setEditModel(e.target.value.slice(0, 100)))} placeholder={f === "brand" ? "브랜드" : "제품명"} className={inp} aria-label={f === "brand" ? "브랜드 수정" : "제품명 수정"} onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} /> : (f === "brand" ? p.brand : p.model) || <span className="text-zinc-300">—</span>}
@@ -535,8 +560,13 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                           {editKey === p.key ? batterySelect(editBattery, setEditBattery, "배터리 포함 여부 수정") : batteryBadge(p.battery)}
                         </td>
                       )}
+                      {kindTab === "연장" && (
+                        <td className={`${cell} text-sm ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : "눌러서 호환성 입력"} onClick={() => { if (editKey !== p.key) startEdit(p, "compat"); }}>
+                          {editKey === p.key ? <input autoFocus={editFocus === "compat"} value={editCompat} onChange={e => setEditCompat(e.target.value.slice(0, 100))} placeholder="호환성" className={inp} aria-label="호환성 수정" onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} /> : p.compat || <span className="text-zinc-300">—</span>}
+                        </td>
+                      )}
                       <td className={`${cell} text-right tabular-nums ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : "눌러서 가격 입력"} onClick={() => { if (editKey !== p.key) startEdit(p, "price"); }}>{editKey === p.key ? <input autoFocus={editFocus === "price"} value={editPrice} onChange={e => setEditPrice(priceNum(e.target.value))} inputMode="numeric" placeholder="가격(원)" className={`${inp} text-right`} aria-label="가격 수정" onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} /> : p.price > 0 ? won(p.price) : <span className="text-zinc-300">—</span>}</td>
-                      <td className={`${cell} text-center ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : "눌러서 링크 입력"} onClick={() => { if (editKey !== p.key) startEdit(p, "link"); }}>{editKey === p.key ? <input autoFocus={editFocus === "link"} value={editLink} onChange={e => setEditLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크 수정" onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} /> : p.link ? <a href={p.link} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} title={p.link} aria-label={`${p.name} 구매 링크 열기`} className="inline-block rounded-md bg-orange-500 px-2 py-0.5 text-xs font-bold text-white hover:bg-orange-600">링크 ↗</a> : <span className="text-zinc-300">—</span>}</td>
+                      <td className={`${cell} text-center ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : "눌러서 링크 입력"} onClick={() => { if (editKey !== p.key) startEdit(p, "link"); }}>{editKey === p.key ? <input autoFocus={editFocus === "link"} value={editLink} onChange={e => setEditLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크 수정" onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} /> : p.link ? <a href={p.link} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} title={p.link} aria-label={`${p.name} 구매 링크 열기`} className="inline-block whitespace-nowrap rounded-md bg-orange-500 px-2 py-0.5 text-xs font-bold text-white hover:bg-orange-600">{kindTab === "연장" ? "↗" : "링크 ↗"}</a> : <span className="text-zinc-300">—</span>}</td>
                       <td className={`${cell} whitespace-nowrap`}>{a ? a.byName : <span className="text-zinc-400">기존 품목</span>}</td>
                       <td className={`${cell} text-center`}>
                         {editKey === p.key ? (
@@ -546,7 +576,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                           </div>
                         ) : (
                           <div className="flex justify-center gap-1">
-                            <button type="button" disabled={busy} onClick={() => startEdit(p)} className="rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">수정</button>
+                            <button type="button" disabled={busy} onClick={() => startEdit(p)} className="whitespace-nowrap rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold disabled:opacity-40 dark:bg-zinc-800">수정</button>
                             <button type="button" disabled={busy} onClick={() => del(p)} className="rounded-md bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600 disabled:opacity-40 dark:bg-red-500/15 dark:text-red-300">삭제</button>
                           </div>
                         )}

@@ -1339,3 +1339,39 @@ export function setProductVoltage(key: string, voltage: string): Promise<void> {
     await writeJson('product-voltage.json', cur);
   });
 }
+
+// ───────── 연장 호환성 — 품목별 자유 입력 (data/product-compat.json) ─────────
+export async function getProductCompat(): Promise<Record<string, string>> {
+  try {
+    const v = await readJson<unknown>('product-compat.json');
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, m]) => typeof m === 'string' && m) as [string, string][]);
+  } catch {
+    return {};
+  }
+}
+export function setProductCompat(key: string, compat: string): Promise<void> {
+  return withLock(async () => {
+    const cur = await getProductCompat();
+    if (compat) cur[key] = compat; else delete cur[key];
+    await writeJson('product-compat.json', cur);
+  });
+}
+
+// ───────── 연장 태그 — 품목별 여러 개 (data/product-tags.json) ─────────
+export async function getProductTags(): Promise<Record<string, string[]>> {
+  try {
+    const v = await readJson<unknown>('product-tags.json');
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, t]) => (Array.isArray(t) ? [[k, t.filter((x): x is string => typeof x === 'string' && !!x)] as [string, string[]]] : [])).filter(([, t]) => t.length > 0));
+  } catch {
+    return {};
+  }
+}
+export function setProductTags(key: string, tags: string[]): Promise<void> {
+  return withLock(async () => {
+    const cur = await getProductTags();
+    if (tags.length) cur[key] = tags; else delete cur[key];
+    await writeJson('product-tags.json', cur);
+  });
+}

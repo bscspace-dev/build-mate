@@ -1168,3 +1168,29 @@ export async function setProductVoltage(key: string, voltage: string): Promise<v
   if (voltage) cur[key] = voltage; else delete cur[key];
   must(await supabase().from('app_settings').upsert({ key: 'product_voltage', value: cur }, { onConflict: 'key' }), '전압 저장');
 }
+
+// ───────── 연장 호환성 — 품목별 자유 입력, 예: 밀워키 M18 배터리 호환 (app_settings: product_compat) ─────────
+export async function getProductCompat(): Promise<Record<string, string>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'product_compat').maybeSingle(), '호환성 조회') as { value: unknown } | null;
+  const v = row?.value;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, m]) => typeof m === 'string' && m) as [string, string][]);
+}
+export async function setProductCompat(key: string, compat: string): Promise<void> {
+  const cur = await getProductCompat();
+  if (compat) cur[key] = compat; else delete cur[key];
+  must(await supabase().from('app_settings').upsert({ key: 'product_compat', value: cur }, { onConflict: 'key' }), '호환성 저장');
+}
+
+// ───────── 연장 태그 — 품목별 여러 개 (app_settings: product_tags) ─────────
+export async function getProductTags(): Promise<Record<string, string[]>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'product_tags').maybeSingle(), '태그 조회') as { value: unknown } | null;
+  const v = row?.value;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, t]) => (Array.isArray(t) ? [[k, t.filter((x): x is string => typeof x === 'string' && !!x)] as [string, string[]]] : [])).filter(([, t]) => t.length > 0));
+}
+export async function setProductTags(key: string, tags: string[]): Promise<void> {
+  const cur = await getProductTags();
+  if (tags.length) cur[key] = tags; else delete cur[key];
+  must(await supabase().from('app_settings').upsert({ key: 'product_tags', value: cur }, { onConflict: 'key' }), '태그 저장');
+}

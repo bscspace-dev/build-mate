@@ -51,6 +51,8 @@ export default function AddProduct({
   const subShown = sub ?? (category ? headOfCat(category) : "");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
+  const [tags, setTags] = useState(""); // 연장 태그 (쉼표로 구분)
+  const [compat, setCompat] = useState(""); // 연장 호환성
   const [voltage, setVoltage] = useState(""); // 연장 전압
   const [battery, setBattery] = useState(""); // 연장 배터리 포함 여부 // 연장 제품명(모델명)
   const [price, setPrice] = useState("");
@@ -105,7 +107,7 @@ export default function AddProduct({
       fd.set("category", category);
       fd.set("sub", subShown);
       fd.set("brand", brand);
-      if (kind === "연장") { fd.set("model", model); fd.set("voltage", voltage); fd.set("battery", battery); }
+      if (kind === "연장") { fd.set("model", model); fd.set("voltage", voltage); fd.set("battery", battery); fd.set("compat", compat); fd.set("tags", tags); }
       fd.set("price", price);
       fd.set("stock", stock);
       const r = await fetch("/api/admin/products/new", { method: "POST", body: fd });
@@ -169,6 +171,10 @@ export default function AddProduct({
               <label htmlFor="np-voltage" className="mt-4 block text-sm font-bold">전압 <span className="font-normal text-zinc-500">(예: 18V, 20V · 선택)</span></label>
               <input id="np-voltage" value={voltage} onChange={e => setVoltage(e.target.value)} maxLength={20} autoComplete="off" list="np-voltage-list" className={inputCls} />
               <datalist id="np-voltage-list"><option value="12V" /><option value="14.4V" /><option value="18V" /><option value="20V" /><option value="21V" /><option value="36V" /></datalist>
+              <label htmlFor="np-tags" className="mt-4 block text-sm font-bold">태그 <span className="font-normal text-zinc-500">(쉼표로 구분, 예: 18V, 그라인더 · 선택)</span></label>
+              <input id="np-tags" value={tags} onChange={e => setTags(e.target.value)} maxLength={120} autoComplete="off" className={inputCls} />
+              <label htmlFor="np-compat" className="mt-4 block text-sm font-bold">호환성 <span className="font-normal text-zinc-500">(예: 밀워키 M18 배터리 호환 · 선택)</span></label>
+              <input id="np-compat" value={compat} onChange={e => setCompat(e.target.value)} maxLength={100} autoComplete="off" className={inputCls} />
               <label htmlFor="np-battery" className="mt-4 block text-sm font-bold">배터리 <span className="font-normal text-zinc-500">(선택)</span></label>
               <select id="np-battery" value={battery} onChange={e => setBattery(e.target.value)} className={inputCls}><option value="">선택 안 함</option><option value="포함">포함</option><option value="미포함">미포함</option></select>
             </>)}

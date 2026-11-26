@@ -8,7 +8,7 @@ import { KINDS, type Kind, type Product, type TrashedProduct } from "@/lib/types
 
 const inputCls = "mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15";
 
-export type ProductEdited = { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string; model?: string; battery?: string; voltage?: string };
+export type ProductEdited = { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string; model?: string; battery?: string; voltage?: string; compat?: string; tags?: string[] };
 
 // 등록한 품목의 정보 수정: 이름·세부분류·브랜드·가격·사진 (카테고리는 '이동', 재고는 재고 칸에서 바꾼다)
 export default function EditProduct({
@@ -32,6 +32,8 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
   const [name, setName] = useState(product.name);
   const [sub, setSub] = useState(product.sub ?? "");
   const [brand, setBrand] = useState(product.brand ?? "");
+  const [tags, setTags] = useState(((product as { tags?: string[] }).tags ?? []).join(", ")); // 연장 태그 (쉼표로 구분)
+  const [compat, setCompat] = useState((product as { compat?: string }).compat ?? ""); // 연장 호환성
   const [voltage, setVoltage] = useState((product as { voltage?: string }).voltage ?? ""); // 연장 전압
   const [battery, setBattery] = useState((product as { battery?: string }).battery ?? ""); // 연장 배터리 포함 여부
   const [model, setModel] = useState((product as { model?: string }).model ?? ""); // 연장 제품명(모델명)
@@ -61,7 +63,7 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
       fd.set("kind", kind);
       fd.set("sub", sub);
       fd.set("brand", brand);
-      if (kind === "연장") { fd.set("model", model); fd.set("voltage", voltage); fd.set("battery", battery); }
+      if (kind === "연장") { fd.set("model", model); fd.set("voltage", voltage); fd.set("battery", battery); fd.set("compat", compat); fd.set("tags", tags); }
       fd.set("price", price);
       if (photo) {
         const blob = await shrink(photo);
@@ -71,7 +73,7 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
       if (r.status === 401) { router.replace("/"); return; }
       const j = (await r.json().catch(() => ({}))) as ProductEdited & { error?: string };
       if (!r.ok) throw new Error(j.error ?? "수정하지 못했어요.");
-      onSaved(product.key, { name: j.name, sub: j.sub, brand: j.brand, price: j.price, kind: j.kind, image: j.image, model: j.model, battery: j.battery, voltage: j.voltage });
+      onSaved(product.key, { name: j.name, sub: j.sub, brand: j.brand, price: j.price, kind: j.kind, image: j.image, model: j.model, battery: j.battery, voltage: j.voltage, compat: j.compat, tags: j.tags });
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "수정하지 못했어요.");
     }
@@ -120,6 +122,10 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
             <label htmlFor="ep-voltage" className="mt-4 block text-sm font-bold">전압 <span className="font-normal text-zinc-500">(예: 18V, 20V)</span></label>
             <input id="ep-voltage" value={voltage} onChange={e => setVoltage(e.target.value)} maxLength={20} autoComplete="off" list="ep-voltage-list" className={inputCls} />
             <datalist id="ep-voltage-list"><option value="12V" /><option value="14.4V" /><option value="18V" /><option value="20V" /><option value="21V" /><option value="36V" /></datalist>
+            <label htmlFor="ep-tags" className="mt-4 block text-sm font-bold">태그 <span className="font-normal text-zinc-500">(쉼표로 구분, 예: 18V, 그라인더)</span></label>
+            <input id="ep-tags" value={tags} onChange={e => setTags(e.target.value)} maxLength={120} autoComplete="off" className={inputCls} />
+            <label htmlFor="ep-compat" className="mt-4 block text-sm font-bold">호환성 <span className="font-normal text-zinc-500">(예: 밀워키 M18 배터리 호환)</span></label>
+            <input id="ep-compat" value={compat} onChange={e => setCompat(e.target.value)} maxLength={100} autoComplete="off" className={inputCls} />
             <label htmlFor="ep-battery" className="mt-4 block text-sm font-bold">배터리</label>
             <select id="ep-battery" value={battery} onChange={e => setBattery(e.target.value)} className={inputCls}><option value="">선택 안 함</option><option value="포함">포함</option><option value="미포함">미포함</option></select>
           </>)}

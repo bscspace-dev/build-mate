@@ -1,9 +1,10 @@
 import { getActor } from '@/lib/auth';
-import { addInventory, addProduct, getPurchaseLinks, setProductModel, setProductBattery, setProductVoltage, getPurchaseOptions, savePurchaseOptions, getVendorShipping, saveVendorShipping, getInventory, getInventoryExcluded, removeInventory, saveInventoryExcluded, deleteProducts, getCategoryTrades, getProducts, getTrades, getFavoriteVendors, saveFavoriteVendors, getPricingSnapshots, nextProductKey, savePricingSnapshots, setPurchaseLink, setStock, updateProduct } from '@/lib/db';
+import { addInventory, addProduct, getPurchaseLinks, setProductModel, setProductBattery, setProductVoltage, setProductCompat, setProductTags, getPurchaseOptions, savePurchaseOptions, getVendorShipping, saveVendorShipping, getInventory, getInventoryExcluded, removeInventory, saveInventoryExcluded, deleteProducts, getCategoryTrades, getProducts, getTrades, getFavoriteVendors, saveFavoriteVendors, getPricingSnapshots, nextProductKey, savePricingSnapshots, setPurchaseLink, setStock, updateProduct } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { inventoryTrades } from '@/lib/inventory';
 import { recordChangeLater } from '@/lib/audit';
 import { headOf, rewriteSub } from '@/lib/sub-path';
+import { normTags } from '@/lib/tags';
 
 // 장비조사·가격조사(menu): 내 팀이 맡은 공정(대분류)의 상비품 목록에서
 //  · 추가(add)  = 고른 공정·카테고리로 창고장비현황에도 상비품이 등록된다. 누가 언제 추가했는지 남는다. (가격조사는 금액·수량도 함께)
@@ -64,6 +65,10 @@ export async function POST(req: Request) {
     recordChangeLater(menu, { action: '추가', target: name, detail: `${trade} › ${category}${pricing ? ` · 금액 ${price.toLocaleString('ko-KR')} · 구매 예정 수량 ${qty}` : ''}` });
     const modelIn = clip((b as { model?: unknown }).model, 100);
     if (modelIn) await setProductModel(product.key, modelIn); // 연장 제품명(모델명)
+    const tagsIn = normTags((b as { tags?: unknown }).tags);
+    if (tagsIn.length) await setProductTags(product.key, tagsIn); // 연장 태그
+    const compatIn = clip((b as { compat?: unknown }).compat, 100);
+    if (compatIn) await setProductCompat(product.key, compatIn); // 연장 호환성
     const voltageIn = clip((b as { voltage?: unknown }).voltage, 20);
     if (voltageIn) await setProductVoltage(product.key, voltageIn); // 연장 전압 (예: 18V)
     const batteryIn = clip((b as { battery?: unknown }).battery, 10);
@@ -108,6 +113,8 @@ export async function POST(req: Request) {
     const brandNew = typeof (b as { brand?: unknown }).brand === 'string' ? clip((b as { brand?: unknown }).brand, 50) : p.brand;
     if (!(await updateProduct(p.key, { name, sub: p.sub, brand: brandNew, price, priceInclVat }))) return json({ error: '없는 상비품이에요.' }, 404);
     if (typeof (b as { model?: unknown }).model === 'string') await setProductModel(p.key, clip((b as { model?: unknown }).model, 100));
+    if ((b as { tags?: unknown }).tags !== undefined) await setProductTags(p.key, normTags((b as { tags?: unknown }).tags));
+    if (typeof (b as { compat?: unknown }).compat === 'string') await setProductCompat(p.key, clip((b as { compat?: unknown }).compat, 100));
     if (typeof (b as { voltage?: unknown }).voltage === 'string') await setProductVoltage(p.key, clip((b as { voltage?: unknown }).voltage, 20));
     if (typeof (b as { battery?: unknown }).battery === 'string') await setProductBattery(p.key, clip((b as { battery?: unknown }).battery, 10));
     const changes: string[] = [];

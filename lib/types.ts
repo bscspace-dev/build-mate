@@ -13,6 +13,8 @@ export type Product = {
   sub: string;
   name: string;
   brand: string;
+  tags?: string[]; // 연장 태그 (묶어 보기용) — app_settings 에 따로 저장되어 화면에서 합쳐진다
+  compat?: string; // 연장 호환성 (자유 입력, 예: 밀워키 M18 배터리 호환) — app_settings 에 따로 저장되어 화면에서 합쳐진다
   voltage?: string; // 연장 전압 (자유 입력, 예: 18V) — app_settings 에 따로 저장되어 화면에서 합쳐진다
   battery?: string; // 연장 배터리 포함 여부 ('포함' | '미포함' | 없음) — app_settings 에 따로 저장되어 화면에서 합쳐진다
   model?: string; // 제품명(모델명) — 연장에서 쓴다 (app_settings 에 따로 저장되어 화면에서 합쳐진다)

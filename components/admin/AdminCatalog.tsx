@@ -186,9 +186,9 @@ function ProductCard({
         <div className={`break-keep ${list ? "min-w-[11rem] flex-1 text-sm leading-snug" : "line-clamp-2 min-h-[2.6em] text-xs leading-snug sm:line-clamp-3 sm:min-h-[3.6em] sm:text-[13px]"} ${empty ? "text-red-800 dark:text-red-200" : ""}`}>
           {p.name}
           {list && p.soldout && <span className="ml-1.5 rounded-md bg-red-600 px-1.5 py-0.5 text-[11px] text-white">품절</span>}
-          {list && <small className="block text-[11px] text-zinc-500">{p.brand}{p.brand ? " · " : ""}{(p as Product).model}{(p as Product).model ? " · " : ""}{(p as Product).voltage ? `${(p as Product).voltage} · ` : ""}{(p as Product).battery ? `${(p as Product).battery} · ` : ""}<b className="tabular-nums text-zinc-700 dark:text-zinc-300">{p.price > 0 ? `${p.price.toLocaleString("ko-KR")}원` : "가격 미등록"}</b>{vendor?.vendor && (vendor.url ? <a href={vendor.url} target="_blank" rel="noopener noreferrer" title="눌러서 구매 링크로 이동" className={`ml-1.5 rounded px-1.5 py-0.5 font-bold hover:underline ${vendorColor(vendor.vendor)}`}>{vendor.vendor} ↗</a> : <span className={`ml-1.5 rounded px-1.5 py-0.5 font-bold ${vendorColor(vendor.vendor)}`}>{vendor.vendor}</span>)}{vendor?.unit && <span className="ml-1">{vendor.unit}</span>}</small>}
+          {list && <small className="block text-[11px] text-zinc-500">{p.brand}{p.brand ? " · " : ""}{(p as Product).model}{(p as Product).model ? " · " : ""}{(p as Product).voltage ? `${(p as Product).voltage} · ` : ""}{(p as Product).compat ? `호환: ${(p as Product).compat} · ` : ""}{(p as Product).battery ? `${(p as Product).battery} · ` : ""}<b className="tabular-nums text-zinc-700 dark:text-zinc-300">{p.price > 0 ? `${p.price.toLocaleString("ko-KR")}원` : "가격 미등록"}</b>{vendor?.vendor && (vendor.url ? <a href={vendor.url} target="_blank" rel="noopener noreferrer" title="눌러서 구매 링크로 이동" className={`ml-1.5 rounded px-1.5 py-0.5 font-bold hover:underline ${vendorColor(vendor.vendor)}`}>{vendor.vendor} ↗</a> : <span className={`ml-1.5 rounded px-1.5 py-0.5 font-bold ${vendorColor(vendor.vendor)}`}>{vendor.vendor}</span>)}{vendor?.unit && <span className="ml-1">{vendor.unit}</span>}</small>}
         </div>
-        {!list && (p.brand || (p as Product).model || (p as Product).voltage || (p as Product).battery) && <div className="mt-0.5 truncate text-[11px] text-zinc-500">{[p.brand, (p as Product).model, (p as Product).voltage, (p as Product).battery || ""].filter(Boolean).join(" · ")}</div>}
+        {!list && (p.brand || (p as Product).model || (p as Product).voltage || (p as Product).battery || (p as Product).compat || ((p as Product).tags?.length ?? 0) > 0) && <div className="mt-0.5 truncate text-[11px] text-zinc-500">{[p.brand, (p as Product).model, (p as Product).voltage, (p as Product).battery || "", (p as Product).compat ? `호환: ${(p as Product).compat}` : "", ...((p as Product).tags ?? []).map(t => `#${t}`)].filter(Boolean).join(" · ")}</div>}
         {!list && vendor && (vendor.vendor || vendor.unit) && <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">{vendor.vendor && (vendor.url ? <a href={vendor.url} target="_blank" rel="noopener noreferrer" title="눌러서 구매 링크로 이동" className={`max-w-full truncate rounded-md px-1.5 py-0.5 font-bold underline-offset-2 hover:underline ${vendorColor(vendor.vendor)}`}>{vendor.vendor} ↗</a> : <span className={`max-w-full truncate rounded-md px-1.5 py-0.5 font-bold ${vendorColor(vendor.vendor)}`}>{vendor.vendor}</span>)}{vendor.unit && <span className="text-zinc-500">{vendor.unit}</span>}</div>}
         {!list && <div className="mt-0.5 text-[11px] font-bold tabular-nums text-zinc-800 dark:text-zinc-200">{p.price > 0 ? <>{p.price.toLocaleString("ko-KR")}원</> : <span className="font-normal text-zinc-400">가격 미등록</span>}</div>}
         {inv && (inv.add || (trashMode && inv.del)) && (
@@ -382,7 +382,7 @@ export default function AdminCatalog({
       p =>
         (!starOnly || starSet.has(p.key)) &&
         (!activeSub || p.sub === activeSub) &&
-        (!kw || `${p.name} ${p.brand} ${(p as Product).model ?? ""} ${p.sub}`.toLowerCase().includes(kw)),
+        (!kw || `${p.name} ${p.brand} ${(p as Product).model ?? ""} ${(p as Product).compat ?? ""} ${((p as Product).tags ?? []).join(" ")} ${p.sub}`.toLowerCase().includes(kw)),
     );
     if (sort === "nm") return [...r].sort((a, b) => a.name.localeCompare(b.name, "ko"));
     if (sort === "stock") return [...r].sort((a, b) => Number((b as Product).stock > 0) - Number((a as Product).stock > 0)); // 재고 있는 품목 먼저, 나머지는 원래 순서 그대로
@@ -1215,7 +1215,7 @@ export default function AdminCatalog({
         product={editP}
         onClose={() => setEditP(null)}
         onSaved={(key, e) => {
-          const up = <T extends { key: string; name: string; sub: string; brand: string; price: number; kind: Kind; image: string }>(rows: T[]) => rows.map(p => (p.key === key ? { ...p, name: e.name, sub: e.sub, brand: e.brand, price: e.price, kind: e.kind ?? p.kind, image: e.image ?? p.image, ...(e.model !== undefined ? { model: e.model } : {}), ...(e.battery !== undefined ? { battery: e.battery } : {}), ...(e.voltage !== undefined ? { voltage: e.voltage } : {}) } : p));
+          const up = <T extends { key: string; name: string; sub: string; brand: string; price: number; kind: Kind; image: string }>(rows: T[]) => rows.map(p => (p.key === key ? { ...p, name: e.name, sub: e.sub, brand: e.brand, price: e.price, kind: e.kind ?? p.kind, image: e.image ?? p.image, ...(e.model !== undefined ? { model: e.model } : {}), ...(e.battery !== undefined ? { battery: e.battery } : {}), ...(e.voltage !== undefined ? { voltage: e.voltage } : {}), ...(e.compat !== undefined ? { compat: e.compat } : {}), ...(e.tags !== undefined ? { tags: e.tags } : {}) } : p));
           setProducts(up); setTrash(up);
           setToast({ id: Date.now(), text: "품목 정보를 수정했어요" });
           setEditP(null);

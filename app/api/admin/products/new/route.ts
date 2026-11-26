@@ -1,9 +1,10 @@
 import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
-import { addProduct, getCategories, getCategoryTrades, nextProductKey, getTrades, setProductModel, setProductBattery, setProductVoltage } from '@/lib/db';
+import { addProduct, getCategories, getCategoryTrades, nextProductKey, getTrades, setProductModel, setProductBattery, setProductVoltage, setProductCompat, setProductTags } from '@/lib/db';
 import { headOf, rewriteSub } from '@/lib/sub-path';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { asKind } from '@/lib/types';
+import { normTags } from '@/lib/tags';
 import { removeImage, saveImage } from '@/lib/images';
 
 // 새 소모품(품목) 등록: 사진 + 정보. '등록' 권한이 있어야 한다.
@@ -55,6 +56,10 @@ async function handlePOST(req: Request) {
     const product = await addProduct({ key, kind, category, sub: subPath, name, brand, price, priceInclVat: null, vatBasis: '', soldout: false, stock, image, trades: trade ? [trade] : [] });
     const model = text(form.get('model'), 100); // 연장 제품명(모델명)
     if (model) await setProductModel(product.key, model);
+    const tags = normTags(form.get('tags')); // 연장 태그
+    if (tags.length) await setProductTags(product.key, tags);
+    const compat = text(form.get('compat'), 100); // 연장 호환성
+    if (compat) await setProductCompat(product.key, compat);
     const voltage = text(form.get('voltage'), 20); // 연장 전압 (예: 18V)
     if (voltage) await setProductVoltage(product.key, voltage);
     const battery = text(form.get('battery'), 10); // 연장 배터리 포함 여부
