@@ -118,6 +118,8 @@ export const getVendorShipping = () => impl().getVendorShipping();
 export const saveVendorShipping = (v: Record<string, import('./types').VendorShipping>) => impl().saveVendorShipping(v);
 export const getProductModels = () => impl().getProductModels();
 export const setProductModel = (key: string, model: string) => impl().setProductModel(key, model);
+export const getProductBattery = () => impl().getProductBattery();
+export const setProductBattery = (key: string, v: string) => impl().setProductBattery(key, v);
 export const setPurchaseLink = (key: string, info: import('./types').PurchaseInfo | null) => impl().setPurchaseLink(key, info);
 export const getAudit = () => impl().getAudit();
 export const addAudit = (i: import('./types').AuditInput) => impl().addAudit(i);

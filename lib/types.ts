@@ -13,6 +13,7 @@ export type Product = {
   sub: string;
   name: string;
   brand: string;
+  battery?: string; // 연장 배터리 포함 여부 ('포함' | '미포함' | 없음) — app_settings 에 따로 저장되어 화면에서 합쳐진다
   model?: string; // 제품명(모델명) — 연장에서 쓴다 (app_settings 에 따로 저장되어 화면에서 합쳐진다)
   price: number;
   priceInclVat: number | null;

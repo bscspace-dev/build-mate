@@ -1301,3 +1301,23 @@ export function setProductModel(key: string, model: string): Promise<void> {
     await writeJson('product-models.json', cur);
   });
 }
+
+// ───────── 연장 배터리 포함 여부 — 품목별 (data/product-battery.json) ─────────
+const batteryOf = (v: unknown) => (v === '포함' || v === '미포함' ? v : '');
+export async function getProductBattery(): Promise<Record<string, string>> {
+  try {
+    const v = await readJson<unknown>('product-battery.json');
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, m]) => batteryOf(m)) as [string, string][]);
+  } catch {
+    return {};
+  }
+}
+export function setProductBattery(key: string, battery: string): Promise<void> {
+  return withLock(async () => {
+    const cur = await getProductBattery();
+    const b = batteryOf(battery);
+    if (b) cur[key] = b; else delete cur[key];
+    await writeJson('product-battery.json', cur);
+  });
+}

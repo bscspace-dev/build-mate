@@ -1140,3 +1140,18 @@ export async function setProductModel(key: string, model: string): Promise<void>
   if (model) cur[key] = model; else delete cur[key];
   must(await supabase().from('app_settings').upsert({ key: 'product_models', value: cur }, { onConflict: 'key' }), '제품명 저장');
 }
+
+// ───────── 연장 배터리 포함 여부 — 품목별 (app_settings: product_battery) ─────────
+const batteryOf = (v: unknown) => (v === '포함' || v === '미포함' ? v : '');
+export async function getProductBattery(): Promise<Record<string, string>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'product_battery').maybeSingle(), '배터리 여부 조회') as { value: unknown } | null;
+  const v = row?.value;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, m]) => batteryOf(m)) as [string, string][]);
+}
+export async function setProductBattery(key: string, battery: string): Promise<void> {
+  const cur = await getProductBattery();
+  const b = batteryOf(battery);
+  if (b) cur[key] = b; else delete cur[key];
+  must(await supabase().from('app_settings').upsert({ key: 'product_battery', value: cur }, { onConflict: 'key' }), '배터리 여부 저장');
+}

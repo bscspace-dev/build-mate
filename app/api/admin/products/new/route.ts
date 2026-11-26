@@ -1,6 +1,6 @@
 import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
-import { addProduct, getCategories, getCategoryTrades, nextProductKey, getTrades, setProductModel } from '@/lib/db';
+import { addProduct, getCategories, getCategoryTrades, nextProductKey, getTrades, setProductModel, setProductBattery } from '@/lib/db';
 import { headOf, rewriteSub } from '@/lib/sub-path';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { asKind } from '@/lib/types';
@@ -55,6 +55,8 @@ async function handlePOST(req: Request) {
     const product = await addProduct({ key, kind, category, sub: subPath, name, brand, price, priceInclVat: null, vatBasis: '', soldout: false, stock, image, trades: trade ? [trade] : [] });
     const model = text(form.get('model'), 100); // 연장 제품명(모델명)
     if (model) await setProductModel(product.key, model);
+    const battery = text(form.get('battery'), 10); // 연장 배터리 포함 여부
+    if (battery === '포함' || battery === '미포함') await setProductBattery(product.key, battery);
     return json({ ok: true, product });
   } catch (e) {
     await removeImage(image).catch(() => undefined); // 등록에 실패하면 올린 사진도 지운다
