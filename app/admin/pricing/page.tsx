@@ -35,8 +35,8 @@ async function Loader() {
       products={products.flatMap(p => {
         const trade = catTrades[p.category] ?? "";
         if ((p.kind !== "상비품" && p.kind !== "자재" && p.kind !== "연장") || !trades.includes(trade)) return [];
-        const base = { key: p.key, kind: p.kind, stock: p.stock ?? 0, trade, category: p.category, name: p.name, image: p.image || "", price: p.price, incl: p.priceInclVat && Math.round(p.priceInclVat / 1.1) === p.price ? p.priceInclVat : null };
-        const opts = (options[p.key] ?? []).map(o => ({ ...base, key: `${p.key}#${o.id}`, base: p.key, price: o.price, incl: o.incl && Math.round(o.incl / 1.1) === o.price ? o.incl : null }));
+        const base = { key: p.key, kind: p.kind, stock: p.stock ?? 0, trade, category: p.category, name: p.name, image: p.image || "", price: p.price, incl: null };
+        const opts = (options[p.key] ?? []).map(o => ({ ...base, key: `${p.key}#${o.id}`, base: p.key, price: o.price, incl: null }));
         return [base, ...opts];
       })}
       log={log.filter(e => trades.includes(e.category)).map(e => ({ ...e, productCategory: catOf.get(e.productKey) ?? "" }))}

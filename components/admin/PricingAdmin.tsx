@@ -19,14 +19,15 @@ const BASE = "border border-black/10 px-2.5 dark:border-white/10";
 const PADS = { tight: "py-0.5", normal: "py-1.5", wide: "py-3.5" } as const;
 type Density = keyof typeof PADS;
 const DENSITY_KEY = "bm_row_density";
-const VATMODE_KEY = "bm_pricing_vatmode"; // 적는 금액 기준: ex = 부가세 별도(공급가), in = 부가세 포함가
 const HIDE_KEY = "bm_pricing_hidden"; // 조사에서 제외한 품목 (새로 조사를 시작할 때까지 유지)
-const VAT_RATE = 0.1; // 부가세 10%
+const VAT_RATE = 0; // 부가세는 따로 계산하지 않는다: 적은 금액이 그대로 단가이고, 합계 = 단가 × 수량 + 배송비
+const LEGACY_VAT_RATE = 0.1; // 이 시각 이전에 구매완료한 기록은 (공급가 기준이던 때라) 예전처럼 부가세 10%를 붙여 보여 준다
+const VAT_CUTOFF = Date.parse("2026-11-26T04:21:55.479Z");
 const num = "text-right tabular-nums";
 // 같은 구매처는 같은 색으로 보여 준다 (이름에서 색을 정한다)
 const vendorChip = (name: string) => <span className={`inline-block max-w-full truncate rounded-md px-1.5 py-0.5 align-middle text-xs font-bold ${vendorColor(name)}`}>{name}</span>;
 // 가격조사 표의 열 (너비 px, 0 = 남는 폭). 머리글 오른쪽 끝을 끌어서 너비를 조절한다.
-const COLS = [{ k: "chk", w: 32 }, { k: "no", w: 28 }, { k: "name", w: 0 }, { k: "per", w: 88 }, { k: "price", w: 80 }, { k: "qty", w: 52 }, { k: "pieces", w: 72 }, { k: "vat", w: 64 }, { k: "ship", w: 68 }, { k: "total", w: 84 }, { k: "vendor", w: 140 }, { k: "unit", w: 64 }];
+const COLS = [{ k: "chk", w: 32 }, { k: "no", w: 28 }, { k: "name", w: 0 }, { k: "per", w: 88 }, { k: "price", w: 80 }, { k: "qty", w: 52 }, { k: "pieces", w: 72 }, { k: "ship", w: 68 }, { k: "total", w: 84 }, { k: "vendor", w: 140 }, { k: "unit", w: 64 }];
 const COLW_KEY = "bm_pricing_colw";
 const WORK_KEY = "bm_pricing_work"; // 적어 둔 수량·배송비·필요 개수 (새로고침해도 이어서 보이게 이 브라우저에 자동 저장)
 const won = (n: number) => n.toLocaleString("ko-KR");
@@ -41,7 +42,7 @@ const parseUnit = (u: string): { n: number; label: string } => {
 };
 const vatOn = (supply: number) => Math.round(supply * VAT_RATE);
 /** 구매 기록 한 건의 공급가액·부가세·배송비·합계 */
-const entryMoney = (e: { price: number; qty: number; shipping: number }) => { const supply = e.price * e.qty; const vat = vatOn(supply); return { supply, vat, ship: e.shipping, total: supply + vat + e.shipping }; };
+const entryMoney = (e: { price: number; qty: number; shipping: number; createdAt?: string }) => { const supply = e.price * e.qty; const vat = e.createdAt && Date.parse(e.createdAt) < VAT_CUTOFF ? Math.round(supply * LEGACY_VAT_RATE) : 0; return { supply, vat, ship: e.shipping, total: supply + vat + e.shipping }; };
 
 // 가격조사: 장비조사와 같은 상비품 목록(공정 → 카테고리)에 금액·수량·부가세·배송비·합계를 적는다.
 //  · 공급가(부가세 별도 단가)는 창고장비현황의 품목 가격과 같다. 고치면 창고장비현황 가격도 바뀐다.
@@ -58,9 +59,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
   const pickDensity = (d: Density) => { setDensity(d); try { localStorage.setItem(DENSITY_KEY, d); } catch { /* 저장이 막힌 환경 */ } };
   const cell = `${BASE} ${PADS[density]}`;
   // 적는 금액 기준: 부가세 별도(공급가) / 부가세 포함(인터넷 구매가처럼 부가세가 합쳐진 금액). 포함으로 적으면 공급가·부가세를 자동으로 나눈다.
-  const [vatMode, setVatMode] = useState<"ex" | "in">("ex");
-  useEffect(() => { try { if (localStorage.getItem(VATMODE_KEY) === "in") setVatMode("in"); } catch { /* 저장이 막힌 환경 */ } }, []);
-  const pickVatMode = (m: "ex" | "in") => { setVatMode(m); try { localStorage.setItem(VATMODE_KEY, m); } catch { /* 저장이 막힌 환경 */ } };
+  const vatMode = "ex" as "ex" | "in"; // 부가세 구분 없음 (적은 금액 = 단가)
   // 열 너비 조절: 머리글 오른쪽 끝을 끌면 그 열의 너비가 바뀌고(두 번 누르면 원래대로), 이 브라우저에 기억한다
   const [colW, setColW] = useState<Record<string, number>>({});
   useEffect(() => { try { const v = JSON.parse(localStorage.getItem(COLW_KEY) ?? "null"); if (v && typeof v === "object") setColW(v); } catch { /* 저장이 막힌 환경 */ } }, []);
@@ -509,7 +508,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
     const list = rows.filter(p => qtyOf(p) > 0);
     if (list.length === 0) return setErr("수량이 적힌 품목이 없어요.");
     const sumAll = list.reduce((a, p) => a + totalC(p), 0);
-    if (!window.confirm(`${label} ${list.length}개를 구매완료로 처리할까요?\n합계 ${won(sumAll)}원 (부가세·배송비 포함)\n수량이 창고장비현황 재고에 더해지고, 구매완료 탭에 기록돼요.`)) return;
+    if (!window.confirm(`${label} ${list.length}개를 구매완료로 처리할까요?\n합계 ${won(sumAll)}원 (배송비 포함)\n수량이 창고장비현황 재고에 더해지고, 구매완료 탭에 기록돼요.`)) return;
     if (await post({ action: "buyMany", items: list.map(p => ({ key: p.key, qty: qtyOf(p), ship: shipC(p) })) })) {
       const ks = list.map(p => p.key);
       setQtys(x => ({ ...x, ...Object.fromEntries(ks.map(k => [k, 0])) })); // 구매완료하면 수량·배송비는 다시 0
@@ -561,19 +560,19 @@ export default function PricingAdmin({ trades, categories, products: productsPro
 
   // 구매하기 탭 엑셀: 구매처별로 정렬한 구매 목록
   function exportBuy() {
-    const rows: (string | number | null)[][] = buyGroups.flatMap(([v, list]) => list.filter(p => qtyOf(p) > 0).map(p => [v || "구매처 미등록", p.trade, p.category, nameOf(p), unitOf(p), qtyOf(p), vatMode === "in" ? unitInclOf(p) : priceOf(p), Math.round(perPieceC(p)), shipC(p), totalC(p), links[p.key]?.url ?? ""]));
+    const rows: (string | number | null)[][] = buyGroups.flatMap(([v, list]) => list.filter(p => qtyOf(p) > 0).map(p => [v || "구매처 미등록", p.trade, p.category, nameOf(p), unitOf(p), qtyOf(p), priceOf(p), Math.round(perPieceC(p)), shipC(p), totalC(p), links[p.key]?.url ?? ""]));
     rows.push(["합계", "", "", `${rows.length}개`, "", rows.reduce((a, r) => a + Number(r[5]), 0), "", "", rows.reduce((a, r) => a + Number(r[8]), 0), rows.reduce((a, r) => a + Number(r[9]), 0), ""]);
-    downloadBlob(buildXlsx([{ name: "구매목록", header: ["구매처", "공정", "카테고리", "품목", "판매단위", "수량", vatMode === "in" ? "포함가(원)" : "공급가(원)", "낱개당(원)", "배송비(원)", "합계(원)", "구매 링크"], widths: [16, 10, 14, 34, 12, 8, 12, 12, 12, 14, 40], rows }]), `구매목록_${todayKst}.xlsx`);
+    downloadBlob(buildXlsx([{ name: "구매목록", header: ["구매처", "공정", "카테고리", "품목", "판매단위", "수량", "단가(원)", "낱개당(원)", "배송비(원)", "합계(원)", "구매 링크"], widths: [16, 10, 14, 34, 12, 8, 12, 12, 12, 14, 40], rows }]), `구매목록_${todayKst}.xlsx`);
   }
   // 구매완료 전에도 지금 조사표를 엑셀·PDF·인쇄로 내보낸다: 체크한 품목이 있으면 그것만, 없으면 지금 목록에 보이는 품목 전체
   const sheetRows = picked.length > 0 ? picked : shown;
   const sheetScope = picked.length > 0 ? `체크한 ${picked.length}개` : `보이는 ${shown.length}개`;
-  const unitPriceOf = (p: Prod) => (vatMode === "in" ? unitInclOf(p) : priceOf(p)); // 표에 보이는 단가 (포함가 또는 공급가)
+  const unitPriceOf = (p: Prod) => (priceOf(p)); // 표에 보이는 단가 (포함가 또는 공급가)
   function exportSurvey() {
-    const priceHead = vatMode === "in" ? "포함가(원)" : "공급가(원)";
-    const rows: (string | number | null)[][] = sheetRows.map(p => [p.trade, p.category, nameOf(p), links[p.key]?.vendor ?? "", unitOf(p), unitPriceOf(p), qtyOf(p), qtyOf(p) > 0 ? piecesOf(p) : 0, supplyOf(p), vatOf(p), shipOf(p), totalOf(p), links[p.key]?.url ?? ""]);
-    rows.push(["합계", "", `${sheetRows.length}개`, "", "", "", sheetRows.reduce((a, x) => a + qtyOf(x), 0), "", sheetRows.reduce((a, x) => a + supplyOf(x), 0), sheetRows.reduce((a, x) => a + vatOf(x), 0), sheetRows.reduce((a, x) => a + shipOf(x), 0), sheetRows.reduce((a, x) => a + totalOf(x), 0), ""]);
-    downloadBlob(buildXlsx([{ name: "가격조사", header: ["공정", "카테고리", "품목", "구매처", "판매단위", priceHead, "수량", "총 낱개", "공급가액(원)", "부가세(원)", "배송비(원)", "합계(원)", "구매 링크"], widths: [10, 14, 34, 14, 12, 12, 8, 10, 14, 12, 12, 14, 40], rows }]), `가격조사_${todayKst}.xlsx`);
+    const priceHead = "단가(원)";
+    const rows: (string | number | null)[][] = sheetRows.map(p => [p.trade, p.category, nameOf(p), links[p.key]?.vendor ?? "", unitOf(p), unitPriceOf(p), qtyOf(p), qtyOf(p) > 0 ? piecesOf(p) : 0, shipOf(p), totalOf(p), links[p.key]?.url ?? ""]);
+    rows.push(["합계", "", `${sheetRows.length}개`, "", "", "", sheetRows.reduce((a, x) => a + qtyOf(x), 0), "", sheetRows.reduce((a, x) => a + shipOf(x), 0), sheetRows.reduce((a, x) => a + totalOf(x), 0), ""]);
+    downloadBlob(buildXlsx([{ name: "가격조사", header: ["공정", "카테고리", "품목", "구매처", "판매단위", priceHead, "수량", "총 낱개", "배송비(원)", "합계(원)", "구매 링크"], widths: [10, 14, 34, 14, 12, 12, 8, 10, 12, 14, 40], rows }]), `가격조사_${todayKst}.xlsx`);
   }
   const printSurvey = () => void printElement(document.getElementById("pricing-survey-print"), { title: "가격조사", heading: `가격조사 · ${scopeText} · ${todayKst}`, landscape: true });
   const pick = (t: string) => { setSel(t); setCatSel(firstCat(t)); };
@@ -602,13 +601,13 @@ export default function PricingAdmin({ trades, categories, products: productsPro
   const topSum = (
     <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-zinc-100 px-3 py-2 text-sm dark:bg-zinc-800">
       <b>수량을 적은 {qtyRows.length}개 · 합계 {won(qtyRows.reduce((a, x) => a + totalOf(x), 0))}원</b>
-      <span className="text-xs text-zinc-500">공급가액 {won(qtyRows.reduce((a, x) => a + supplyOf(x), 0))} + 부가세 {won(qtyRows.reduce((a, x) => a + vatOf(x), 0))} + 배송비 {won(qtyRows.reduce((a, x) => a + shipOf(x), 0))} · 품목을 체크하면 체크한 품목만 합산해요</span>
+      <span className="text-xs text-zinc-500">물품 {won(qtyRows.reduce((a, x) => a + supplyOf(x), 0))} + 배송비 {won(qtyRows.reduce((a, x) => a + shipOf(x), 0))} · 품목을 체크하면 체크한 품목만 합산해요</span>
     </div>
   );
   const checkBar = picked.length > 0 ? (
     <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl bg-blue-50 px-3 py-2 text-sm dark:bg-blue-500/10">
       <b className="text-blue-700 dark:text-blue-300">체크 {picked.length}개 · 합계 {won(total)}원</b>
-      <span className="text-xs text-zinc-500">공급가액 {won(totalSupply)} + 부가세 {won(totalVat)} + 배송비 {won(totalShip)}</span>
+      <span className="text-xs text-zinc-500">물품 {won(totalSupply)} + 배송비 {won(totalShip)}</span>
       <span className="inline-flex items-center gap-1">
         <input value={bulkQty} onChange={e => setBulkQty(digits(e.target.value, 7))} onKeyDown={e => { if (e.key === "Enter") applyBulkQty(); }} inputMode="numeric" placeholder="수량" aria-label="체크한 품목 수량 일괄 변경" className="w-16 rounded-lg border border-black/15 bg-white px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900" />
         <button type="button" onClick={applyBulkQty} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white">선택 수량 전체 변경</button>
@@ -633,20 +632,11 @@ export default function PricingAdmin({ trades, categories, products: productsPro
       </div>
       <p className="mt-2 text-xs text-zinc-500">
         {tab === "survey"
-          ? <><b>공급가</b>(부가세 별도 단가)는 창고장비현황에 등록된 가격 그대로예요 (여기서 고치면 창고장비현황 가격도 바뀌어요). 공급가를 입력하면 <b>부가세(10%)</b>가 자동으로 계산돼요. 부가세 = 공급가 × 수량 × 10%, 합계 = 공급가 × 수량 + 부가세 + 배송비예요. 수량·배송비는 적는 즉시 이 브라우저에 자동 저장돼서 새로고침해도 이어서 보여요 (<b>새로 조사 시작</b>이나 구매완료 때 비워져요). 다른 기기와 나누려면 저장본으로 저장하고 <b>불러오기</b>로 채워요. <b>구매처</b> 칸을 누르면 구매처 이름과 구매 링크를 등록해요. 구매할 품목을 체크하고 아래 <b>다음</b>을 누르면 <b>구매하기</b> 탭으로 옮겨져 구매처별로 정리돼요.</>
+          ? <><b>단가</b>는 창고장비현황에 등록된 가격 그대로예요 (여기서 고치면 창고장비현황 가격도 바뀌어요). 부가세는 따로 계산하지 않고, 합계 = 단가 × 수량 + 배송비예요. 수량·배송비는 적는 즉시 이 브라우저에 자동 저장돼서 새로고침해도 이어서 보여요 (<b>새로 조사 시작</b>이나 구매완료 때 비워져요). 다른 기기와 나누려면 저장본으로 저장하고 <b>불러오기</b>로 채워요. <b>구매처</b> 칸을 누르면 구매처 이름과 구매 링크를 등록해요. 구매할 품목을 체크하고 아래 <b>다음</b>을 누르면 <b>구매하기</b> 탭으로 옮겨져 구매처별로 정리돼요.</>
           : tab === "buy" ? <>가격조사에서 고른 품목을 <b>구매처별</b>로 묶어 보여 줘요. 구매 사이트 링크로 들어가 구매한 뒤 <b>구매완료</b>를 누르면 수량이 창고장비현황 재고에 더해지고 구매완료 탭에 기록돼요. <b>인쇄</b>로 구매처별 목록을 뽑을 수 있어요.</> : <>구매완료한 내역이에요. 구매한 수량은 이미 창고장비현황 재고에 더해졌어요. 금액을 바꾼 이력은 변경이력 메뉴에서 확인해요.</>}
       </p>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-        <span className="font-bold">적는 금액 기준</span>
-        <div className="inline-flex overflow-hidden rounded-lg border border-black/10 dark:border-white/10" role="radiogroup" aria-label="적는 금액 기준">
-          {([["ex", "부가세 별도 (공급가)"], ["in", "부가세 포함 (인터넷 구매가)"]] as const).map(([m, label]) => (
-            <button key={m} type="button" role="radio" aria-checked={vatMode === m} onClick={() => pickVatMode(m)} className={`px-2.5 py-1 font-bold ${vatMode === m ? "bg-blue-600 text-white" : "bg-white text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label}</button>
-          ))}
-        </div>
-        {vatMode === "in" && <span>포함가를 적으면 공급가·부가세를 자동으로 나눠요 (공급가 = 포함가 ÷ 1.1)</span>}
-      </div>
-      <div className="mt-2 hidden items-center gap-1.5 text-xs text-zinc-500 md:flex">
+            <div className="mt-2 hidden items-center gap-1.5 text-xs text-zinc-500 md:flex">
         행 간격
         <div className="inline-flex overflow-hidden rounded-lg border border-black/10 dark:border-white/10" role="radiogroup" aria-label="행 간격">
           {([["tight", "좁게"], ["normal", "보통"], ["wide", "넓게"]] as const).map(([d, label]) => (
@@ -697,7 +687,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                             <th className={cell}>품목</th>
                             <th className={th("w-20")}>판매단위</th>
                             <th className={th("w-20", true)}>수량</th>
-                            <th className={th("w-24", true)}>{vatMode === "in" ? "포함가" : "공급가"}</th>
+                            <th className={th("w-24", true)}>{"단가"}</th>
                             <th className={th("w-24", true)}>낱개당</th>
                             <th className={th("w-24", true)}>배송비</th>
                             <th className={th("w-24", true)}>합계</th>
@@ -712,7 +702,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                               <td className={`${cell} font-semibold`} {...peekProps(p)}>{p.name}{p.base && <span className="ml-1 text-xs font-normal text-zinc-500">({unitRaw(p) || "옵션"})</span>}</td>
                               <td className={`${cell} text-xs`}>{unitOf(p) || "—"}</td>
                               <td className={`${cell} ${num} p-0 font-bold`}>{numCell(p, "qty", qtyOf(p), 7, "font-bold")}</td>
-                              <td className={`${cell} ${num}`}>{won(vatMode === "in" ? unitInclOf(p) : priceOf(p))}</td>
+                              <td className={`${cell} ${num}`}>{won(priceOf(p))}</td>
                               <td className={`${cell} ${num}`}>{qtyOf(p) > 0 ? won(Math.round(perPieceC(p))) : "—"}</td>
                               <td className={`${cell} ${num}`}>{cs.autoShips[p.key] === undefined ? won(shipC(p)) : cs.freeShip.has(p.key) ? <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">무료배송</span> : cs.autoShips[p.key] === 0 ? <span className="text-[11px] text-zinc-400">↑ 합산</span> : won(cs.autoShips[p.key])}</td>
                               <td className={`${cell} ${num} font-bold`}>{won(totalC(p))}</td>
@@ -765,7 +755,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
             <table className="w-full border-collapse text-left text-[11px]">
               <thead>
                 <tr className="bg-zinc-100">
-                  {["#", "품목", "구매처", "판매단위", vatMode === "in" ? "포함가" : "공급가", "수량", "총 낱개", "부가세", "배송비", "합계"].map(h => <th key={h} className="border border-zinc-400 px-1.5 py-1 font-bold">{h}</th>)}
+                  {["#", "품목", "구매처", "판매단위", "단가", "수량", "총 낱개", "배송비", "합계"].map(h => <th key={h} className="border border-zinc-400 px-1.5 py-1 font-bold">{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -778,7 +768,6 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                     <td className="border border-zinc-400 px-1.5 py-1 text-right">{won(unitPriceOf(p))}</td>
                     <td className="border border-zinc-400 px-1.5 py-1 text-right font-bold">{won(qtyOf(p))}</td>
                     <td className="border border-zinc-400 px-1.5 py-1 text-right">{piecesText(p)}</td>
-                    <td className="border border-zinc-400 px-1.5 py-1 text-right">{won(vatOf(p))}</td>
                     <td className="border border-zinc-400 px-1.5 py-1 text-right">{won(shipOf(p))}</td>
                     <td className="border border-zinc-400 px-1.5 py-1 text-right font-bold">{won(totalOf(p))}</td>
                   </tr>
@@ -789,7 +778,6 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                   <td colSpan={5} className="border border-zinc-400 px-1.5 py-1 text-right">합계 ({sheetRows.length}개)</td>
                   <td className="border border-zinc-400 px-1.5 py-1 text-right">{won(sheetRows.reduce((a, x) => a + qtyOf(x), 0))}</td>
                   <td className="border border-zinc-400 px-1.5 py-1" />
-                  <td className="border border-zinc-400 px-1.5 py-1 text-right">{won(sheetRows.reduce((a, x) => a + vatOf(x), 0))}</td>
                   <td className="border border-zinc-400 px-1.5 py-1 text-right">{won(sheetRows.reduce((a, x) => a + shipOf(x), 0))}</td>
                   <td className="border border-zinc-400 px-1.5 py-1 text-right">{won(sheetRows.reduce((a, x) => a + totalOf(x), 0))}원</td>
                 </tr>
@@ -835,7 +823,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                       </div>
                     </div>
                     <div className="mt-2 grid grid-cols-3 gap-2">
-                      {([["price", vatMode === "in" ? "포함가" : "공급가", vatMode === "in" ? unitInclOf(p) : p.price, 9], ["qty", "수량", qtyOf(p), 7], ["ship", "배송비", shipOf(p), 7]] as const).map(([f, label, v, max]) => (
+                      {([["price", "단가", p.price, 9], ["qty", "수량", qtyOf(p), 7], ["ship", "배송비", shipOf(p), 7]] as const).map(([f, label, v, max]) => (
                         <div key={f}>
                           <div className="mb-0.5 text-[11px] font-bold text-zinc-500">{label}</div>
                           <div className="overflow-hidden rounded-lg border border-black/15 dark:border-white/15">{f === "ship" ? shipCell(p) : numCell(p, f, v, max, f === "qty" ? "font-bold" : "")}</div>
@@ -847,7 +835,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                       <span className="font-semibold text-zinc-800 dark:text-zinc-100">총 낱개 {piecesText(p)}</span>
                     </div>
                     <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 text-xs text-zinc-500">
-                      <span>공급가액 {won(supplyOf(p))} + 부가세 {won(vatOf(p))} + 배송비 {won(shipOf(p))}</span>
+                      <span>물품 {won(supplyOf(p))} + 배송비 {won(shipOf(p))}</span>
                       <span className="text-sm font-extrabold text-zinc-900 dark:text-zinc-50">합계 {won(totalOf(p))}원</span>
                     </div>
                     <div className="mt-2 flex justify-end gap-2">
@@ -869,17 +857,16 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                   {H("no", "#", false, true)}
                   {H("name", "품목")}
                   {H("per", "낱개당", true)}
-                  {H("price", vatMode === "in" ? "포함가" : "공급가", true)}
+                  {H("price", "단가", true)}
                   {H("qty", "수량", true)}
                   {H("pieces", "총 낱개", true)}
-                  {H("vat", "부가세 10%", true)}
                   {H("ship", "배송비", true)}
                   {H("total", "합계", true)}
                   {H("vendor", "구매처")}
                   {H("unit", "판매단위")}
                 </tr>
                 <tr className="bg-blue-50/60 dark:bg-blue-500/10">
-                  <td className={cell} colSpan={12}>
+                  <td className={cell} colSpan={11}>
                     <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-zinc-600 dark:text-zinc-300">
                       공정
                       <select value={sel} onChange={e => pick(e.target.value)} className="rounded-md border border-black/15 bg-transparent px-2 py-1.5 text-sm font-normal outline-none focus:border-blue-500 dark:border-white/15" aria-label="공정 선택">
@@ -900,7 +887,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
               </thead>
               <tbody>
                 {shown.length === 0 && (
-                  <tr><td colSpan={12} className={`${cell} py-8 text-center text-zinc-500`}>이 목록에는 {kindTab} 품목이 없어요. 창고장비현황이나 장비조사에서 추가해 주세요.</td></tr>
+                  <tr><td colSpan={11} className={`${cell} py-8 text-center text-zinc-500`}>이 목록에는 {kindTab} 품목이 없어요. 창고장비현황이나 장비조사에서 추가해 주세요.</td></tr>
                 )}
                 {shown.map((p, i) => {
                   const head = i === 0 || shown[i - 1].trade !== p.trade || shown[i - 1].category !== p.category;
@@ -910,18 +897,17 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                     <Fragment key={p.key}>
                       {head && (
                         <tr className="bg-blue-50/60 dark:bg-blue-500/10">
-                          <td colSpan={12} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300"><label className="mr-2 inline-flex cursor-pointer items-center gap-1.5 align-middle"><input type="checkbox" aria-label={`${p.category} 전체 체크`} checked={checkedIn(p.trade, p.category) === countIn(p.trade, p.category)} onChange={e => toggle(inGroup(p.trade, p.category).map(x => x.key), e.target.checked)} className="h-4 w-4 accent-blue-600" /></label>{p.trade}{p.category ? ` › ${p.category}` : ""} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개{checkedIn(p.trade, p.category) > 0 && <> · 체크 {checkedIn(p.trade, p.category)}개 합계 {won(sumIn(p.trade, p.category))}원</>}</span></td>
+                          <td colSpan={11} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300"><label className="mr-2 inline-flex cursor-pointer items-center gap-1.5 align-middle"><input type="checkbox" aria-label={`${p.category} 전체 체크`} checked={checkedIn(p.trade, p.category) === countIn(p.trade, p.category)} onChange={e => toggle(inGroup(p.trade, p.category).map(x => x.key), e.target.checked)} className="h-4 w-4 accent-blue-600" /></label>{p.trade}{p.category ? ` › ${p.category}` : ""} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개{checkedIn(p.trade, p.category) > 0 && <> · 체크 {checkedIn(p.trade, p.category)}개 합계 {won(sumIn(p.trade, p.category))}원</>}</span></td>
                         </tr>
                       )}
                       <tr className={`group ${on(p) ? "bg-blue-50/50 dark:bg-blue-500/5" : "hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40"}`}>
                         <td className={`${cell} text-center`}><input type="checkbox" aria-label={`${p.name} 합계에 넣기`} checked={on(p)} onChange={e => toggle([p.key], e.target.checked)} className="h-4 w-4 accent-blue-600" /></td>
                         <td className={`${cell} text-center text-xs text-zinc-400`}>{rowNo.get(p.key) ?? i + 1}</td>
                         <td className={`${cell} relative p-0`} {...peekProps(p)}>{nameInput(p, `w-full bg-transparent px-2.5 ${PADS[density]} text-left text-sm font-semibold outline-none hover:bg-blue-50/70 focus:bg-white focus:ring-2 focus:ring-blue-500 dark:hover:bg-blue-500/10 dark:focus:bg-zinc-900`)}{p.base && <button type="button" disabled={busy} onClick={() => void delOpt(p)} title="이 판매 옵션 지우기" className="absolute right-1 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border border-red-300 bg-red-50 px-1.5 py-0.5 text-[11px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-40 dark:border-red-500/40 dark:bg-red-500/15 dark:text-red-300">✕ 삭제</button>}{!p.base && <button type="button" disabled={busy} onClick={() => void addOpt(p)} title="같은 품목의 다른 판매단위(묶음·단품) 추가" className="absolute right-1 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md border opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100 border-blue-600 bg-white px-1.5 py-0.5 text-[11px] font-bold text-blue-700 disabled:opacity-40 dark:bg-zinc-900 dark:text-blue-300">＋단위</button>}{foldBtn(p) && <div className="-mt-0.5 pb-1 pl-2.5">{foldBtn(p)}</div>}</td>
-                        <td className={`${cell} ${num} text-xs`} title={qtyOf(p) > 0 ? "부가세·배송비를 포함한 실제 낱개당 원가" : "부가세 포함 단가 ÷ 입수"}>{priceOf(p) > 0 ? <><span className="font-semibold">{won(Math.round(perPiece(p)))}원</span>{hasOpts(p) && cheapest(p) && <b className="ml-1 rounded bg-emerald-100 px-1 text-[10px] text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200">최저</b>}{qtyOf(p) > 0 && <div className="text-[10px] text-zinc-400">배송비 포함</div>}</> : <span className="text-zinc-400">—</span>}</td>
-                        <td className={`${cell} ${num} p-0`}>{numCell(p, "price", vatMode === "in" ? unitInclOf(p) : p.price, 9)}</td>
+                        <td className={`${cell} ${num} text-xs`} title={qtyOf(p) > 0 ? "배송비를 포함한 실제 낱개당 원가" : "단가 ÷ 입수"}>{priceOf(p) > 0 ? <><span className="font-semibold">{won(Math.round(perPiece(p)))}원</span>{hasOpts(p) && cheapest(p) && <b className="ml-1 rounded bg-emerald-100 px-1 text-[10px] text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200">최저</b>}{qtyOf(p) > 0 && <div className="text-[10px] text-zinc-400">배송비 포함</div>}</> : <span className="text-zinc-400">—</span>}</td>
+                        <td className={`${cell} ${num} p-0`}>{numCell(p, "price", p.price, 9)}</td>
                         <td className={`${cell} ${num} p-0 font-bold`}>{numCell(p, "qty", qtyOf(p), 7, "font-bold")}</td>
                         <td className={`${cell} ${num} text-xs`}><div className="font-semibold">{piecesText(p)}</div></td>
-                        <td className={`${cell} ${num} text-zinc-600 dark:text-zinc-300`}>{won(vatOf(p))}</td>
                         <td className={`${cell} ${num} p-0`}>{shipCell(p)}</td>
                         <td className={`${cell} ${num} font-bold`}>{won(totalOf(p))}</td>
                         <td className={`${cell} overflow-hidden p-0`}>
@@ -941,7 +927,6 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                     <td colSpan={5} className={`${cell} text-right`}>{picked.length > 0 ? `체크한 ${picked.length}개 합계` : "체크한 품목이 없어요 · 합계할 품목을 체크하세요"}</td>
                     <td className={`${cell} ${num}`}>{won(totalQty)}</td>
                     <td className={cell} />
-                    <td className={`${cell} ${num}`}>{won(totalVat)}</td>
                     <td className={`${cell} ${num}`}>{won(totalShip)}</td>
                     <td className={`${cell} ${num}`}>{won(total)}원</td>
                     <td className={cell} colSpan={2} />
@@ -1004,7 +989,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
                             <div className="break-words font-semibold"><span className="mr-1.5 text-xs font-normal text-zinc-400">{i + 1}</span>{e.name}</div>
                             <div className="text-xs text-zinc-500">{e.category} › {e.productCategory || "—"}{e.vendor ? <> · {vendorChip(e.vendor)}</> : ""}{e.unit ? ` · ${e.unit}` : ""} · {e.byName} {when(e.createdAt).slice(11)}</div>
                             <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 text-xs text-zinc-600 dark:text-zinc-300">
-                              <span>{won(e.price)} × {won(e.qty)} + 부가세 {won(em.vat)} + 배송비 {won(em.ship)}</span>
+                              <span>{won(e.price)} × {won(e.qty)} + 배송비 {won(em.ship)}</span>
                               <b className="text-sm text-zinc-900 dark:text-zinc-50">{won(em.total)}원</b>
                             </div>
                           </div>
@@ -1088,7 +1073,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
       {/* 구매처별 배송비·무료배송 기준 */}
       <Modal open={vsOpen} onClose={() => !busy && setVsOpen(false)} wide>
         <h2 className="text-lg font-bold">구매처 배송비 설정</h2>
-        <p className="mt-1 text-sm text-zinc-500">구매처마다 <b>기본 배송비</b>와 <b>무료배송 기준</b>(물품 합계, 부가세 포함)을 적어 두면, 수량을 적은 같은 구매처 품목의 합계가 기준 이상일 때 <b>무료배송</b>으로, 미달이면 기본 배송비를 품목 금액 비율로 나눠 자동 계산해요. 설정이 없는 구매처는 배송비를 직접 적어요.</p>
+        <p className="mt-1 text-sm text-zinc-500">구매처마다 <b>기본 배송비</b>와 <b>무료배송 기준</b>(물품 합계)을 적어 두면, 수량을 적은 같은 구매처 품목의 합계가 기준 이상일 때 <b>무료배송</b>으로, 미달이면 기본 배송비를 품목 금액 비율로 나눠 자동 계산해요. 설정이 없는 구매처는 배송비를 직접 적어요.</p>
         {err && <p className="mt-2 text-sm text-red-500" role="alert">{err}</p>}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input value={vsQ} onChange={e => setVsQ(e.target.value.slice(0, 40))} placeholder="🔍 구매처 검색" aria-label="구매처 검색" className="min-w-[10rem] flex-1 rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/15" />

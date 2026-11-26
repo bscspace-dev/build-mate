@@ -86,8 +86,6 @@ const BLANK_DRAG = typeof Image !== "undefined" ? Object.assign(new Image(), { s
 
 /** 장비조사에서 이 품목을 추가·삭제한 사람과 때 */
 export type InvMark = { add?: { by: string; at: string; src: string }; del?: { by: string; at: string; src: string } };
-// 부가세 포함가: 포함가를 직접 적어 저장해 둔 값이 있으면 그대로(1원 차이 없이), 없으면 공급가에 10%를 더해 계산
-const inclVat = (price: number, saved?: number | null) => (saved && Math.round(saved / 1.1) === price ? saved : price + Math.round(price * 0.1));
 const markTime = (iso: string) => new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 function ProductCard({
@@ -188,11 +186,11 @@ function ProductCard({
         <div className={`break-keep ${list ? "min-w-[11rem] flex-1 text-sm leading-snug" : "line-clamp-2 min-h-[2.6em] text-xs leading-snug sm:line-clamp-3 sm:min-h-[3.6em] sm:text-[13px]"} ${empty ? "text-red-800 dark:text-red-200" : ""}`}>
           {p.name}
           {list && p.soldout && <span className="ml-1.5 rounded-md bg-red-600 px-1.5 py-0.5 text-[11px] text-white">품절</span>}
-          {list && <small className="block text-[11px] text-zinc-500">{p.brand}{p.brand ? " · " : ""}<b className="tabular-nums text-zinc-700 dark:text-zinc-300">{p.price > 0 ? `${inclVat(p.price, p.priceInclVat).toLocaleString("ko-KR")}원 (부가세 포함)` : "가격 미등록"}</b>{vendor?.vendor && (vendor.url ? <a href={vendor.url} target="_blank" rel="noopener noreferrer" title="눌러서 구매 링크로 이동" className={`ml-1.5 rounded px-1.5 py-0.5 font-bold hover:underline ${vendorColor(vendor.vendor)}`}>{vendor.vendor} ↗</a> : <span className={`ml-1.5 rounded px-1.5 py-0.5 font-bold ${vendorColor(vendor.vendor)}`}>{vendor.vendor}</span>)}{vendor?.unit && <span className="ml-1">{vendor.unit}</span>}</small>}
+          {list && <small className="block text-[11px] text-zinc-500">{p.brand}{p.brand ? " · " : ""}<b className="tabular-nums text-zinc-700 dark:text-zinc-300">{p.price > 0 ? `${p.price.toLocaleString("ko-KR")}원` : "가격 미등록"}</b>{vendor?.vendor && (vendor.url ? <a href={vendor.url} target="_blank" rel="noopener noreferrer" title="눌러서 구매 링크로 이동" className={`ml-1.5 rounded px-1.5 py-0.5 font-bold hover:underline ${vendorColor(vendor.vendor)}`}>{vendor.vendor} ↗</a> : <span className={`ml-1.5 rounded px-1.5 py-0.5 font-bold ${vendorColor(vendor.vendor)}`}>{vendor.vendor}</span>)}{vendor?.unit && <span className="ml-1">{vendor.unit}</span>}</small>}
         </div>
         {!list && p.brand && <div className="mt-0.5 truncate text-[11px] text-zinc-500">{p.brand}</div>}
         {!list && vendor && (vendor.vendor || vendor.unit) && <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">{vendor.vendor && (vendor.url ? <a href={vendor.url} target="_blank" rel="noopener noreferrer" title="눌러서 구매 링크로 이동" className={`max-w-full truncate rounded-md px-1.5 py-0.5 font-bold underline-offset-2 hover:underline ${vendorColor(vendor.vendor)}`}>{vendor.vendor} ↗</a> : <span className={`max-w-full truncate rounded-md px-1.5 py-0.5 font-bold ${vendorColor(vendor.vendor)}`}>{vendor.vendor}</span>)}{vendor.unit && <span className="text-zinc-500">{vendor.unit}</span>}</div>}
-        {!list && <div className="mt-0.5 text-[11px] font-bold tabular-nums text-zinc-800 dark:text-zinc-200">{p.price > 0 ? <>{inclVat(p.price, p.priceInclVat).toLocaleString("ko-KR")}원 <span className="font-normal text-zinc-400">부가세 포함</span></> : <span className="font-normal text-zinc-400">가격 미등록</span>}</div>}
+        {!list && <div className="mt-0.5 text-[11px] font-bold tabular-nums text-zinc-800 dark:text-zinc-200">{p.price > 0 ? <>{p.price.toLocaleString("ko-KR")}원</> : <span className="font-normal text-zinc-400">가격 미등록</span>}</div>}
         {inv && (inv.add || (trashMode && inv.del)) && (
           <div className="mt-0.5 text-[11px] font-semibold leading-snug text-blue-700 dark:text-blue-300">
             {inv.add && <div suppressHydrationWarning>{inv.add.src} 추가 · {inv.add.by} · {markTime(inv.add.at)}</div>}
@@ -446,8 +444,8 @@ export default function AdminCatalog({
     if (exporting) return;
     setExporting(true);
     try {
-      const header = [...(withPhoto ? ["사진"] : []), "자재번호", "세부분류", "자재명", "사용 브랜드", "공정", "단가", "VAT포함가", "재고", ...(trashMode ? ["삭제일"] : [])];
-      const widths = [...(withPhoto ? [10] : []), 11, 14, 40, 16, 18, 12, 12, 8, ...(trashMode ? [12] : [])];
+      const header = [...(withPhoto ? ["사진"] : []), "자재번호", "세부분류", "자재명", "사용 브랜드", "공정", "단가", "재고", ...(trashMode ? ["삭제일"] : [])];
+      const widths = [...(withPhoto ? [10] : []), 11, 14, 40, 16, 18, 12, 8, ...(trashMode ? [12] : [])];
       const tradeOf = (c: string) => (trades.includes(catTrades[c] ?? "") ? catTrades[c] : "미배정");
       const groups = new Map<string, (Product | TrashedProduct)[]>();
       list.forEach(p => { const g = groups.get(p.category); if (g) g.push(p); else groups.set(p.category, [p]); });
@@ -466,7 +464,7 @@ export default function AdminCatalog({
           images: withPhoto ? items.map(p => photos.get(p.key) ?? null) : undefined,
           rows: items.map(p => [
             ...(withPhoto ? [""] : []),
-            p.key, p.sub, p.name, p.brand, p.trades.join(", "), p.price, p.priceInclVat,
+            p.key, p.sub, p.name, p.brand, p.trades.join(", "), p.price,
             (p as Product).stock ?? 0,
             ...(trashMode ? [(p as TrashedProduct).deletedAt?.slice(0, 10) ?? ""] : []),
           ]),

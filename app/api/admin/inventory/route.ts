@@ -295,10 +295,10 @@ export async function POST(req: Request) {
       const unitPrice = opt ? opt.price : p.price;
       const hasOpts = (optsAll[p.key] ?? []).length > 0;
       const addStock = hasOpts ? qty * unitCount(unit) : qty; // 판매 옵션이 있는 품목은 낱개 기준으로 재고에 더한다 (묶음 10개입 × 2 = 20)
-      const supply = qty * unitPrice, vat = Math.round(supply * 0.1);
+      const supply = qty * unitPrice; // 부가세는 따로 계산하지 않는다 (단가 × 수량 + 배송비)
       await addInventory({ action: 'buy', category: trade, productKey: p.key, name: p.name, brand: p.brand, qty, price: unitPrice, shipping, vendor, unit, memo, byId: me.id, byName: me.name });
       await setStock(p.key, p.stock + addStock); // 창고장비현황 재고에 더한다
-      recordChangeLater(menu, { action: '구매완료', target: p.name, detail: `${qty.toLocaleString('ko-KR')}개 × ${p.price.toLocaleString('ko-KR')}원 = 공급가액 ${supply.toLocaleString('ko-KR')} · 부가세 ${vat.toLocaleString('ko-KR')} · 배송비 ${shipping.toLocaleString('ko-KR')} · 합계 ${(supply + vat + shipping).toLocaleString('ko-KR')}원${vendor ? ` · 구매처 ${vendor}` : ''} · 재고 ${p.stock} → ${p.stock + qty}` });
+      recordChangeLater(menu, { action: '구매완료', target: p.name, detail: `${qty.toLocaleString('ko-KR')}개 × ${unitPrice.toLocaleString('ko-KR')}원 = 물품 ${supply.toLocaleString('ko-KR')} · 배송비 ${shipping.toLocaleString('ko-KR')} · 합계 ${(supply + shipping).toLocaleString('ko-KR')}원${vendor ? ` · 구매처 ${vendor}` : ''} · 재고 ${p.stock} → ${p.stock + qty}` });
       done++;
     }
     if (done === 0) return json({ error: b.action === 'buy' ? '구매할 수량을 먼저 적어 주세요.' : '구매할 수량이 적힌 품목이 없어요.' }, 400);
