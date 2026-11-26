@@ -1,5 +1,5 @@
 import { getActor } from '@/lib/auth';
-import { addInventory, addProduct, getPurchaseLinks, getPurchaseOptions, savePurchaseOptions, getVendorShipping, saveVendorShipping, getInventory, getInventoryExcluded, removeInventory, saveInventoryExcluded, deleteProducts, getCategoryTrades, getProducts, getTrades, getFavoriteVendors, saveFavoriteVendors, getPricingSnapshots, nextProductKey, savePricingSnapshots, setPurchaseLink, setStock, updateProduct } from '@/lib/db';
+import { addInventory, addProduct, getPurchaseLinks, setProductModel, getPurchaseOptions, savePurchaseOptions, getVendorShipping, saveVendorShipping, getInventory, getInventoryExcluded, removeInventory, saveInventoryExcluded, deleteProducts, getCategoryTrades, getProducts, getTrades, getFavoriteVendors, saveFavoriteVendors, getPricingSnapshots, nextProductKey, savePricingSnapshots, setPurchaseLink, setStock, updateProduct } from '@/lib/db';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { inventoryTrades } from '@/lib/inventory';
 import { recordChangeLater } from '@/lib/audit';
@@ -58,9 +58,12 @@ export async function POST(req: Request) {
     if (allProducts.some(p => catTrades[p.category] === trade && p.name === name)) return json({ error: '이 공정에 이미 있는 품목이에요.' }, 400);
     const wantKind = (b as { kind?: unknown }).kind;
     const kind = wantKind === '자재' || wantKind === '연장' ? wantKind : '상비품';
-    const product = await addProduct({ key, kind, category, sub: rewriteSub('', '', headOf(category, catTrades, allTrades)), name, brand: '', price, priceInclVat: null, vatBasis: '', soldout: false, stock: 0, image: '', trades: [trade] });
+    const brandIn = clip((b as { brand?: unknown }).brand, 50);
+    const product = await addProduct({ key, kind, category, sub: rewriteSub('', '', headOf(category, catTrades, allTrades)), name, brand: brandIn, price, priceInclVat: null, vatBasis: '', soldout: false, stock: 0, image: '', trades: [trade] });
     await addInventory({ action: 'add', category: trade, productKey: product.key, name, brand: '', qty, price, memo, byId: me.id, byName: me.name }).catch(() => undefined); // 기록 저장 실패는 작업을 막지 않는다
     recordChangeLater(menu, { action: '추가', target: name, detail: `${trade} › ${category}${pricing ? ` · 금액 ${price.toLocaleString('ko-KR')} · 구매 예정 수량 ${qty}` : ''}` });
+    const modelIn = clip((b as { model?: unknown }).model, 100);
+    if (modelIn) await setProductModel(product.key, modelIn); // 연장 제품명(모델명)
     return json({ ok: true, key: product.key });
   }
 
@@ -98,7 +101,9 @@ export async function POST(req: Request) {
     // 부가세 포함가를 직접 적었으면(incl) 그 값을 그대로 저장한다. 공급가와 맞지 않으면 저장하지 않고, 적지 않았으면 (금액이 그대로일 때만) 기존 값을 유지한다.
     const inclGiven = b.incl === null ? null : typeof b.incl === 'number' && Number.isInteger(b.incl) && b.incl >= 0 && Math.round(b.incl / 1.1) === price ? b.incl : undefined;
     const priceInclVat = inclGiven !== undefined ? inclGiven : b.incl !== undefined ? null : price === p.price ? p.priceInclVat : null;
-    if (!(await updateProduct(p.key, { name, sub: p.sub, brand: p.brand, price, priceInclVat }))) return json({ error: '없는 상비품이에요.' }, 404);
+    const brandNew = typeof (b as { brand?: unknown }).brand === 'string' ? clip((b as { brand?: unknown }).brand, 50) : p.brand;
+    if (!(await updateProduct(p.key, { name, sub: p.sub, brand: brandNew, price, priceInclVat }))) return json({ error: '없는 상비품이에요.' }, 404);
+    if (typeof (b as { model?: unknown }).model === 'string') await setProductModel(p.key, clip((b as { model?: unknown }).model, 100));
     const changes: string[] = [];
     if (name !== p.name) changes.push(`이름 ${p.name} → ${name}`);
     if (price !== p.price) changes.push(`금액 ${p.price.toLocaleString('ko-KR')} → ${price.toLocaleString('ko-KR')}`);

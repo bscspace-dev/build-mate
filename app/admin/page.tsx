@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import AdminCatalog, { type InvMark } from "@/components/admin/AdminCatalog";
 import { actorCan, getActor } from "@/lib/auth";
 import { isStaffAdmin, memberRoles } from "@/lib/roles";
-import { getCategories, getCategoryTrades, getInventory, getInventoryExcluded, getProducts, getPurchaseLinks, getTrades, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
+import { getCategories, getCategoryTrades, getInventory, getInventoryExcluded, getProducts, getProductModels, getPurchaseLinks, getTrades, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
 
 export default function AdminPage() {
   return (
@@ -17,7 +17,8 @@ async function AdminLoader() {
   // 쿠키를 읽는 순간 요청 시점 렌더링이 된다. 로그인이 없으면 로그인 화면으로.
   const actor = await getActor("catalog");
   if (!actor) redirect("/"); // 소모품 메뉴 권한이 없으면 메인으로
-  const [products, trash, trades, categories, categoryTrades, vehicles, vitems] = await Promise.all([getProducts(), getTrash(), getTrades(), getCategories(), getCategoryTrades(), getVehicles(), getVehicleItems()]);
+  const [productsRaw, trash, trades, categories, categoryTrades, vehicles, vitems, models] = await Promise.all([getProducts(), getTrash(), getTrades(), getCategories(), getCategoryTrades(), getVehicles(), getVehicleItems(), getProductModels().catch(() => ({} as Record<string, string>))]);
+  const products = productsRaw.map(p => (models[p.key] ? { ...p, model: models[p.key] } : p)); // 연장 제품명(모델명)
   // 연장이 어느 차량에 배정돼 있는지 (품목 번호 → 차량 목록). 차량에 실린 수량은 창고 재고와 따로 센다.
   const vmap = new Map(vehicles.map(v => [v.id, v]));
   const deployed: Record<string, { icon: string; label: string; qty: number }[]> = {};

@@ -8,7 +8,7 @@ import { KINDS, type Kind, type Product, type TrashedProduct } from "@/lib/types
 
 const inputCls = "mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15";
 
-export type ProductEdited = { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string };
+export type ProductEdited = { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string; model?: string };
 
 // 등록한 품목의 정보 수정: 이름·세부분류·브랜드·가격·사진 (카테고리는 '이동', 재고는 재고 칸에서 바꾼다)
 export default function EditProduct({
@@ -32,6 +32,7 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
   const [name, setName] = useState(product.name);
   const [sub, setSub] = useState(product.sub ?? "");
   const [brand, setBrand] = useState(product.brand ?? "");
+  const [model, setModel] = useState((product as { model?: string }).model ?? ""); // 연장 제품명(모델명)
   const [price, setPrice] = useState(product.price ? String(product.price) : "");
   const [kind, setKind] = useState<Kind>(product.kind);
   const [busy, setBusy] = useState(false);
@@ -58,6 +59,7 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
       fd.set("kind", kind);
       fd.set("sub", sub);
       fd.set("brand", brand);
+      if (kind === "연장") fd.set("model", model);
       fd.set("price", price);
       if (photo) {
         const blob = await shrink(photo);
@@ -67,7 +69,7 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
       if (r.status === 401) { router.replace("/"); return; }
       const j = (await r.json().catch(() => ({}))) as ProductEdited & { error?: string };
       if (!r.ok) throw new Error(j.error ?? "수정하지 못했어요.");
-      onSaved(product.key, { name: j.name, sub: j.sub, brand: j.brand, price: j.price, kind: j.kind, image: j.image });
+      onSaved(product.key, { name: j.name, sub: j.sub, brand: j.brand, price: j.price, kind: j.kind, image: j.image, model: j.model });
     } catch (e2) {
       setErr(e2 instanceof Error ? e2.message : "수정하지 못했어요.");
     }
@@ -110,6 +112,10 @@ function Form({ product, onClose, onSaved }: { product: Product | TrashedProduct
         <div>
           <label htmlFor="ep-brand" className="mt-4 block text-sm font-bold">사용 브랜드</label>
           <input id="ep-brand" value={brand} onChange={e => setBrand(e.target.value)} maxLength={50} autoComplete="off" className={inputCls} />
+          {kind === "연장" && (<>
+            <label htmlFor="ep-model" className="mt-4 block text-sm font-bold">제품명 <span className="font-normal text-zinc-500">(모델명)</span></label>
+            <input id="ep-model" value={model} onChange={e => setModel(e.target.value)} maxLength={100} autoComplete="off" className={inputCls} />
+          </>)}
         </div>
         <div>
           <label htmlFor="ep-price" className="mt-4 block text-sm font-bold">가격</label>

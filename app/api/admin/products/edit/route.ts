@@ -1,6 +1,6 @@
 import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
-import { updateProduct } from '@/lib/db';
+import { setProductModel, updateProduct } from '@/lib/db';
 import { asKind, KINDS } from '@/lib/types';
 import { json, limited, sameOrigin } from '@/lib/guard';
 import { removeImage, saveImage } from '@/lib/images';
@@ -57,9 +57,12 @@ async function handlePOST(req: Request) {
     if (image) await removeImage(image).catch(() => undefined);
     return json({ error: '없는 소모품이에요.' }, 404);
   }
+  const hasModel = form.has('model');
+  const model = text(form.get('model'), 100); // 연장 제품명(모델명): 비우면 지운다
+  if (hasModel) await setProductModel(key, model);
   // 사진을 바꿨으면 예전 사진 파일은 지운다 (같은 파일 이름에 덮어쓴 경우는 그대로 둔다)
   if (image && r.prevImage && r.prevImage !== image) await removeImage(r.prevImage).catch(() => undefined);
-  return json({ ok: true, name, sub, brand, price, ...(kind ? { kind } : {}), ...(image ? { image } : {}) });
+  return json({ ok: true, name, sub, brand, price, ...(hasModel ? { model } : {}), ...(kind ? { kind } : {}), ...(image ? { image } : {}) });
 }
 
 export const POST = audited('catalog', handlePOST);

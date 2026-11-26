@@ -1283,3 +1283,21 @@ export function saveVendorShipping(v: Record<string, VendorShipping>): Promise<v
     await writeJson('vendor-shipping.json', v);
   });
 }
+
+// ───────── 연장 제품명(모델명) — 품목별 (data/product-models.json) ─────────
+export async function getProductModels(): Promise<Record<string, string>> {
+  try {
+    const v = await readJson<unknown>('product-models.json');
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, m]) => typeof m === 'string' && m) as [string, string][]);
+  } catch {
+    return {};
+  }
+}
+export function setProductModel(key: string, model: string): Promise<void> {
+  return withLock(async () => {
+    const cur = await getProductModels();
+    if (model) cur[key] = model; else delete cur[key];
+    await writeJson('product-models.json', cur);
+  });
+}

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { shrink } from "@/components/admin/AddProduct";
 import type { InventoryEntry } from "@/lib/types";
 
-type Prod = { key: string; kind: "상비품" | "자재" | "연장"; stock: number; price: number; image: string; link: string; trade: string; category: string; name: string };
+type Prod = { key: string; kind: "상비품" | "자재" | "연장"; stock: number; price: number; image: string; link: string; brand: string; model: string; trade: string; category: string; name: string };
 type KindTab = "상비품" | "자재" | "연장";
 const KIND_KEY = "bm_inventory_kind"; // 마지막으로 본 종류 (이 브라우저에 기억)
 
@@ -122,13 +122,17 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const [newPrice, setNewPrice] = useState("");
   const [newPhoto, setNewPhoto] = useState<File | null>(null);
   const [newLink, setNewLink] = useState("");
+  const [newBrand, setNewBrand] = useState(""); // 연장 브랜드·제품명
+  const [newModel, setNewModel] = useState("");
+  const [editBrand, setEditBrand] = useState("");
+  const [editModel, setEditModel] = useState("");
   const [editLink, setEditLink] = useState("");
   const [editPrice, setEditPrice] = useState("");
   const [editPhoto, setEditPhoto] = useState<File | null>(null);
   const priceNum = (v: string) => v.replace(/\D/g, "").slice(0, 9);
   const won = (n: number) => n.toLocaleString("ko-KR");
   // 이름·가격 칸을 누르면 그 칸이 바로 입력 상태가 된다 (수정 버튼과 같은 수정 모드)
-  const [editFocus, setEditFocus] = useState<"name" | "price" | "link">("name");
+  const [editFocus, setEditFocus] = useState<"name" | "price" | "link" | "brand" | "model">("name");
   // 사진 미리보기: 목록의 사진(썸네일)에 마우스를 올리면 커서 왼쪽에 작은 사진을 띄운다 (수정 중에는 띄우지 않는다)
   const [peek, setPeek] = useState<{ src: string; x: number; y: number } | null>(null);
   const peekProps = (p: Prod) => p.image && editKey !== p.key ? {
@@ -136,7 +140,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     onMouseMove: (e: React.MouseEvent) => setPeek({ src: p.image, x: e.clientX, y: e.clientY }),
     onMouseLeave: () => setPeek(null),
   } : {};
-  const startEdit = (p: Prod, f: "name" | "price" | "link" = "name") => { setPeek(null); setEditLink(p.link); setEditKey(p.key); setEditName(p.name); setEditPrice(p.price ? String(p.price) : ""); setEditPhoto(null); setEditFocus(f); };
+  const startEdit = (p: Prod, f: "name" | "price" | "link" | "brand" | "model" = "name") => { setPeek(null); setEditLink(p.link); setEditBrand(p.brand); setEditModel(p.model); setEditKey(p.key); setEditName(p.name); setEditPrice(p.price ? String(p.price) : ""); setEditPhoto(null); setEditFocus(f); };
   async function uploadPhoto(key: string, file: File): Promise<string | null> {
     try {
       const blob = await shrink(file);
@@ -179,7 +183,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     const category = flat ? firstCat(sel) : catSel;
     if (!category) return setErr(flat ? "이 공정에는 카테고리가 없어서 연장을 추가할 수 없어요. 창고장비현황에서 카테고리를 먼저 만들어 주세요." : "카테고리를 골라 주세요.");
     if (!name.trim()) return setErr("품목 이름을 적어 주세요.");
-    const j = await post({ action: "add", trade: sel, category, name, kind: kindTab, price: Number(newPrice || 0) });
+    const j = await post({ action: "add", trade: sel, category, name, kind: kindTab, price: Number(newPrice || 0), ...(flat ? { brand: newBrand.trim(), model: newModel.trim() } : {}) });
     if (j) {
       const newLinkUrl = newLink.trim();
       let linkSaved = "";
@@ -187,8 +191,8 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
       let img = "";
       if (typeof j.key === "string" && newPhoto) img = (await uploadPhoto(j.key, newPhoto)) ?? ""; // 사진은 등록된 품목에 이어서 올린다
       if (typeof j.key === "string") setAddedNow(x => ({ ...x, [j.key as string]: Date.now() }));
-      if (typeof j.key === "string") setItems(x => [...x, { key: j.key as string, kind: kindTab, stock: 0, price: Number(newPrice || 0), image: img, link: linkSaved, trade: sel, category: flat ? "" : catSel, name: name.trim().replace(/\s+/g, " ") }]); // 새로고침을 기다리지 않고 바로 보여 준다
-      setName(""); setNewPrice(""); setNewPhoto(null); setNewLink("");
+      if (typeof j.key === "string") setItems(x => [...x, { key: j.key as string, kind: kindTab, stock: 0, price: Number(newPrice || 0), image: img, link: linkSaved, brand: flat ? newBrand.trim() : "", model: flat ? newModel.trim() : "", trade: sel, category: flat ? "" : catSel, name: name.trim().replace(/\s+/g, " ") }]); // 새로고침을 기다리지 않고 바로 보여 준다
+      setName(""); setNewPrice(""); setNewPhoto(null); setNewLink(""); setNewBrand(""); setNewModel("");
       router.refresh(); // 뒤에서 서버 값으로 맞춘다
     }
   }
@@ -200,15 +204,18 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     if (!n) return setErr("품목 이름을 적어 주세요.");
     const pr = Number(editPrice || 0);
     const lk = editLink.trim();
-    if (n === p.name && pr === p.price && !editPhoto && lk === p.link) return setEditKey(null);
-    if (n !== p.name || pr !== p.price) {
-      if (!(await post({ action: "rename", key: p.key, name: n, price: pr }))) return;
+    const isTool = p.kind === "연장"; // 연장은 브랜드·제품명도 함께 고친다
+    const br = editBrand.trim(), md = editModel.trim();
+    const toolSame = !isTool || (br === p.brand && md === p.model);
+    if (n === p.name && pr === p.price && !editPhoto && lk === p.link && toolSame) return setEditKey(null);
+    if (n !== p.name || pr !== p.price || !toolSame) {
+      if (!(await post({ action: "rename", key: p.key, name: n, price: pr, ...(isTool ? { brand: br, model: md } : {}) }))) return;
     }
     let linkNow = p.link;
     if (lk !== p.link) { const lj = await post({ action: "link", key: p.key, url: lk }); if (!lj) return; linkNow = typeof lj.url === "string" ? lj.url : lk; }
     let img = p.image;
     if (editPhoto) { const up = await uploadPhoto(p.key, editPhoto); if (up) img = up; else return; }
-    setItems(x => x.map(i => (i.key === p.key ? { ...i, name: n, price: pr, image: img, link: linkNow } : i)));
+    setItems(x => x.map(i => (i.key === p.key ? { ...i, name: n, price: pr, image: img, link: linkNow, ...(isTool ? { brand: br, model: md } : {}) } : i)));
     setEditKey(null); setEditPhoto(null);
     router.refresh();
   }
@@ -374,6 +381,12 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                 {photoPicker(newPhoto, setNewPhoto, "사진")}
               </div>
               <input value={newLink} onChange={e => setNewLink(e.target.value.slice(0, 500))} placeholder="구매 링크 (선택)" className={inp} aria-label="구매 링크 (모바일)" />
+              {kindTab === "연장" && (
+                <div className="flex gap-2">
+                  <input value={newBrand} onChange={e => setNewBrand(e.target.value.slice(0, 50))} placeholder="브랜드" className={inp} aria-label="브랜드 (모바일)" />
+                  <input value={newModel} onChange={e => setNewModel(e.target.value.slice(0, 100))} placeholder="제품명" className={inp} aria-label="제품명 (모바일)" />
+                </div>
+              )}
               <div className="flex gap-2">
                 <input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름 (모바일)" onKeyDown={e => e.key === "Enter" && add()} />
                 <button type="button" disabled={busy} onClick={add} className="shrink-0 rounded-md bg-blue-600 px-5 text-sm font-bold text-white disabled:opacity-50">추가</button>
@@ -394,8 +407,9 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                       {editKey === p.key
                         ? <input autoFocus={editFocus === "name"} value={editName} onChange={e => setEditName(e.target.value.slice(0, 100))} onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} className={inp} aria-label="품목 이름 수정" />
                         : <div className="break-words text-sm font-semibold leading-snug" onClick={() => startEdit(p, "name")}>{p.name}</div>}
+                      {editKey !== p.key && p.kind === "연장" && (p.brand || p.model) && <div className="text-[11px] text-zinc-500">{[p.brand, p.model].filter(Boolean).join(" · ")}</div>}
                       {editKey === p.key ? (
-                        <div className="mt-1 space-y-1.5"><div className="flex items-center gap-1.5"><input autoFocus={editFocus === "price"} value={editPrice} onChange={e => setEditPrice(priceNum(e.target.value))} inputMode="numeric" placeholder="가격(원)" className={`${inp} text-right`} aria-label="가격 수정 (모바일)" />{photoPicker(editPhoto, setEditPhoto, "사진")}</div><input autoFocus={editFocus === "link"} value={editLink} onChange={e => setEditLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크 수정 (모바일)" /></div>
+                        <div className="mt-1 space-y-1.5"><div className="flex items-center gap-1.5"><input autoFocus={editFocus === "price"} value={editPrice} onChange={e => setEditPrice(priceNum(e.target.value))} inputMode="numeric" placeholder="가격(원)" className={`${inp} text-right`} aria-label="가격 수정 (모바일)" />{photoPicker(editPhoto, setEditPhoto, "사진")}</div><input autoFocus={editFocus === "link"} value={editLink} onChange={e => setEditLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크 수정 (모바일)" />{p.kind === "연장" && <div className="flex gap-1.5"><input value={editBrand} onChange={e => setEditBrand(e.target.value.slice(0, 50))} placeholder="브랜드" className={inp} aria-label="브랜드 수정 (모바일)" /><input value={editModel} onChange={e => setEditModel(e.target.value.slice(0, 100))} placeholder="제품명" className={inp} aria-label="제품명 수정 (모바일)" /></div>}</div>
                       ) : p.price > 0 && <div className="text-xs font-bold text-zinc-600 dark:text-zinc-300" onClick={() => startEdit(p, "price")}>{won(p.price)}원</div>}
                       {editKey !== p.key && p.link && <a href={p.link} target="_blank" rel="noopener noreferrer" className="mt-0.5 inline-block rounded-md bg-orange-500 px-2 py-0.5 text-[11px] font-bold text-white">구매 링크 ↗</a>}
                       {a && <div className="text-[11px] leading-tight text-zinc-500">{a.byName} 추가</div>}
@@ -428,13 +442,14 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                   <th className={`${cell} w-32`} aria-sort={sort?.key === "trade" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("trade")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "trade" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">공정<span aria-hidden className="text-[10px]">{sort?.key === "trade" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
                   {kindTab !== "연장" && <th className={`${cell} w-40`} aria-sort={sort?.key === "category" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("category")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "category" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">카테고리<span aria-hidden className="text-[10px]">{sort?.key === "category" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>}
                   <th className={`${cell}`} aria-sort={sort?.key === "name" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("name")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "name" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">품목<span aria-hidden className="text-[10px]">{sort?.key === "name" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
+                  {kindTab === "연장" && <><th className={`${cell} w-32`}>브랜드</th><th className={`${cell} w-40`}>제품명</th></>}
                   <th className={`${cell} w-28 text-right`}>가격</th>
                   <th className={`${cell} w-24 text-center`}>링크</th>
                   <th className={`${cell} w-24`} aria-sort={sort?.key === "by" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}><button type="button" onClick={() => clickSort("by")} className={`inline-flex items-center gap-1 font-bold hover:text-zinc-900 dark:hover:text-zinc-100 ${sort?.key === "by" ? "text-blue-700 dark:text-blue-300" : ""}`} title="눌러서 오름차순 / 내림차순 정렬">추가한 사람<span aria-hidden className="text-[10px]">{sort?.key === "by" ? (sort.dir === 1 ? "▲" : "▼") : "↕"}</span></button></th>
                   <th className={`${cell} w-32`} />
                 </tr>
                 <tr className="bg-blue-50/60 dark:bg-blue-500/10">
-                  <td className={cell} colSpan={kindTab === "연장" ? 9 : 10}>
+                  <td className={cell} colSpan={kindTab === "연장" ? 11 : 10}>
                     <div className="flex flex-wrap items-end gap-2 text-xs font-bold text-zinc-600 dark:text-zinc-300">
                       <span className="self-center">공정</span>
                       <select value={sel} onChange={e => { setSel(e.target.value); setCatSel(firstCat(e.target.value)); }} className="self-center rounded-md border border-black/15 bg-transparent px-2 py-1.5 text-sm font-normal outline-none focus:border-blue-500 dark:border-white/15" aria-label="공정">
@@ -457,6 +472,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                   <td className={`${cell} text-center`}>{photoPicker(newPhoto, setNewPhoto, "")}</td>
                   <td className={`${cell} text-xs font-bold text-zinc-600 dark:text-zinc-300`} colSpan={kindTab === "연장" ? 1 : 2}>{kindTab === "연장" ? (sel ? `${sel} › 연장` : "공정을 고르세요") : sel && catSel ? `${sel} › ${catSel}` : "공정·카테고리를 고르세요"}</td>
                   <td className={cell}><input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름" onKeyDown={e => e.key === "Enter" && add()} /></td>
+                  {kindTab === "연장" && <><td className={cell}><input value={newBrand} onChange={e => setNewBrand(e.target.value.slice(0, 50))} placeholder="브랜드" className={inp} aria-label="브랜드" onKeyDown={e => e.key === "Enter" && add()} /></td><td className={cell}><input value={newModel} onChange={e => setNewModel(e.target.value.slice(0, 100))} placeholder="제품명" className={inp} aria-label="제품명" onKeyDown={e => e.key === "Enter" && add()} /></td></>}
                   <td className={cell}><input value={newPrice} onChange={e => setNewPrice(priceNum(e.target.value))} inputMode="numeric" placeholder="가격(원)" className={`${inp} text-right`} aria-label="가격" onKeyDown={e => e.key === "Enter" && add()} /></td>
                   <td className={cell}><input value={newLink} onChange={e => setNewLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크" onKeyDown={e => e.key === "Enter" && add()} /></td>
                   <td className={cell} colSpan={2}><button type="button" disabled={busy} onClick={add} className="w-full rounded-md bg-blue-600 py-1.5 text-sm font-bold text-white disabled:opacity-50">추가</button></td>
@@ -464,7 +480,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
               </thead>
               <tbody>
                 {shown.length === 0 && (
-                  <tr><td colSpan={kindTab === "연장" ? 9 : 10} className={`${cell} py-8 text-center text-zinc-500`}>내 공정에 {kindTab}이(가) 없어요. 위에서 추가해 보세요.</td></tr>
+                  <tr><td colSpan={kindTab === "연장" ? 11 : 10} className={`${cell} py-8 text-center text-zinc-500`}>내 공정에 {kindTab}이(가) 없어요. 위에서 추가해 보세요.</td></tr>
                 )}
                 {rows.map((p, k) => {
                   const i = start + k;
@@ -474,7 +490,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                     <Fragment key={p.key}>
                     {head && (
                       <tr className="bg-blue-50/60 dark:bg-blue-500/10">
-                        <td colSpan={kindTab === "연장" ? 9 : 10} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300">{freshAt(p) ? <>신규 추가 <span className="font-normal text-zinc-500">{freshCount}개 · 최근 14일 이내에 추가한 품목이에요</span></> : <>{p.trade}{p.category ? ` › ${p.category}` : ""} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개</span></>}</td>
+                        <td colSpan={kindTab === "연장" ? 11 : 10} className="border border-black/10 px-3 py-1.5 text-xs font-extrabold text-blue-700 dark:border-white/10 dark:text-blue-300">{freshAt(p) ? <>신규 추가 <span className="font-normal text-zinc-500">{freshCount}개 · 최근 14일 이내에 추가한 품목이에요</span></> : <>{p.trade}{p.category ? ` › ${p.category}` : ""} <span className="font-normal text-zinc-500">{countIn(p.trade, p.category)}개</span></>}</td>
                       </tr>
                     )}
                     <tr className={checked.includes(p.key) ? "bg-red-50/60 dark:bg-red-500/5" : "hover:bg-zinc-50/70 dark:hover:bg-zinc-800/40"}>
@@ -484,6 +500,11 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                       <td className={`${cell} whitespace-nowrap`}>{p.trade}</td>
                       {kindTab !== "연장" && <td className={`${cell} whitespace-nowrap`}>{p.category}</td>}
                       <td className={`${cell} font-semibold ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : "눌러서 수정"} onClick={() => { if (editKey !== p.key) startEdit(p, "name"); }}>{editKey === p.key ? <input autoFocus={editFocus === "name"} value={editName} onChange={e => setEditName(e.target.value.slice(0, 100))} onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} className={inp} aria-label="품목 이름 수정" /> : p.name}</td>
+                      {kindTab === "연장" && (["brand", "model"] as const).map(f => (
+                        <td key={f} className={`${cell} text-sm ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : f === "brand" ? "눌러서 브랜드 입력" : "눌러서 제품명 입력"} onClick={() => { if (editKey !== p.key) startEdit(p, f); }}>
+                          {editKey === p.key ? <input autoFocus={editFocus === f} value={f === "brand" ? editBrand : editModel} onChange={e => (f === "brand" ? setEditBrand(e.target.value.slice(0, 50)) : setEditModel(e.target.value.slice(0, 100)))} placeholder={f === "brand" ? "브랜드" : "제품명"} className={inp} aria-label={f === "brand" ? "브랜드 수정" : "제품명 수정"} onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} /> : (f === "brand" ? p.brand : p.model) || <span className="text-zinc-300">—</span>}
+                        </td>
+                      ))}
                       <td className={`${cell} text-right tabular-nums ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : "눌러서 가격 입력"} onClick={() => { if (editKey !== p.key) startEdit(p, "price"); }}>{editKey === p.key ? <input autoFocus={editFocus === "price"} value={editPrice} onChange={e => setEditPrice(priceNum(e.target.value))} inputMode="numeric" placeholder="가격(원)" className={`${inp} text-right`} aria-label="가격 수정" onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} /> : p.price > 0 ? won(p.price) : <span className="text-zinc-300">—</span>}</td>
                       <td className={`${cell} text-center ${editKey === p.key ? "" : "cursor-text hover:bg-blue-50/70 dark:hover:bg-blue-500/10"}`} title={editKey === p.key ? undefined : "눌러서 링크 입력"} onClick={() => { if (editKey !== p.key) startEdit(p, "link"); }}>{editKey === p.key ? <input autoFocus={editFocus === "link"} value={editLink} onChange={e => setEditLink(e.target.value.slice(0, 500))} placeholder="구매 링크" className={inp} aria-label="구매 링크 수정" onKeyDown={e => { if (e.key === "Enter") void rename(p); if (e.key === "Escape") setEditKey(null); }} /> : p.link ? <a href={p.link} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} title={p.link} aria-label={`${p.name} 구매 링크 열기`} className="inline-block rounded-md bg-orange-500 px-2 py-0.5 text-xs font-bold text-white hover:bg-orange-600">링크 ↗</a> : <span className="text-zinc-300">—</span>}</td>
                       <td className={`${cell} whitespace-nowrap`}>{a ? a.byName : <span className="text-zinc-400">기존 품목</span>}</td>

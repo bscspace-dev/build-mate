@@ -116,6 +116,8 @@ export const getPurchaseOptions = () => impl().getPurchaseOptions();
 export const savePurchaseOptions = (v: Record<string, import('./types').PurchaseOption[]>) => impl().savePurchaseOptions(v);
 export const getVendorShipping = () => impl().getVendorShipping();
 export const saveVendorShipping = (v: Record<string, import('./types').VendorShipping>) => impl().saveVendorShipping(v);
+export const getProductModels = () => impl().getProductModels();
+export const setProductModel = (key: string, model: string) => impl().setProductModel(key, model);
 export const setPurchaseLink = (key: string, info: import('./types').PurchaseInfo | null) => impl().setPurchaseLink(key, info);
 export const getAudit = () => impl().getAudit();
 export const addAudit = (i: import('./types').AuditInput) => impl().addAudit(i);

@@ -13,6 +13,7 @@ export type Product = {
   sub: string;
   name: string;
   brand: string;
+  model?: string; // 제품명(모델명) — 연장에서 쓴다 (app_settings 에 따로 저장되어 화면에서 합쳐진다)
   price: number;
   priceInclVat: number | null;
   vatBasis: string;

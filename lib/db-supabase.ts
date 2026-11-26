@@ -1127,3 +1127,16 @@ export async function getVendorShipping(): Promise<Record<string, VendorShipping
 export async function saveVendorShipping(v: Record<string, VendorShipping>): Promise<void> {
   must(await supabase().from('app_settings').upsert({ key: 'vendor_shipping', value: v }, { onConflict: 'key' }), '구매처 배송비 저장');
 }
+
+// ───────── 연장 제품명(모델명) — 품목별 (app_settings: product_models) ─────────
+export async function getProductModels(): Promise<Record<string, string>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'product_models').maybeSingle(), '제품명 조회') as { value: unknown } | null;
+  const v = row?.value;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, m]) => typeof m === 'string' && m) as [string, string][]);
+}
+export async function setProductModel(key: string, model: string): Promise<void> {
+  const cur = await getProductModels();
+  if (model) cur[key] = model; else delete cur[key];
+  must(await supabase().from('app_settings').upsert({ key: 'product_models', value: cur }, { onConflict: 'key' }), '제품명 저장');
+}

@@ -50,6 +50,7 @@ export default function AddProduct({
   const [sub, setSub] = useState<string | null>(null); // null = 직접 고치지 않음 (고른 카테고리의 공정>카테고리가 자동으로 들어간다)
   const subShown = sub ?? (category ? headOfCat(category) : "");
   const [brand, setBrand] = useState("");
+  const [model, setModel] = useState(""); // 연장 제품명(모델명)
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("0");
   const [busy, setBusy] = useState(false);
@@ -102,6 +103,7 @@ export default function AddProduct({
       fd.set("category", category);
       fd.set("sub", subShown);
       fd.set("brand", brand);
+      if (kind === "연장") fd.set("model", model);
       fd.set("price", price);
       fd.set("stock", stock);
       const r = await fetch("/api/admin/products/new", { method: "POST", body: fd });
@@ -159,6 +161,10 @@ export default function AddProduct({
           <div>
             <label htmlFor="np-brand" className="mt-4 block text-sm font-bold">사용 브랜드 <span className="font-normal text-zinc-500">(선택)</span></label>
             <input id="np-brand" value={brand} onChange={e => setBrand(e.target.value)} maxLength={50} autoComplete="off" className={inputCls} />
+            {kind === "연장" && (<>
+              <label htmlFor="np-model" className="mt-4 block text-sm font-bold">제품명 <span className="font-normal text-zinc-500">(모델명, 선택)</span></label>
+              <input id="np-model" value={model} onChange={e => setModel(e.target.value)} maxLength={100} autoComplete="off" className={inputCls} />
+            </>)}
           </div>
           <div>
             <label htmlFor="np-price" className="mt-4 block text-sm font-bold">가격 <span className="font-normal text-zinc-500">(선택)</span></label>
