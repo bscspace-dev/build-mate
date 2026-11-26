@@ -267,7 +267,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
       onFocus={e => { setDraft(x => ({ ...x, [p.key]: { ...x[p.key], [field]: value === 0 ? "" : String(value) } })); e.currentTarget.select(); }}
       onChange={e => setDraft(x => ({ ...x, [p.key]: { ...x[p.key], [field]: digits(e.target.value, max) } }))}
       onBlur={() => void commit(p)}
-      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setDraft(x => { const { [p.key]: _d, ...rest } = x; return rest; }); e.currentTarget.blur(); } }}
+      onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) e.currentTarget.blur(); if (e.key === "Escape") { setDraft(x => { const { [p.key]: _d, ...rest } = x; return rest; }); e.currentTarget.blur(); } }}
       inputMode="numeric"
       disabled={busy}
       title="눌러서 바로 수정"
@@ -375,7 +375,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
       value={nameOf(p)}
       onChange={e => setNameDraft(x => ({ ...x, [p.key]: e.target.value.slice(0, 100) }))}
       onBlur={() => void commitName(p)}
-      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setNameDraft(x => { const { [p.key]: _d, ...rest } = x; return rest; }); e.currentTarget.blur(); } }}
+      onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) e.currentTarget.blur(); if (e.key === "Escape") { setNameDraft(x => { const { [p.key]: _d, ...rest } = x; return rest; }); e.currentTarget.blur(); } }}
       disabled={busy}
       title="눌러서 이름 바꾸기"
       aria-label={`${p.name} 품목 이름`}
@@ -387,7 +387,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
       value={unitRaw(p)}
       onChange={e => setUnitDraft(x => ({ ...x, [p.key]: e.target.value.slice(0, 20) }))}
       onBlur={() => void commitUnit(p)}
-      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setUnitDraft(x => { const { [p.key]: _d, ...rest } = x; return rest; }); e.currentTarget.blur(); } }}
+      onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) e.currentTarget.blur(); if (e.key === "Escape") { setUnitDraft(x => { const { [p.key]: _d, ...rest } = x; return rest; }); e.currentTarget.blur(); } }}
       placeholder="개"
       disabled={busy}
       title="바로 적어요 (예: 박스, 10개입, 롤)"
@@ -591,7 +591,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
   // 저장·불러오기 줄과 체크 줄은 표 위와 아래에 똑같이 둔다 (목록이 길 때 아래에서도 바로 쓰도록)
   const saveBar = (
     <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
-      <input value={snapName} onChange={e => setSnapName(e.target.value.slice(0, 30))} onKeyDown={e => { if (e.key === "Enter") void snapSave(); }} placeholder="저장본 이름 (예: 11월 구매 계획)" aria-label="저장본 이름" className="w-56 rounded-lg border border-black/15 bg-transparent px-3 py-1.5 outline-none focus:border-blue-500 dark:border-white/15" />
+      <input value={snapName} onChange={e => setSnapName(e.target.value.slice(0, 30))} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void snapSave(); }} placeholder="저장본 이름 (예: 11월 구매 계획)" aria-label="저장본 이름" className="w-56 rounded-lg border border-black/15 bg-transparent px-3 py-1.5 outline-none focus:border-blue-500 dark:border-white/15" />
       <button type="button" disabled={busy} onClick={() => void snapSave()} className="rounded-lg bg-zinc-100 px-3 py-1.5 font-bold disabled:opacity-50 dark:bg-zinc-800">현재 금액·수량 저장</button>
       <button type="button" onClick={resetSurvey} className="ml-auto rounded-lg bg-amber-100 px-3 py-1.5 font-bold text-amber-900 dark:bg-amber-500/20 dark:text-amber-200">새로 조사 시작</button>
       <button type="button" disabled={sheetRows.length === 0} onClick={exportSurvey} title={`${sheetScope} 품목을 엑셀로`} className="rounded-lg bg-emerald-600 px-3 py-1.5 font-bold text-white disabled:opacity-40">엑셀</button>
@@ -613,7 +613,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
       <b className="text-blue-700 dark:text-blue-300">체크 {picked.length}개 · 합계 {won(total)}원</b>
       <span className="text-xs text-zinc-500">물품 {won(totalSupply)} + 배송비 {won(totalShip)}</span>
       <span className="inline-flex items-center gap-1">
-        <input value={bulkQty} onChange={e => setBulkQty(digits(e.target.value, 7))} onKeyDown={e => { if (e.key === "Enter") applyBulkQty(); }} inputMode="numeric" placeholder="수량" aria-label="체크한 품목 수량 일괄 변경" className="w-16 rounded-lg border border-black/15 bg-white px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900" />
+        <input value={bulkQty} onChange={e => setBulkQty(digits(e.target.value, 7))} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) applyBulkQty(); }} inputMode="numeric" placeholder="수량" aria-label="체크한 품목 수량 일괄 변경" className="w-16 rounded-lg border border-black/15 bg-white px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900" />
         <button type="button" onClick={applyBulkQty} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white">선택 수량 전체 변경</button>
       </span>
       <button type="button" onClick={goBuy} className="rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-extrabold text-white">다음 ▶ 구매하기로 ({picked.filter(p => qtyOf(p) > 0).length}개)</button>
@@ -949,7 +949,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
           </div>
           {checkBar ?? <p className="mt-3 text-xs text-zinc-500">체크한 품목이 없어요. 품목을 체크하면 합계와 구매완료 버튼이 여기에도 나와요.</p>}
           <div className="mt-3 flex flex-wrap items-center justify-end gap-2 text-sm">
-            <input value={snapName} onChange={e => setSnapName(e.target.value.slice(0, 30))} onKeyDown={e => { if (e.key === "Enter") void snapSave(); }} placeholder="저장본 이름 (예: 11월 구매 계획)" aria-label="저장본 이름 (아래)" className="w-56 rounded-lg border border-black/15 bg-transparent px-3 py-1.5 outline-none focus:border-blue-500 dark:border-white/15" />
+            <input value={snapName} onChange={e => setSnapName(e.target.value.slice(0, 30))} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void snapSave(); }} placeholder="저장본 이름 (예: 11월 구매 계획)" aria-label="저장본 이름 (아래)" className="w-56 rounded-lg border border-black/15 bg-transparent px-3 py-1.5 outline-none focus:border-blue-500 dark:border-white/15" />
             <button type="button" disabled={busy} onClick={() => void snapSave()} className="rounded-lg bg-zinc-100 px-3 py-1.5 font-bold disabled:opacity-50 dark:bg-zinc-800">현재 금액·수량 저장</button>
           </div>
           {err && <p className="mt-2 text-right text-sm font-semibold text-red-600 dark:text-red-300" role="alert">{err}</p>}
@@ -1089,7 +1089,7 @@ export default function PricingAdmin({ trades, categories, products: productsPro
         {err && <p className="mt-2 text-sm text-red-500" role="alert">{err}</p>}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <input value={vsQ} onChange={e => setVsQ(e.target.value.slice(0, 40))} placeholder="🔍 구매처 검색" aria-label="구매처 검색" className="min-w-[10rem] flex-1 rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/15" />
-          <input value={vsNew} onChange={e => setVsNew(e.target.value.slice(0, 40))} onKeyDown={e => { if (e.key === "Enter") void addVendor(); }} placeholder="새 구매처 이름" aria-label="새 구매처 이름" className="min-w-[9rem] flex-1 rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/15" />
+          <input value={vsNew} onChange={e => setVsNew(e.target.value.slice(0, 40))} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void addVendor(); }} placeholder="새 구매처 이름" aria-label="새 구매처 이름" className="min-w-[9rem] flex-1 rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-white/15" />
           <button type="button" disabled={busy || !vsNew.trim()} onClick={() => void addVendor()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">+ 구매처 등록</button>
         </div>
         {(() => {
@@ -1162,11 +1162,11 @@ export default function PricingAdmin({ trades, categories, products: productsPro
               </div>
             )}
             <label className="mt-3 block text-sm font-bold" htmlFor="pvendor">구매처</label>
-            <input id="pvendor" value={linkVendor} onChange={e => setLinkVendor(e.target.value.slice(0, 40))} onKeyDown={e => { if (e.key === "Enter") void saveLink(linkUrl, linkVendor, linkUnit); }} autoFocus placeholder="예: 쿠팡, ○○철물" className="mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15" />
+            <input id="pvendor" value={linkVendor} onChange={e => setLinkVendor(e.target.value.slice(0, 40))} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void saveLink(linkUrl, linkVendor, linkUnit); }} autoFocus placeholder="예: 쿠팡, ○○철물" className="mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15" />
             <label className="mt-3 block text-sm font-bold" htmlFor="punit">판매단위 <span className="font-normal text-zinc-500">(예: 박스, 10개입, 롤)</span></label>
-            <input id="punit" value={linkUnit} onChange={e => setLinkUnit(e.target.value.slice(0, 20))} onKeyDown={e => { if (e.key === "Enter") void saveLink(linkUrl, linkVendor, linkUnit); }} placeholder="판매 단위" className="mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15" />
+            <input id="punit" value={linkUnit} onChange={e => setLinkUnit(e.target.value.slice(0, 20))} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void saveLink(linkUrl, linkVendor, linkUnit); }} placeholder="판매 단위" className="mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15" />
             <label className="mt-3 block text-sm font-bold" htmlFor="plink">구매 링크 <span className="font-normal text-zinc-500">(선택)</span></label>
-            <input id="plink" value={linkUrl} onChange={e => setLinkUrl(e.target.value.slice(0, 2000))} onKeyDown={e => { if (e.key === "Enter") void saveLink(linkUrl, linkVendor, linkUnit); }} inputMode="url" placeholder="https://…" className="mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15" />
+            <input id="plink" value={linkUrl} onChange={e => setLinkUrl(e.target.value.slice(0, 2000))} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void saveLink(linkUrl, linkVendor, linkUnit); }} inputMode="url" placeholder="https://…" className="mt-1.5 w-full rounded-xl border border-black/15 bg-transparent px-3.5 py-3 text-base outline-none focus:border-blue-500 dark:border-white/15" />
             {err && <p className="mt-2 text-sm text-red-500" role="alert">{err}</p>}
             <div className="mt-4 flex gap-2">
               {(links[linkP.key]?.url || links[linkP.key]?.vendor || links[linkP.key]?.unit) && <button type="button" disabled={busy} onClick={() => void saveLink("", "", "")} className="rounded-xl bg-red-50 px-4 py-3 font-bold text-red-600 disabled:opacity-50 dark:bg-red-500/15 dark:text-red-300">삭제</button>}
