@@ -55,7 +55,7 @@ export async function POST(req: Request) {
     const [catTrades, allProducts, key, allTrades] = await Promise.all([getCategoryTrades(), getProducts(), nextProductKey(), getTrades()]); // 동시에 조회
     if (catTrades[category] !== trade) return json({ error: '이 공정의 카테고리가 아니에요.' }, 400);
     if (excl.categories.includes(category)) return json({ error: '장비조사에서 제외된 카테고리예요.' }, 403);
-    if (allProducts.some(p => catTrades[p.category] === trade && p.name === name)) return json({ error: '이 공정에 이미 있는 품목이에요.' }, 400);
+    if ((b as { kind?: unknown }).kind !== '연장' && allProducts.some(p => catTrades[p.category] === trade && p.name === name)) return json({ error: '이 공정에 이미 있는 품목이에요.' }, 400); // 연장은 같은 이름을 중복 등록할 수 있다 (브랜드·제품명이 다른 같은 종류 연장)
     const wantKind = (b as { kind?: unknown }).kind;
     const kind = wantKind === '자재' || wantKind === '연장' ? wantKind : '상비품';
     const brandIn = clip((b as { brand?: unknown }).brand, 50);
@@ -101,7 +101,7 @@ export async function POST(req: Request) {
     if (!name) return json({ error: '품목 이름을 적어 주세요.' }, 400);
     const price = b.price === undefined ? p.price : whole(b.price, 99_999_999); // 장비조사는 가격을 보냈을 때만 바꾼다
     if (Number.isNaN(price)) return json({ error: '금액은 0 이상의 숫자로 적어 주세요.' }, 400);
-    if (all.some(x => x.key !== p.key && catTrades[x.category] === trade && x.name === name)) return json({ error: '이 공정에 이미 있는 품목 이름이에요.' }, 400);
+    if (p.kind !== '연장' && all.some(x => x.key !== p.key && catTrades[x.category] === trade && x.name === name)) return json({ error: '이 공정에 이미 있는 품목 이름이에요.' }, 400);
     // 부가세 포함가를 직접 적었으면(incl) 그 값을 그대로 저장한다. 공급가와 맞지 않으면 저장하지 않고, 적지 않았으면 (금액이 그대로일 때만) 기존 값을 유지한다.
     const inclGiven = b.incl === null ? null : typeof b.incl === 'number' && Number.isInteger(b.incl) && b.incl >= 0 && Math.round(b.incl / 1.1) === price ? b.incl : undefined;
     const priceInclVat = inclGiven !== undefined ? inclGiven : b.incl !== undefined ? null : price === p.price ? p.priceInclVat : null;
