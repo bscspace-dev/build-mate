@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import VehiclesAdmin, { type CatalogLite } from "@/components/admin/VehiclesAdmin";
 import { getActor, vehiclesFull } from "@/lib/auth";
-import { getLoadPackages, getActiveMembers, getProducts, getTeams, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
+import { getLoadPackages, getActiveMembers, getProducts, getTeams, getTrash, getVehicleItems, getVehicleLayout, getVehicles } from "@/lib/db";
 import { sideOf, teamGroup, teamLabel } from "@/lib/roles";
 
 export const metadata = { title: "차량정보 · 빌드메이트" };
@@ -18,7 +18,7 @@ export default function VehiclesPage() {
 async function Loader() {
   const actor = await getActor("vehicles");
   if (!actor) redirect("/"); // '차량정보' 메뉴를 쓸 수 없으면 메인으로
-  const [vehicles, items, products, trash, memberList, teams] = await Promise.all([getVehicles(), getVehicleItems(), getProducts(), getTrash(), getActiveMembers(), getTeams()]);
+  const [vehicles, items, products, trash, memberList, teams, layout] = await Promise.all([getVehicles(), getVehicleItems(), getProducts(), getTrash(), getActiveMembers(), getTeams(), getVehicleLayout()]);
   // 배차는 사내 회원(사무실·현장)만 — 거래처 회원은 제외한다
   const members = memberList.filter(m => { const g = teamGroup(teams, m.role); return g !== null && sideOf(g) === "inhouse"; }).map(m => ({ id: m.id, name: m.name, roleLabel: teamLabel(teams, m.role) })).sort((a, b) => a.name.localeCompare(b.name, "ko"));
   // 연장·상비품만 내려 보낸다 (휴지통에 있는 품목도 이미 배치된 것은 이름이 보여야 한다)
@@ -38,6 +38,7 @@ async function Loader() {
       members={full ? members : members.filter(m => m.id === selfId)}
       catalog={catalog}
       packages={full ? await getLoadPackages() : []}
+      layout={layout}
       ownOnly={!full}
       canRegister={full}
       canEdit={full}

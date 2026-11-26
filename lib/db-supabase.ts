@@ -2,7 +2,7 @@ import 'server-only';
 import { asIcon, asKind, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo } from './types';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, RequestItem, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, LoadPackageItem, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, PayType, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo, VehicleLayout, PurchaseOption, VendorShipping } from './types';
 import { applyTeamLocks, type GrantedActions, type GroupKey, type MenuKey, type RoleKey, type Team } from './roles';
 import { removeImage } from './images';
 import { supabase } from './supabase';
@@ -530,12 +530,13 @@ export async function renameProduct(key: string, name: string): Promise<number> 
   return rows.length;
 }
 
-export async function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string }): Promise<{ prevImage: string } | null> {
+export async function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string; priceInclVat?: number | null }): Promise<{ prevImage: string } | null> {
   const cur = must(await supabase().from('products').select('image,price').eq('key', key).maybeSingle(), '소모품 조회') as { image: string; price: number | null } | null;
   if (!cur) return null;
   const patch: Record<string, unknown> = { name: e.name, sub: e.sub, brand: e.brand, price: e.price };
   if (e.kind) patch.kind = e.kind;
   if (e.price !== (cur.price ?? 0)) patch.price_incl_vat = null;
+  if (e.priceInclVat !== undefined) patch.price_incl_vat = e.priceInclVat; // 부가세 포함가를 직접 적은 경우 그 값을 그대로 저장
   if (e.image) patch.image = e.image;
   must(await supabase().from('products').update(patch).eq('key', key), '소모품 수정');
   return { prevImage: cur.image };
@@ -984,29 +985,39 @@ export async function removeLoadPackage(id: string): Promise<VehicleResult> {
 
 
 // ───────── 장비조사 (inventory_entries) + 팀별 고정 카테고리 (app_settings: team_categories) ─────────
-type InventoryRow = { id: number; action: string | null; price: number | null; shipping: number | null; vendor: string | null; category: string; product_key: string; name: string; brand: string | null; qty: number; memo: string | null; by_id: string | null; by_name: string; created_at: string };
-const toInventory = (r: InventoryRow): InventoryEntry => ({ id: String(r.id), action: r.action === 'delete' ? 'delete' : r.action === 'buy' ? 'buy' : 'add', price: r.price ?? 0, shipping: r.shipping ?? 0, vendor: r.vendor ?? '', category: r.category, productKey: r.product_key, name: r.name, brand: r.brand ?? '', qty: r.qty, memo: r.memo ?? '', byId: r.by_id ?? '', byName: r.by_name, createdAt: new Date(r.created_at).toISOString() });
+type InventoryRow = { id: number; action: string | null; price: number | null; shipping: number | null; vendor: string | null; unit: string | null; category: string; product_key: string; name: string; brand: string | null; qty: number; memo: string | null; by_id: string | null; by_name: string; created_at: string };
+const toInventory = (r: InventoryRow): InventoryEntry => ({ id: String(r.id), action: r.action === 'delete' ? 'delete' : r.action === 'buy' ? 'buy' : 'add', price: r.price ?? 0, shipping: r.shipping ?? 0, vendor: r.vendor ?? '', unit: r.unit ?? '', category: r.category, productKey: r.product_key, name: r.name, brand: r.brand ?? '', qty: r.qty, memo: r.memo ?? '', byId: r.by_id ?? '', byName: r.by_name, createdAt: new Date(r.created_at).toISOString() });
 export async function getInventory(): Promise<InventoryEntry[]> {
   return (await fetchAll<InventoryRow>((a, b) => supabase().from('inventory_entries').select('*').order('id', { ascending: false }).range(a, b), '장비조사 조회')).map(toInventory);
 }
 export async function addInventory(i: InventoryEntryInput): Promise<InventoryEntry> {
-  return toInventory(must(await supabase().from('inventory_entries').insert({ action: i.action, price: i.price, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', category: i.category, product_key: i.productKey, name: i.name, brand: i.brand, qty: i.qty, memo: i.memo, by_id: i.byId || null, by_name: i.byName }).select('*').single(), '장비조사 등록') as InventoryRow);
+  const row: Record<string, unknown> = { action: i.action, price: i.price, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', unit: i.unit ?? '', category: i.category, product_key: i.productKey, name: i.name, brand: i.brand, qty: i.qty, memo: i.memo, by_id: i.byId || null, by_name: i.byName };
+  // 새 컬럼(shipping·vendor·unit)을 만드는 SQL 을 아직 실행하지 않았어도 기록이 막히지 않도록, 없는 컬럼은 빼고 다시 저장한다
+  for (let tries = 0; tries < 4; tries++) {
+    const r = await supabase().from('inventory_entries').insert(row).select('*').single();
+    if (!r.error) return toInventory(r.data as InventoryRow);
+    const col = /column ["']?(?:inventory_entries\.)?([a-z_]+)["']? .*does not exist|Could not find the '([a-z_]+)' column/i.exec(r.error.message);
+    const name = col?.[1] ?? col?.[2];
+    if (!name || !(name in row)) throw new Error(`Supabase 장비조사 등록 실패: ${r.error.message}`);
+    delete row[name];
+  }
+  throw new Error('Supabase 장비조사 등록 실패: 컬럼을 맞추지 못했어요');
 }
 export async function removeInventory(id: string): Promise<boolean> {
   const rows = must(await supabase().from('inventory_entries').delete().eq('id', numId(id)).select('id'), '장비조사 삭제') as { id: number }[];
   return rows.length > 0;
 }
 // ───────── 가격조사 — 품목별 구매 링크 (app_settings: purchase_links) ─────────
-const toInfo = (u: unknown): PurchaseInfo | null => (typeof u === 'string' ? (u ? { url: u, vendor: '' } : null) : u && typeof u === 'object' ? { url: typeof (u as PurchaseInfo).url === 'string' ? (u as PurchaseInfo).url : '', vendor: typeof (u as PurchaseInfo).vendor === 'string' ? (u as PurchaseInfo).vendor : '' } : null);
+const toInfo = (u: unknown): PurchaseInfo | null => { if (typeof u === 'string') return u ? { url: u, vendor: '', unit: '' } : null; if (!u || typeof u !== 'object') return null; const o = u as Partial<PurchaseInfo>; return { url: typeof o.url === 'string' ? o.url : '', vendor: typeof o.vendor === 'string' ? o.vendor : '', unit: typeof o.unit === 'string' ? o.unit : '' }; };
 export async function getPurchaseLinks(): Promise<Record<string, PurchaseInfo>> {
   const row = must(await supabase().from('app_settings').select('value').eq('key', 'purchase_links').maybeSingle(), '구매 링크 조회') as { value: unknown } | null;
   const v = row?.value;
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
-  return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, u]) => { const i = toInfo(u); return i && (i.url || i.vendor) ? [[k, i] as [string, PurchaseInfo]] : []; }));
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, u]) => { const i = toInfo(u); return i && (i.url || i.vendor || i.unit) ? [[k, i] as [string, PurchaseInfo]] : []; }));
 }
 export async function setPurchaseLink(key: string, info: PurchaseInfo | null): Promise<void> {
   const cur = await getPurchaseLinks();
-  if (info && (info.url || info.vendor)) cur[key] = info; else delete cur[key];
+  if (info && (info.url || info.vendor || info.unit)) cur[key] = info; else delete cur[key];
   must(await supabase().from('app_settings').upsert({ key: 'purchase_links', value: cur }, { onConflict: 'key' }), '구매 링크 저장');
 }
 
@@ -1046,4 +1057,73 @@ export async function removeAudit(ids: string[]): Promise<number> {
   if (nums.length === 0) return 0;
   const rows = must(await supabase().from('audit_log').delete().in('id', nums).select('id'), '변경이력 삭제') as { id: number }[];
   return rows.length;
+}
+
+// ───────── 가격조사 — 자주 가는 구매처 (app_settings: favorite_vendors) ─────────
+export async function getFavoriteVendors(): Promise<string[]> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'favorite_vendors').maybeSingle(), '자주 가는 구매처 조회') as { value: unknown } | null;
+  return Array.isArray(row?.value) ? (row!.value as unknown[]).filter((x): x is string => typeof x === 'string' && !!x) : [];
+}
+export async function saveFavoriteVendors(list: string[]): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'favorite_vendors', value: list }, { onConflict: 'key' }), '자주 가는 구매처 저장');
+}
+
+// ───────── 차량정보 — 차량 순서·카테고리 (app_settings: vehicle_layout) ─────────
+const vStrs = (x: unknown) => (Array.isArray(x) ? x.filter((k): k is string => typeof k === 'string') : []);
+const toVehicleLayout = (v: { order?: unknown; cats?: unknown; catOf?: unknown } | null | undefined): VehicleLayout => ({
+  order: vStrs(v?.order),
+  cats: vStrs(v?.cats),
+  catOf: v?.catOf && typeof v.catOf === 'object' && !Array.isArray(v.catOf) ? (Object.fromEntries(Object.entries(v.catOf as Record<string, unknown>).filter(([, c]) => typeof c === 'string')) as Record<string, string>) : {},
+});
+export async function getVehicleLayout(): Promise<VehicleLayout> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'vehicle_layout').maybeSingle(), '차량 배치 조회') as { value: { order?: unknown; cats?: unknown; catOf?: unknown } | null } | null;
+  return toVehicleLayout(row?.value);
+}
+export async function saveVehicleLayout(v: VehicleLayout): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'vehicle_layout', value: v }, { onConflict: 'key' }), '차량 배치 저장');
+}
+
+// ───────── 가격조사 — 품목별 판매 옵션 (app_settings: purchase_options) ─────────
+const toOptions = (v: unknown): Record<string, PurchaseOption[]> => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, PurchaseOption[]> = {};
+  for (const [k, arr] of Object.entries(v as Record<string, unknown>)) {
+    if (!Array.isArray(arr)) continue;
+    const list = arr.flatMap((o): PurchaseOption[] => {
+      if (!o || typeof o !== 'object') return [];
+      const x = o as Partial<PurchaseOption>;
+      if (typeof x.id !== 'string' || !x.id) return [];
+      return [{ id: x.id, unit: typeof x.unit === 'string' ? x.unit : '', vendor: typeof x.vendor === 'string' ? x.vendor : '', url: typeof x.url === 'string' ? x.url : '', price: typeof x.price === 'number' && x.price >= 0 ? x.price : 0, incl: typeof x.incl === 'number' ? x.incl : null }];
+    });
+    if (list.length) out[k] = list;
+  }
+  return out;
+};
+export async function getPurchaseOptions(): Promise<Record<string, PurchaseOption[]>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'purchase_options').maybeSingle(), '판매 옵션 조회') as { value: unknown } | null;
+  return toOptions(row?.value);
+}
+export async function savePurchaseOptions(v: Record<string, PurchaseOption[]>): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'purchase_options', value: v }, { onConflict: 'key' }), '판매 옵션 저장');
+}
+
+// ───────── 가격조사 — 구매처별 배송 정책 (app_settings: vendor_shipping) ─────────
+const toVendorShipping = (v: unknown): Record<string, VendorShipping> => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, VendorShipping> = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (!x || typeof x !== 'object') continue;
+    const o = x as Partial<VendorShipping>;
+    const fee = typeof o.fee === 'number' && o.fee >= 0 ? Math.round(o.fee) : 0;
+    const freeOver = typeof o.freeOver === 'number' && o.freeOver >= 0 ? Math.round(o.freeOver) : 0;
+    if (fee > 0 || freeOver > 0) out[k] = { fee, freeOver };
+  }
+  return out;
+};
+export async function getVendorShipping(): Promise<Record<string, VendorShipping>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'vendor_shipping').maybeSingle(), '구매처 배송비 조회') as { value: unknown } | null;
+  return toVendorShipping(row?.value);
+}
+export async function saveVendorShipping(v: Record<string, VendorShipping>): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'vendor_shipping', value: v }, { onConflict: 'key' }), '구매처 배송비 저장');
 }

@@ -252,10 +252,10 @@ export type SurveyPayload = {
 
 
 /** 장비조사 기록: 조사자가 상비품을 추가하거나 삭제(휴지통으로)한 내역. 누가 언제 했는지 남긴다. qty = 추가할 때 정한 재고 */
-export type InventoryEntry = { id: string; action: 'add' | 'delete' | 'buy'; category: string; productKey: string; name: string; brand: string; qty: number; price: number; shipping: number; vendor: string; memo: string; byId: string; byName: string; createdAt: string };
-export type InventoryEntryInput = Omit<InventoryEntry, 'id' | 'createdAt' | 'shipping' | 'vendor'> & { shipping?: number; vendor?: string };
+export type InventoryEntry = { id: string; action: 'add' | 'delete' | 'buy'; category: string; productKey: string; name: string; brand: string; qty: number; price: number; shipping: number; vendor: string; unit: string; memo: string; byId: string; byName: string; createdAt: string };
+export type InventoryEntryInput = Omit<InventoryEntry, 'id' | 'createdAt' | 'shipping' | 'vendor' | 'unit'> & { shipping?: number; vendor?: string; unit?: string };
 /** 가격조사: 품목별 구매처 이름과 구매 링크 */
-export type PurchaseInfo = { url: string; vendor: string };
+export type PurchaseInfo = { url: string; vendor: string; unit: string }; // unit = 판매단위 (예: 박스, 10개입, 롤)
 
 /** 변경이력: 어느 메뉴에서 누가 언제 무엇을 추가·수정·삭제했는지 */
 export type AuditEntry = { id: string; at: string; menu: string; action: string; target: string; detail: string; byId: string; byName: string };
@@ -266,3 +266,12 @@ export type PricingSnapshot = { id: string; name: string; at: string; byName: st
 
 /** 장비조사에서 제외할 공정·카테고리 (최고 관리자·개발팀이 정한다) */
 export type InventoryExcluded = { trades: string[]; categories: string[] };
+
+/** 차량정보 화면 배치: 차량 순서(order)와 차량 카테고리(cats: 탭 순서, catOf: 차량 id → 카테고리) */
+export type VehicleLayout = { order: string[]; cats: string[]; catOf: Record<string, string> };
+
+/** 가격조사: 한 품목의 판매 옵션(묶음·단품 등). 옵션 행의 키는 `${품목키}#${id}` 이고, 첫 번째(기본) 행은 품목 자체를 쓴다. */
+export type PurchaseOption = { id: string; unit: string; vendor: string; url: string; price: number; incl: number | null };
+
+/** 구매처별 배송 정책: fee = 기본 배송비, freeOver = 이 금액(부가세 포함 물품 합계) 이상이면 무료배송 (0 = 무료 기준 없음). 키는 구매처 이름(소문자·공백 정리) */
+export type VendorShipping = { fee: number; freeOver: number };

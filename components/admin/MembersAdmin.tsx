@@ -843,7 +843,7 @@ export default function MembersAdmin({
       {/* 구역 탭: 처음에는 이름·팀(기본 정보)만 보이고, 나머지는 필요할 때 열어요 */}
       <div className="mt-3 flex gap-1 border-b border-black/10 dark:border-white/10" role="tablist" aria-label="입력 구역">
         {tabList.map(([k, label, , filled]) => (
-          <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setFtab(k)} className={`-mb-px flex-1 border-b-2 px-2 py-2 text-sm font-extrabold ${tab === k ? "border-blue-600 text-blue-700 dark:text-blue-300" : "border-transparent text-zinc-500"}`}>{label}{filled && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}{k === "trade" && picked.length < 1 && <span className="ml-1 text-red-500" aria-hidden>!</span>}</button>
+          <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setFtab(k)} className={`flex-1 rounded-t-lg border border-b-0 px-2 py-2 text-sm font-extrabold ${tab === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 text-zinc-500 dark:border-white/15"}`}>{label}{filled && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}{k === "trade" && picked.length < 1 && <span className="ml-1 text-red-500" aria-hidden>!</span>}</button>
         ))}
       </div>
 

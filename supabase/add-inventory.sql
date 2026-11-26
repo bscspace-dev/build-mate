@@ -17,6 +17,7 @@ alter table public.inventory_entries add column if not exists action text not nu
 alter table public.inventory_entries add column if not exists price integer not null default 0;   -- 가격조사: 구매 때 금액(단가)
 alter table public.inventory_entries add column if not exists shipping integer not null default 0;   -- 가격조사: 구매 때 배송비
 alter table public.inventory_entries add column if not exists vendor text not null default '';   -- 가격조사: 구매처
+alter table public.inventory_entries add column if not exists unit text not null default '';   -- 가격조사: 판매단위
 alter table public.inventory_entries drop constraint if exists inventory_entries_action_check;
 alter table public.inventory_entries add constraint inventory_entries_action_check check (action in ('add','delete','buy'));   -- buy = 가격조사에서 구매완료
 alter table public.inventory_entries enable row level security;   -- 정책을 만들지 않는다: 서버의 비밀 키로만 접근

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import AdminCatalog, { type InvMark } from "@/components/admin/AdminCatalog";
 import { actorCan, getActor } from "@/lib/auth";
 import { isStaffAdmin, memberRoles } from "@/lib/roles";
-import { getCategories, getCategoryTrades, getInventory, getInventoryExcluded, getProducts, getTrades, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
+import { getCategories, getCategoryTrades, getInventory, getInventoryExcluded, getProducts, getPurchaseLinks, getTrades, getTrash, getVehicleItems, getVehicles } from "@/lib/db";
 
 export default function AdminPage() {
   return (
@@ -34,7 +34,9 @@ async function AdminLoader() {
       if (e.action === "delete" && !m.del) m.del = { by: e.byName, at: e.createdAt, src: e.memo === "pricing" ? "가격조사" : "장비조사" };
     }
   } catch { /* 표시만 생략 */ }
+  const links = await getPurchaseLinks().catch(() => ({} as Awaited<ReturnType<typeof getPurchaseLinks>>)); // 가격조사에서 등록한 구매처·판매단위
+  const vendors = Object.fromEntries(Object.entries(links).filter(([, i]) => i.vendor || i.unit).map(([k, i]) => [k, { vendor: i.vendor, unit: i.unit, url: /^https?:\/\//i.test(i.url) ? i.url : "" }]));
   const invExcluded = await getInventoryExcluded().catch(() => ({ trades: [], categories: [] })); // 장비조사에서 제외한 공정·카테고리
   const canSetInvExclude = actor.kind === "root" || isStaffAdmin(memberRoles(actor.member)) || actorCan(actor, "inventory", "edit"); // 장비조사 '모든 권한'이 있는 사람만 바꾼다
-  return <AdminCatalog key={products.reduce((n, p) => n + p.stock, 0) + ":" + JSON.stringify(deployed)} deployed={deployed} invMarks={invMarks} invExcluded={invExcluded} canSetInvExclude={canSetInvExclude} initialProducts={products} initialTrash={trash} trades={trades} categories={categories} categoryTrades={categoryTrades} canRegister={actorCan(actor, "catalog", "register")} canEdit={actorCan(actor, "catalog", "edit")} canDelete={actorCan(actor, "catalog", "delete")} />;
+  return <AdminCatalog key={products.reduce((n, p) => n + p.stock, 0) + ":" + JSON.stringify(deployed)} deployed={deployed} invMarks={invMarks} vendors={vendors} invExcluded={invExcluded} canSetInvExclude={canSetInvExclude} initialProducts={products} initialTrash={trash} trades={trades} categories={categories} categoryTrades={categoryTrades} canRegister={actorCan(actor, "catalog", "register")} canEdit={actorCan(actor, "catalog", "edit")} canDelete={actorCan(actor, "catalog", "delete")} />;
 }

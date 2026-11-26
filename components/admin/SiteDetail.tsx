@@ -35,9 +35,9 @@ export default function SiteDetail({ site, stats, tab: first = "check", write = 
       {write ? (
         <Link href={`/admin/sites/${site.id}`} className="rounded-xl border border-black/15 px-3.5 py-2 text-sm font-bold dark:border-white/15">현장 상세 보기 →</Link>
       ) : (
-      <div className="no-scrollbar flex min-w-0 gap-1.5 overflow-x-auto" role="tablist" aria-label="현장 상세">
+      <div className="no-scrollbar flex min-w-0 items-end gap-1 overflow-x-auto border-b border-black/15 dark:border-white/15" role="tablist" aria-label="현장 상세">
         {tabs.map(([k, label, n]) => (
-          <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={`shrink-0 rounded-xl border px-3.5 py-2 text-sm font-extrabold ${tab === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white dark:border-white/15 dark:bg-zinc-900"}`}>{label}{!!n && <small className="ml-1.5 rounded-full bg-white/25 px-1.5">{n}</small>}</button>
+          <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={`shrink-0 rounded-t-lg border border-b-0 px-3.5 py-2 text-sm font-extrabold ${tab === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label}{!!n && <small className="ml-1.5 rounded-full bg-white/25 px-1.5">{n}</small>}</button>
         ))}
       </div>
       )}

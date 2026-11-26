@@ -4,7 +4,9 @@ import { Fragment, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { InventoryEntry } from "@/lib/types";
 
-type Prod = { key: string; trade: string; category: string; name: string };
+type Prod = { key: string; kind: "상비품" | "자재"; trade: string; category: string; name: string };
+type KindTab = "상비품" | "자재";
+const KIND_KEY = "bm_inventory_kind"; // 마지막으로 본 종류 (이 브라우저에 기억)
 
 const PICK_KEY = "bm_inventory_pick";
 const PAGE = 20; // 한 쪽에 보여 줄 품목 수
@@ -26,6 +28,9 @@ type Setup = { trades: string[]; categories: Record<string, string[]>; excluded:
 export default function InventoryAdmin({ trades, categories, products, log, admin, setup }: { trades: string[]; categories: Record<string, string[]>; products: Prod[]; log: InventoryEntry[]; admin: boolean; setup: Setup | null }) {
   const router = useRouter();
   const [checked, setChecked] = useState<string[]>([]); // 삭제하려고 체크한 품목
+  const [kindTab, setKindTab] = useState<KindTab>("상비품"); // 장비조사의 종류 탭: 상비품 / 자재
+  useEffect(() => { try { const v = localStorage.getItem(KIND_KEY); if (v === "상비품" || v === "자재") setKindTab(v); } catch { /* 저장이 막힌 환경 */ } }, []);
+  const pickKind = (k: KindTab) => { setKindTab(k); setChecked([]); try { localStorage.setItem(KIND_KEY, k); } catch { /* 저장이 막힌 환경 */ } };
   // 열 제목을 눌러 정렬: 한 번 = 오름차순, 두 번 = 내림차순, 세 번 = 해제. 정렬 중에는 신규·카테고리 묶음을 풀고 한 줄로 늘어놓는다.
   type SortKey = "trade" | "category" | "name" | "by" | "added";
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
@@ -106,10 +111,10 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     if (!sel) return setErr("공정을 골라 주세요.");
     if (!catSel) return setErr("카테고리를 골라 주세요.");
     if (!name.trim()) return setErr("품목 이름을 적어 주세요.");
-    const j = await post({ action: "add", trade: sel, category: catSel, name });
+    const j = await post({ action: "add", trade: sel, category: catSel, name, kind: kindTab });
     if (j) {
       if (typeof j.key === "string") setAddedNow(x => ({ ...x, [j.key as string]: Date.now() }));
-      if (typeof j.key === "string") setItems(x => [...x, { key: j.key as string, trade: sel, category: catSel, name: name.trim().replace(/\s+/g, " ") }]); // 새로고침을 기다리지 않고 바로 보여 준다
+      if (typeof j.key === "string") setItems(x => [...x, { key: j.key as string, kind: kindTab, trade: sel, category: catSel, name: name.trim().replace(/\s+/g, " ") }]); // 새로고침을 기다리지 않고 바로 보여 준다
       setName("");
       router.refresh(); // 뒤에서 서버 값으로 맞춘다
     }
@@ -163,7 +168,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
   const cmpAdded = (x: Prod, y: Prod, dir: 1 | -1): number => { const a = addedAtMs(x), b = addedAtMs(y); return !a || !b ? (a ? -1 : b ? 1 : 0) : dir * (a - b); }; // 추가한 기록이 없는 품목은 항상 맨 뒤
   const sortVal = (p: Prod, key: SortKey): string => (key === "trade" ? p.trade : key === "category" ? p.category : key === "name" ? p.name : key === "by" ? addedBy.get(p.key)?.byName ?? "기존 품목" : "");
   const shown = items
-    .filter(p => (!sel || p.trade === sel) && (!catSel || p.category === catSel))
+    .filter(p => p.kind === kindTab && (!sel || p.trade === sel) && (!catSel || p.category === catSel))
     .map((p, i) => ({ p, i, f: freshAt(p) }))
     .sort((x, y) => sort ? (sort.key === "added" ? cmpAdded(x.p, y.p, sort.dir) : sort.dir * sortVal(x.p, sort.key).localeCompare(sortVal(y.p, sort.key), "ko", { numeric: true })) || x.i - y.i : (x.f || y.f ? (!x.f ? 1 : !y.f ? -1 : y.f - x.f) : trades.indexOf(x.p.trade) - trades.indexOf(y.p.trade) || catRank(x.p) - catRank(y.p) || x.i - y.i))
     .map(x => x.p);
@@ -183,7 +188,12 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
     <div className="mx-auto w-full max-w-6xl px-4 py-6">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-extrabold">장비조사</h1>
-        <span className="text-sm text-zinc-500">{admin ? "모든 공정 · 상비품" : trades.length ? `내 공정: ${trades.join(" · ")}` : ""}</span>
+        <span className="text-sm text-zinc-500">{admin ? `모든 공정 · ${kindTab}` : trades.length ? `내 공정: ${trades.join(" · ")}` : ""}</span>
+      </div>
+      <div className="mt-3 flex items-end gap-1 border-b border-black/15 dark:border-white/15" role="tablist" aria-label="품목 종류">
+        {(["상비품", "자재"] as const).map(k => (
+          <button key={k} type="button" role="tab" aria-selected={kindTab === k} onClick={() => pickKind(k)} className={`rounded-t-lg border border-b-0 px-5 py-2 text-sm font-extrabold ${kindTab === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{k} <small className="font-bold opacity-70">{items.filter(p => p.kind === k).length}</small></button>
+        ))}
       </div>
       {admin && setup && ex.trades.length + ex.categories.length > 0 && (
         <div className="mt-2 rounded-xl bg-zinc-100 text-xs dark:bg-zinc-800">
@@ -225,7 +235,7 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
           )}
         </div>
       )}
-      <p className="mt-1 text-xs text-zinc-500">필요 없는 상비품은 <b>삭제</b>(창고장비현황 휴지통으로 이동), 필요한 상비품은 맨 위 줄에서 공정·카테고리를 고르고 <b>추가</b>하세요. 추가한 품목은 창고장비현황의 같은 공정·카테고리에 바로 들어가요.</p>
+      <p className="mt-1 text-xs text-zinc-500">필요 없는 {kindTab}은(는) <b>삭제</b>(창고장비현황 휴지통으로 이동), 필요한 {kindTab}은(는) 맨 위 줄에서 공정·카테고리를 고르고 <b>추가</b>하세요. 추가한 품목은 창고장비현황의 같은 공정·카테고리에 바로 들어가요.</p>
 
       {checked.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm dark:bg-red-500/10">
@@ -260,22 +270,23 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
           {/* 좁은 화면(모바일): 표 대신 카드로 보여 준다 — 옆으로 밀어야 하는 표는 잘려 보여서 불편하다 */}
           <div className="mt-4 space-y-1.5 md:hidden">
             <div className="space-y-2 rounded-xl border border-blue-200 bg-blue-50/60 p-3 dark:border-blue-500/30 dark:bg-blue-500/10">
-              <div className="grid grid-cols-2 gap-2">
-                <select value={sel} onChange={e => { setSel(e.target.value); setCatSel(firstCat(e.target.value)); }} className={inp} aria-label="공정">
-                  <option value="">공정 선택</option>
-                  {trades.map(t => <option key={t}>{t}</option>)}
-                </select>
-                <select value={catSel} onChange={e => setCatSel(e.target.value)} disabled={!sel} className={inp} aria-label="카테고리">
-                  <option value="">{sel ? "카테고리 선택" : "공정 먼저"}</option>
-                  {cats.map(c => <option key={c}>{c}</option>)}
-                </select>
-              </div>
+              <select value={sel} onChange={e => { setSel(e.target.value); setCatSel(firstCat(e.target.value)); }} className={inp} aria-label="공정">
+                <option value="">공정 선택</option>
+                {trades.map(t => <option key={t}>{t}</option>)}
+              </select>
+              {sel && (
+                <div className="no-scrollbar flex items-end gap-1 overflow-x-auto border-b border-black/15 dark:border-white/15" role="tablist" aria-label="카테고리">
+                  {cats.map(c => (
+                    <button key={c} type="button" role="tab" aria-selected={catSel === c} onClick={() => setCatSel(c)} className={`shrink-0 rounded-t-lg border border-b-0 px-3.5 py-1.5 text-xs font-bold ${catSel === c ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{c}</button>
+                  ))}
+                </div>
+              )}
               <div className="flex gap-2">
                 <input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름 (모바일)" onKeyDown={e => e.key === "Enter" && add()} />
                 <button type="button" disabled={busy} onClick={add} className="shrink-0 rounded-md bg-blue-600 px-5 text-sm font-bold text-white disabled:opacity-50">추가</button>
               </div>
             </div>
-            {shown.length === 0 && <p className="rounded-xl border border-dashed border-black/15 p-6 text-center text-sm text-zinc-500 dark:border-white/15">내 공정에 상비품이 없어요. 위에서 추가해 보세요.</p>}
+            {shown.length === 0 && <p className="rounded-xl border border-dashed border-black/15 p-6 text-center text-sm text-zinc-500 dark:border-white/15">내 공정에 {kindTab}이(가) 없어요. 위에서 추가해 보세요.</p>}
             {rows.map((p, k) => {
               const i = start + k;
               const a = addedBy.get(p.key);
@@ -322,27 +333,34 @@ export default function InventoryAdmin({ trades, categories, products, log, admi
                   <th className={`${cell} w-32`} />
                 </tr>
                 <tr className="bg-blue-50/60 dark:bg-blue-500/10">
+                  <td className={cell} colSpan={7}>
+                    <div className="flex flex-wrap items-end gap-2 text-xs font-bold text-zinc-600 dark:text-zinc-300">
+                      <span className="self-center">공정</span>
+                      <select value={sel} onChange={e => { setSel(e.target.value); setCatSel(firstCat(e.target.value)); }} className="self-center rounded-md border border-black/15 bg-transparent px-2 py-1.5 text-sm font-normal outline-none focus:border-blue-500 dark:border-white/15" aria-label="공정">
+                        <option value="">공정 선택</option>
+                        {trades.map(t => <option key={t}>{t}</option>)}
+                      </select>
+                      {sel ? (
+                        <div className="flex flex-1 flex-wrap items-end gap-1 self-end border-b border-black/15 dark:border-white/15" role="tablist" aria-label="추가할 카테고리">
+                          {cats.map(c => (
+                            <button key={c} type="button" role="tab" aria-selected={catSel === c} onClick={() => setCatSel(c)} className={`rounded-t-lg border border-b-0 px-3.5 py-1.5 text-xs font-bold ${catSel === c ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{c}</button>
+                          ))}
+                        </div>
+                      ) : <span className="self-center font-normal text-zinc-500">공정을 먼저 고르세요</span>}
+                    </div>
+                  </td>
+                </tr>
+                <tr className="bg-blue-50/60 dark:bg-blue-500/10">
                   <td className={cell} />
                   <td className={`${cell} text-center text-xs font-bold text-blue-700 dark:text-blue-300`}>＋</td>
-                  <td className={cell}>
-                    <select value={sel} onChange={e => { setSel(e.target.value); setCatSel(firstCat(e.target.value)); }} className={inp} aria-label="공정">
-                      <option value="">공정 선택</option>
-                      {trades.map(t => <option key={t}>{t}</option>)}
-                    </select>
-                  </td>
-                  <td className={cell}>
-                    <select value={catSel} onChange={e => setCatSel(e.target.value)} disabled={!sel} className={inp} aria-label="추가할 카테고리">
-                      <option value="">{sel ? "카테고리 선택" : "공정을 먼저 고르세요"}</option>
-                      {cats.map(c => <option key={c}>{c}</option>)}
-                    </select>
-                  </td>
+                  <td className={`${cell} text-xs font-bold text-zinc-600 dark:text-zinc-300`} colSpan={2}>{sel && catSel ? `${sel} › ${catSel}` : "공정·카테고리를 고르세요"}</td>
                   <td className={cell}><input value={name} onChange={e => setName(e.target.value.slice(0, 100))} placeholder="추가할 품목 이름" className={inp} aria-label="품목 이름" onKeyDown={e => e.key === "Enter" && add()} /></td>
                   <td className={cell} colSpan={2}><button type="button" disabled={busy} onClick={add} className="w-full rounded-md bg-blue-600 py-1.5 text-sm font-bold text-white disabled:opacity-50">추가</button></td>
                 </tr>
               </thead>
               <tbody>
                 {shown.length === 0 && (
-                  <tr><td colSpan={7} className={`${cell} py-8 text-center text-zinc-500`}>내 공정에 상비품이 없어요. 위에서 추가해 보세요.</td></tr>
+                  <tr><td colSpan={7} className={`${cell} py-8 text-center text-zinc-500`}>내 공정에 {kindTab}이(가) 없어요. 위에서 추가해 보세요.</td></tr>
                 )}
                 {rows.map((p, k) => {
                   const i = start + k;

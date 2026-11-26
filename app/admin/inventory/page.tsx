@@ -20,7 +20,9 @@ async function Loader() {
   const actor = await getActor("inventory");
   if (!actor) redirect("/"); // '장비조사' 메뉴를 쓸 수 없으면 메인으로
   const { admin, trades: scopeTrades } = await inventoryTrades(actor);
-  const [products, catTrades, log, allCats, excluded] = await Promise.all([getProducts(), getCategoryTrades(), getInventory(), getCategories(), getInventoryExcluded()]);
+  const [products, catTrades, log, allCats, excludedRaw] = await Promise.all([getProducts(), getCategoryTrades(), getInventory(), getCategories(), getInventoryExcluded()]);
+  // 창고장비현황에서 없어진(삭제된) 공정·카테고리는 제외 목록에서도 뺀다 (예전 설정이 그대로 남아 있지 않게)
+  const excluded = { trades: excludedRaw.trades.filter(t => scopeTrades.includes(t)), categories: excludedRaw.categories.filter(c => allCats.includes(c) && !!catTrades[c]) };
   // 장비조사에서 제외한 공정·카테고리는 목록·선택지에서 뺀다 (모든 권한이 있는 사람이 정한다)
   const trades = scopeTrades.filter(t => !excluded.trades.includes(t));
   // 공정마다 고를 수 있는 카테고리 (창고장비현황의 카테고리)
@@ -29,7 +31,7 @@ async function Loader() {
     <InventoryAdmin
       trades={trades}
       categories={categories}
-      products={products.flatMap(p => { const trade = catTrades[p.category] ?? ""; return p.kind === "상비품" && trades.includes(trade) && !excluded.categories.includes(p.category) ? [{ key: p.key, trade, category: p.category, name: p.name }] : []; })}
+      products={products.flatMap(p => { const trade = catTrades[p.category] ?? ""; return (p.kind === "상비품" || p.kind === "자재") && trades.includes(trade) && !excluded.categories.includes(p.category) ? [{ key: p.key, kind: p.kind, trade, category: p.category, name: p.name }] : []; })}
       log={log.filter(e => trades.includes(e.category))}
       admin={admin}
       setup={admin ? { trades: scopeTrades, categories: Object.fromEntries(scopeTrades.map(t => [t, allCats.filter(c => catTrades[c] === t)])), excluded } : null}

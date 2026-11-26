@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { KINDS, type Kind, type Product, type TrashedProduct } from "@/lib/types";
+import { vendorColor } from "@/lib/vendor-color";
 import { Modal } from "@/components/Sheet";
 import AddProduct from "@/components/admin/AddProduct";
 import EditProduct from "@/components/admin/EditProduct";
@@ -44,8 +45,7 @@ type Confirm = { mode: Mode | "purge"; keys: string[] } | null;
 type Toast = { id: number; text: string; undo?: { mode: Mode; keys: string[] } } | null;
 
 // 재고 수량 입력: 숫자를 바꾸면 "등록" 버튼이 나타나고, 그 버튼을 눌러야 저장된다 (실수로 바뀌는 것을 막는다). 취소하면 원래 숫자로 돌아간다.
-function StockBox({ value, canEdit, onCommit }: { value: number; canEdit: boolean; onCommit: (n: number) => void }) {
-  const [draft, setDraft] = useState<number | null>(null); // null = 수정 중 아님
+function StockBox({ value, canEdit, onCommit, draft, setDraft }: { value: number; canEdit: boolean; onCommit: (n: number) => void; draft: number | null; setDraft: (n: number | null) => void }) {
   const shown = draft ?? value;
   const dirty = draft !== null && draft !== value;
   const set = (n: number) => setDraft(Math.max(0, Math.min(9_999_999, n)));
@@ -86,11 +86,14 @@ const BLANK_DRAG = typeof Image !== "undefined" ? Object.assign(new Image(), { s
 
 /** 장비조사에서 이 품목을 추가·삭제한 사람과 때 */
 export type InvMark = { add?: { by: string; at: string; src: string }; del?: { by: string; at: string; src: string } };
+// 부가세 포함가: 포함가를 직접 적어 저장해 둔 값이 있으면 그대로(1원 차이 없이), 없으면 공급가에 10%를 더해 계산
+const inclVat = (price: number, saved?: number | null) => (saved && Math.round(saved / 1.1) === price ? saved : price + Math.round(price * 0.1));
 const markTime = (iso: string) => new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 function ProductCard({
-  inv, p, deployed, selected, starred, onSelect, onStar, onAction, onMove, onRename, onShift, onStock, shiftable, trashMode, canDelete, canEdit, list, reorderable, dragging, onDragStart, onDragEnd, onDropOn,
+  vendor, inv, p, deployed, selected, starred, onSelect, onStar, onAction, onMove, onRename, onShift, onStock, draft, onDraft, shiftable, trashMode, canDelete, canEdit, list, reorderable, dragging, onDragStart, onDragEnd, onDropOn,
 }: {
+  vendor?: { vendor: string; unit: string; url: string }; // 가격조사에서 등록한 구매처·판매단위·구매 링크
   inv?: InvMark; // 장비조사에서 추가·삭제한 기록
   dragging: boolean; // 지금 이 카드를 끌고 있는지
   onDragStart: ((k: string) => void) | null; // null = 끌어서 순서 바꾸기 불가
@@ -99,6 +102,8 @@ function ProductCard({
   list: boolean; // true = 한 줄짜리 리스트형, false = 카드형
   reorderable: boolean; // 다른 카드 위에 놓아 순서를 바꿀 수 있는지 (기본 순서 보기일 때만)
   onStock: (k: string, n: number) => void;
+  draft: number | null; // 입력했지만 아직 저장하지 않은 재고 수량
+  onDraft: (k: string, n: number | null) => void;
   starred: boolean;
   onStar: (k: string) => void;
   p: Product | TrashedProduct;
@@ -183,9 +188,11 @@ function ProductCard({
         <div className={`break-keep ${list ? "min-w-[11rem] flex-1 text-sm leading-snug" : "line-clamp-2 min-h-[2.6em] text-xs leading-snug sm:line-clamp-3 sm:min-h-[3.6em] sm:text-[13px]"} ${empty ? "text-red-800 dark:text-red-200" : ""}`}>
           {p.name}
           {list && p.soldout && <span className="ml-1.5 rounded-md bg-red-600 px-1.5 py-0.5 text-[11px] text-white">품절</span>}
-          {list && p.brand && <small className="block text-[11px] text-zinc-500">{p.brand}</small>}
+          {list && <small className="block text-[11px] text-zinc-500">{p.brand}{p.brand ? " · " : ""}<b className="tabular-nums text-zinc-700 dark:text-zinc-300">{p.price > 0 ? `${inclVat(p.price, p.priceInclVat).toLocaleString("ko-KR")}원 (부가세 포함)` : "가격 미등록"}</b>{vendor?.vendor && (vendor.url ? <a href={vendor.url} target="_blank" rel="noopener noreferrer" title="눌러서 구매 링크로 이동" className={`ml-1.5 rounded px-1.5 py-0.5 font-bold hover:underline ${vendorColor(vendor.vendor)}`}>{vendor.vendor} ↗</a> : <span className={`ml-1.5 rounded px-1.5 py-0.5 font-bold ${vendorColor(vendor.vendor)}`}>{vendor.vendor}</span>)}{vendor?.unit && <span className="ml-1">{vendor.unit}</span>}</small>}
         </div>
         {!list && p.brand && <div className="mt-0.5 truncate text-[11px] text-zinc-500">{p.brand}</div>}
+        {!list && vendor && (vendor.vendor || vendor.unit) && <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">{vendor.vendor && (vendor.url ? <a href={vendor.url} target="_blank" rel="noopener noreferrer" title="눌러서 구매 링크로 이동" className={`max-w-full truncate rounded-md px-1.5 py-0.5 font-bold underline-offset-2 hover:underline ${vendorColor(vendor.vendor)}`}>{vendor.vendor} ↗</a> : <span className={`max-w-full truncate rounded-md px-1.5 py-0.5 font-bold ${vendorColor(vendor.vendor)}`}>{vendor.vendor}</span>)}{vendor.unit && <span className="text-zinc-500">{vendor.unit}</span>}</div>}
+        {!list && <div className="mt-0.5 text-[11px] font-bold tabular-nums text-zinc-800 dark:text-zinc-200">{p.price > 0 ? <>{inclVat(p.price, p.priceInclVat).toLocaleString("ko-KR")}원 <span className="font-normal text-zinc-400">부가세 포함</span></> : <span className="font-normal text-zinc-400">가격 미등록</span>}</div>}
         {inv && (inv.add || (trashMode && inv.del)) && (
           <div className="mt-0.5 text-[11px] font-semibold leading-snug text-blue-700 dark:text-blue-300">
             {inv.add && <div suppressHydrationWarning>{inv.add.src} 추가 · {inv.add.by} · {markTime(inv.add.at)}</div>}
@@ -197,7 +204,7 @@ function ProductCard({
             {deployed.map((d, i) => <span key={i} className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-800 dark:bg-blue-500/20 dark:text-blue-200">{d.icon} {d.label} 배정{d.qty > 1 ? " ×" + d.qty : ""}</span>)}
           </div>
         )}
-        {!trashMode && <div className={list ? "w-48 [&>div]:mt-0" : "contents"}><StockBox value={p.stock ?? 0} canEdit={canEdit} onCommit={n => onStock(p.key, n)} /></div>}
+        {!trashMode && <div className={list ? "w-48 [&>div]:mt-0" : "contents"}><StockBox value={p.stock ?? 0} canEdit={canEdit} onCommit={n => onStock(p.key, n)} draft={draft} setDraft={n => onDraft(p.key, n)} /></div>}
         {deletedAt && (
           <div className="mt-1.5 text-[11px] text-zinc-500">
             삭제 <time suppressHydrationWarning dateTime={deletedAt}>{new Date(deletedAt).toLocaleString("ko-KR")}</time>
@@ -255,8 +262,9 @@ function ProductCard({
 }
 
 export default function AdminCatalog({
-  deployed: deployedMap, invMarks = {}, invExcluded, canSetInvExclude = false, initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
+  deployed: deployedMap, vendors = {}, invMarks = {}, invExcluded, canSetInvExclude = false, initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
 }: {
+  vendors?: Record<string, { vendor: string; unit: string; url: string }>; // 품목 번호 → 구매처·판매단위·구매 링크
   invExcluded?: { trades: string[]; categories: string[] }; // 장비조사에서 제외한 공정·카테고리
   canSetInvExclude?: boolean; // 모든 권한이 있는 사람만 제외 설정을 바꿀 수 있다
   invMarks?: Record<string, InvMark>; // 품목 번호 → 장비조사에서 추가·삭제한 사람과 때
@@ -707,8 +715,33 @@ export default function AdminCatalog({
     } catch (err) { setToast({ id: Date.now(), text: err instanceof Error ? err.message : "순서를 바꾸지 못했어요." }); }
     setBusy(false);
   }
+  // 카드마다 수량을 입력만 해 두고 한꺼번에 저장하기: 입력한 수량은 drafts 에 모았다가 「전체 저장」으로 한 번에 반영한다
+  const [drafts, setDrafts] = useState<Record<string, number>>({});
+  function setDraftOf(key: string, n: number | null) {
+    setDrafts(d => {
+      const next = { ...d };
+      if (n === null || n === (products.find(p => p.key === key)?.stock ?? 0)) delete next[key]; else next[key] = n;
+      return next;
+    });
+  }
+  async function saveAllDrafts() {
+    const items = Object.entries(drafts).map(([key, stock]) => ({ key, stock }));
+    if (busy || items.length === 0) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/admin/products", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "stockBulk", items }) });
+      if (r.status === 401) { router.replace("/"); return; }
+      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "재고를 저장하지 못했어요.");
+      setProducts(rows => rows.map(p => (p.key in drafts ? { ...p, stock: drafts[p.key] } : p)));
+      setDrafts({});
+      setToast({ id: Date.now(), text: "재고 " + items.length + "개를 저장했어요" });
+    } catch (err) {
+      setToast({ id: Date.now(), text: err instanceof Error ? err.message : "재고를 저장하지 못했어요." });
+    } finally { setBusy(false); }
+  }
   // 재고 수량 저장: 화면에 먼저 반영하고, 서버에 저장하지 못하면 되돌린다
   async function setStockOf(key: string, stock: number) {
+    setDraftOf(key, null);
     const before = products.find(p => p.key === key)?.stock ?? 0;
     setProducts(rows => rows.map(p => (p.key === key ? { ...p, stock } : p)));
     try {
@@ -929,7 +962,9 @@ export default function AdminCatalog({
         if (dragKey && c !== "전체") { const k = dragKey; setDragKey(null); setOverCat(null); void moveTo(selected.has(k) ? [...selected] : [k], c, true); }
         else void dropCat(c);
       }}
-      className={`${chipBase} text-[13px] ${activeCat === c ? chipOn : chipOff} ${dragCat === c ? "opacity-40" : ""} ${overCat === c && (dragKey || (dragCat && dragCat !== c)) ? "ring-2 ring-blue-500 ring-offset-1" : ""}`}
+      role="tab"
+      aria-selected={activeCat === c}
+      className={`shrink-0 rounded-t-lg border border-b-0 px-3.5 py-1.5 text-[13px] font-bold transition-colors ${activeCat === c ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"} ${dragCat === c ? "opacity-40" : ""} ${overCat === c && (dragKey || (dragCat && dragCat !== c)) ? "ring-2 ring-blue-500 ring-offset-1" : ""}`}
     >
       {c}<small className="ml-1 opacity-70">{c === "전체" ? [...cats.values()].reduce((x, n) => x + n, 0) : cats.get(c)}</small>
     </button>
@@ -1069,7 +1104,7 @@ export default function AdminCatalog({
           {(tradeCounts.get("미배정") ?? 0) > 0 && tradeChip("미배정")}
         </div>
         {trade !== "전체" && (
-          <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-blue-200/70 bg-blue-50/60 p-2 dark:border-blue-400/20 dark:bg-blue-500/10">
+          <div className="flex flex-wrap items-end gap-1 border-b border-black/15 pt-1 dark:border-white/15" role="tablist" aria-label="카테고리">
             {catNames.length > 0 ? <>{chip("전체")}{catNames.map(c => chip(c))}</> : <span className="px-2 text-sm text-zinc-500">이 공정에는 카테고리가 없어요.</span>}
           </div>
         )}
@@ -1098,9 +1133,12 @@ export default function AdminCatalog({
               onRename={x => setEditP(x)}
               onShift={shiftProduct}
               onStock={setStockOf}
+              draft={drafts[p.key] ?? null}
+              onDraft={setDraftOf}
               shiftable={!mouseUser && canEdit && !trashMode && sort === "no" ? { prev: list[0]?.key !== p.key, next: list[list.length - 1]?.key !== p.key } : null}
               p={p}
               inv={invMarks[p.key]}
+              vendor={vendors[p.key]}
               deployed={deployedMap[p.key] ?? []}
               selected={selected.has(p.key)}
               starred={starSet.has(p.key)}
@@ -1452,6 +1490,15 @@ export default function AdminCatalog({
           </>
         )}
       </Modal>
+
+      {/* 재고 수량을 여러 카드에 입력해 두었을 때: 한 번에 저장 */}
+      {canEdit && Object.keys(drafts).length > 0 && (
+        <div className="fixed inset-x-3 bottom-4 z-40 mx-auto flex max-w-md items-center gap-2 rounded-2xl bg-zinc-900 p-2.5 pl-4 text-sm text-white shadow-2xl dark:bg-zinc-100 dark:text-zinc-900" role="region" aria-label="재고 수정 저장">
+          <span className="mr-auto font-bold">재고 {Object.keys(drafts).length}개 수정 중</span>
+          <button type="button" disabled={busy} onClick={() => setDrafts({})} className="rounded-xl px-3 py-2 font-bold opacity-80 hover:opacity-100 disabled:opacity-40">모두 취소</button>
+          <button type="button" disabled={busy} onClick={() => void saveAllDrafts()} className="rounded-xl bg-blue-600 px-4 py-2 font-extrabold text-white disabled:opacity-50">{busy ? "저장 중…" : "전체 저장"}</button>
+        </div>
+      )}
 
       {/* 알림 (실행 취소) */}
       <AnimatePresence>

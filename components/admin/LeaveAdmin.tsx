@@ -145,7 +145,7 @@ export default function LeaveAdmin({
 
   const manageList = onlyPending ? pending : leaves;
   const adminTabs: [Tab, string, number?][] = [["today", "금일 휴가자"], ["pending", "승인 대기", pending.length], ["members", "회원별 현황"]];
-  const tabBtn = (on: boolean) => `shrink-0 rounded-xl border px-4 py-2.5 text-sm font-extrabold ${on ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white dark:border-white/15 dark:bg-zinc-900"}`;
+  const tabBtn = (on: boolean) => `shrink-0 rounded-t-lg border border-b-0 px-4 py-2.5 text-sm font-extrabold ${on ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`;
 
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-24">
@@ -155,7 +155,7 @@ export default function LeaveAdmin({
       </header>
 
       {(canDecide || !!me) && (
-        <div className="no-scrollbar mb-3 flex gap-2 overflow-x-auto" role="tablist" aria-label="연차·휴가 메뉴">
+        <div className="no-scrollbar mb-3 flex items-end gap-1 overflow-x-auto border-b border-black/15 dark:border-white/15" role="tablist" aria-label="연차·휴가 메뉴">
           {(canApply || !canDecide) && <button type="button" role="tab" aria-selected={tab === "mine"} onClick={() => setTab("mine")} className={tabBtn(tab === "mine")}>내 휴가 신청</button>}
           {(canDecide ? adminTabs : adminTabs.filter(t => t[0] === "today")).map(([k, label, n]) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={tabBtn(tab === k) + (k === "pending" ? " ml-auto" : "")}>{label}{!!n && <small className="ml-1.5 rounded-full bg-amber-500 px-1.5 text-white">{n}</small>}</button>

@@ -272,11 +272,11 @@ export default function RequestForm({
         <p className="py-20 text-center text-zinc-500">등록된 공정이 없어요. 관리자에게 공정 등록을 요청해 주세요.</p>
       ) : (
         <>
-          <div className="no-scrollbar mt-4 flex gap-2 overflow-x-auto" role="tablist" aria-label="내 공정">
+          <div className="no-scrollbar mt-4 flex items-end gap-1 overflow-x-auto border-b border-black/15 dark:border-white/15" role="tablist" aria-label="내 공정">
             {myTrades.map(t => {
               const n = Object.keys(sels[t] ?? {}).length + (customs[t] ?? []).length;
               return (
-                <button key={t} type="button" role="tab" aria-selected={trade === t} onClick={() => pickTrade(t)} className={`${chipBase} px-4 py-2 text-[15px] ${trade === t ? chipOn : chipOff}`}>
+                <button key={t} type="button" role="tab" aria-selected={trade === t} onClick={() => pickTrade(t)} className={`shrink-0 rounded-t-lg border border-b-0 px-4 py-2 text-[15px] font-semibold ${trade === t ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>
                   {t}
                   {n > 0 && <small className="ml-1.5 rounded-full bg-white/25 px-1.5 text-xs">{n}</small>}
                 </button>

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/Sheet";
 import { shrink } from "@/components/admin/AddProduct";
 import { printElement } from "@/lib/print-client";
-import { VEHICLE_ICONS, type Kind, type LoadPackage, type LoadPackageItem, type Vehicle, type VehicleItem, type VehicleOwnership } from "@/lib/types";
+import { VEHICLE_ICONS, type Kind, type LoadPackage, type LoadPackageItem, type Vehicle, type VehicleItem, type VehicleLayout, type VehicleOwnership } from "@/lib/types";
 
 const OWNERSHIPS: { v: VehicleOwnership; label: string }[] = [{ v: "", label: "모름" }, { v: "owned", label: "소유" }, { v: "lease", label: "리스" }, { v: "rent", label: "장기렌트" }];
 const OIL_INTERVAL_KM = 5000; // 엔진오일은 마지막 교환 뒤 이만큼(km) 달렸으면 교환 시기로 본다
@@ -16,14 +16,14 @@ const daysTo = (iso: string) => Math.round((new Date(iso + "T00:00:00").getTime(
 type Badge = { text: string; tone: "red" | "amber" | "gray" };
 // 날짜 상태(검사일·보험 만기일): 값 없음·지남(빨강), 임박(주황), 여유(회색)
 function dateBadge(date: string, emptyText: string): Badge {
-  if (!date) return { text: emptyText, tone: "red" };
+  if (!date) return { text: emptyText, tone: "gray" };
   const d = daysTo(date);
   if (d < 0) return { text: `${-d}일 지남`, tone: "red" };
   if (d <= INSPECT_WARN_DAYS) return { text: `D-${d}`, tone: "amber" };
   return { text: "정상", tone: "gray" };
 }
-const inspectionBadge = (v: Vehicle): Badge => dateBadge(v.inspectionDate, "검사일 확인필요");
-const insuranceBadge = (v: Vehicle): Badge => dateBadge(v.insuranceExpiry, "만기일 확인필요");
+const inspectionBadge = (v: Vehicle): Badge => dateBadge(v.inspectionDate, "미입력");
+const insuranceBadge = (v: Vehicle): Badge => dateBadge(v.insuranceExpiry, "미입력");
 // 엔진오일: 마지막 교환 뒤 일정 거리 이상 달렸으면 교환 시기
 function oilBadge(v: Vehicle): Badge | null {
   return v.mileage && v.oilKm && v.mileage - v.oilKm >= OIL_INTERVAL_KM ? { text: `교환 필요 (${km(v.mileage - v.oilKm)} 주행)`, tone: "amber" } : null;
@@ -62,9 +62,9 @@ type Dialog =
 // 연장은 차량에 배정하면 장비운용(창고) 재고에서 1개 빠지고, 내리면 재고로 돌아온다.
 // 상비품은 차량에 실린 수량을 창고 재고와 따로 센다 (싣거나 빼도 창고 재고는 바뀌지 않는다).
 export default function VehiclesAdmin({
-  vehicles, items, members, catalog, packages, ownOnly = false, canRegister, canEdit, canDelete,
+  vehicles, items, members, catalog, packages, layout, ownOnly = false, canRegister, canEdit, canDelete,
 }: {
-  vehicles: Vehicle[]; items: VehicleItem[]; members: MemberLite[]; catalog: CatalogLite[]; packages: LoadPackage[]; ownOnly?: boolean; canRegister: boolean; canEdit: boolean; canDelete: boolean;
+  vehicles: Vehicle[]; items: VehicleItem[]; members: MemberLite[]; catalog: CatalogLite[]; packages: LoadPackage[]; layout: VehicleLayout; ownOnly?: boolean; canRegister: boolean; canEdit: boolean; canDelete: boolean;
 }) {
   const router = useRouter();
   const [view, setView] = useState<"vehicle" | "item">("vehicle");
@@ -90,7 +90,82 @@ export default function VehiclesAdmin({
 
   const kw = q.trim().replace(/\s+/g, "").toLowerCase();
   const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
-  const shown = vehicles.filter(v => !kw || norm(v.name).includes(kw) || norm(v.nickname).includes(kw) || norm(v.memo).includes(kw) || norm(v.model).includes(kw) || norm(v.vin).includes(kw) || norm(driverOf(v)?.name ?? "").includes(kw) || (byVehicle.get(v.id) ?? []).some(i => norm(nameOf(i.key)).includes(kw) || norm(i.note).includes(kw)));
+  // 차량 순서·카테고리: 저장된 순서대로(새 차량은 맨 뒤), 카테고리 탭으로 묶어서 본다
+  const [lay, setLay] = useState<VehicleLayout>(layout);
+  const [layOf, setLayOf] = useState(layout); // 서버에서 새로 받은 값이 오면 화면 값도 맞춘다
+  if (layOf !== layout) { setLayOf(layout); setLay(layout); }
+  const [tab, setTab] = useState(""); // "" = 전체, "__none" = 미분류
+  const [arrange, setArrange] = useState(false); // 순서·카테고리 정리 모드
+  const [newCat, setNewCat] = useState("");
+  const sorted = useMemo(() => {
+    const idx = new Map(lay.order.map((id, i) => [id, i]));
+    const ci = (v: Vehicle) => { const k = lay.cats.indexOf(lay.catOf[v.id]); return k < 0 ? 1e6 : k; };
+    return [...vehicles].sort((a, b) => ci(a) - ci(b) || (idx.get(a.id) ?? 1e9) - (idx.get(b.id) ?? 1e9));
+  }, [vehicles, lay.order, lay.cats, lay.catOf]);
+  const catOfV = (v: Vehicle) => (lay.cats.includes(lay.catOf[v.id]) ? lay.catOf[v.id] : "");
+  const tabNow = tab === "__none" || lay.cats.includes(tab) ? tab : "";
+  const inTab = (v: Vehicle) => tabNow === "" || (tabNow === "__none" ? catOfV(v) === "" : catOfV(v) === tabNow);
+  async function saveLay(next: VehicleLayout) {
+    const prev = lay;
+    setLay(next);
+    try {
+      const r = await fetch("/api/admin/vehicle-layout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(next) });
+      if (r.status === 401) { router.replace("/"); return; }
+      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "저장하지 못했어요.");
+      router.refresh();
+    } catch (e) {
+      setLay(prev);
+      setErr(e instanceof Error ? e.message : "저장하지 못했어요.");
+    }
+  }
+  // 보이는 목록 안에서 한 칸 위/아래로 (카테고리 탭을 보는 중이면 보이는 차량끼리 자리를 바꾼다)
+  function move(id: string, dir: -1 | 1) {
+    const ids = sorted.map(v => v.id);
+    const me = vehicles.find(v => v.id === id);
+    const vis = sorted.filter(v => inTab(v) && me && catOfV(v) === catOfV(me)).map(v => v.id);
+    const k = vis.indexOf(id), o = vis[k + dir];
+    if (k < 0 || !o) return;
+    const a = ids.indexOf(id), b = ids.indexOf(o);
+    [ids[a], ids[b]] = [ids[b], ids[a]];
+    void saveLay({ ...lay, order: ids });
+  }
+  function setCat(id: string, c: string) {
+    const catOf = { ...lay.catOf };
+    if (c) catOf[id] = c; else delete catOf[id];
+    void saveLay({ ...lay, order: sorted.map(v => v.id), catOf });
+  }
+  function addCat() {
+    const c = newCat.trim().replace(/\s+/g, " ").slice(0, 20);
+    setNewCat("");
+    if (!c || lay.cats.includes(c)) return;
+    void saveLay({ ...lay, order: sorted.map(v => v.id), cats: [...lay.cats, c] });
+  }
+  function delCat(c: string) {
+    const catOf = Object.fromEntries(Object.entries(lay.catOf).filter(([, x]) => x !== c));
+    if (tab === c) setTab("");
+    void saveLay({ ...lay, order: sorted.map(v => v.id), cats: lay.cats.filter(x => x !== c), catOf });
+  }
+  function moveCat(c: string, dir: -1 | 1) {
+    const cats = [...lay.cats], i = cats.indexOf(c), j = i + dir;
+    if (j < 0 || j >= cats.length) return;
+    [cats[i], cats[j]] = [cats[j], cats[i]];
+    void saveLay({ ...lay, order: sorted.map(v => v.id), cats });
+  }
+  const shown = sorted.filter(inTab).filter(v => !kw || norm(v.name).includes(kw) || norm(v.nickname).includes(kw) || norm(v.memo).includes(kw) || norm(v.model).includes(kw) || norm(v.vin).includes(kw) || norm(driverOf(v)?.name ?? "").includes(kw) || (byVehicle.get(v.id) ?? []).some(i => norm(nameOf(i.key)).includes(kw) || norm(i.note).includes(kw)));
+
+  const grouped = tabNow === "" && lay.cats.length > 0; // 전체 탭에서는 카테고리별로 묶어서 보여 준다
+  const groupHead = (i: number) => grouped && (i === 0 || catOfV(shown[i - 1]) !== catOfV(shown[i]));
+  const groupTitle = (v: Vehicle) => <><b className="text-base font-extrabold">{catOfV(v) || "미분류"}</b> <span className="text-sm text-zinc-500">{vehicles.filter(x => catOfV(x) === catOfV(v)).length}대</span></>;
+  const arrangeCtl = (v: Vehicle) => (
+    <span className="inline-flex items-center gap-1" onClick={e => e.stopPropagation()}>
+      <button type="button" onClick={() => move(v.id, -1)} disabled={!shown.some((x, i) => x.id === v.id && i > 0 && catOfV(shown[i - 1]) === catOfV(v))} aria-label="위로" className="rounded-md border border-black/15 px-2 py-0.5 text-xs font-bold disabled:opacity-30 dark:border-white/15">▲</button>
+      <button type="button" onClick={() => move(v.id, 1)} disabled={!shown.some((x, i) => x.id === v.id && i < shown.length - 1 && catOfV(shown[i + 1]) === catOfV(v))} aria-label="아래로" className="rounded-md border border-black/15 px-2 py-0.5 text-xs font-bold disabled:opacity-30 dark:border-white/15">▼</button>
+      <select value={catOfV(v)} onChange={e => setCat(v.id, e.target.value)} aria-label="카테고리" className="rounded-md border border-black/15 bg-transparent px-1.5 py-0.5 text-xs dark:border-white/15">
+        <option value="">미분류</option>
+        {lay.cats.map(c => <option key={c}>{c}</option>)}
+      </select>
+    </span>
+  );
 
   // 품목별 현황: 어떤 연장·상비품이 어느 차량에 몇 개 나가 있는가
   const perItem = useMemo(() => {
@@ -236,7 +311,7 @@ export default function VehiclesAdmin({
               {canDelete && <button type="button" onClick={() => { setErr(""); setDlg({ t: "remove", v: infoV }); }} className="rounded-xl bg-red-50 px-3.5 py-2 text-sm font-bold text-red-600 dark:bg-red-500/15 dark:text-red-300">차량 삭제</button>}
             </span>
           </header>
-          {toast && <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200" role="status">{toast}</p>}
+      {toast && <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200" role="status">{toast}</p>}
 
           <section className="mt-4 rounded-2xl border border-black/10 bg-white p-4 dark:border-white/10 dark:bg-zinc-900" id="vs-basic" aria-label="기본 정보">
             <div className="flex items-center gap-2"><h2 className="mr-auto text-sm font-extrabold">기본 정보</h2><button type="button" onClick={() => void printElement(document.getElementById("vs-basic"), { title: `${infoV.name} 기본 정보`, heading: `${infoV.name} · 기본 정보` })} className="rounded-lg border border-black/15 px-2.5 py-1 text-xs font-bold dark:border-white/15">🖨 인쇄</button></div>
@@ -294,7 +369,7 @@ export default function VehiclesAdmin({
       <>
       <header className="flex flex-wrap items-center gap-3 py-5">
         <h1 className="mr-auto text-xl font-extrabold">차량정보</h1>
-        <span className="text-sm text-zinc-500">{ownOnly ? "내 차량" : "차량"} {vehicles.length}대</span>
+        <span className="text-sm text-zinc-500">{ownOnly ? "내 차량" : "운영중"} <b className="text-zinc-800 dark:text-zinc-100">{vehicles.length}대</b></span>
         {canRegister && <button type="button" onClick={() => { setErr(""); setDlg({ t: "vehicle", v: null }); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">+ 차량 등록</button>}
       </header>
 
@@ -307,6 +382,36 @@ export default function VehiclesAdmin({
         <button type="button" onClick={() => void printElement(document.getElementById("vehicle-ledger"), { title: "차량 관리 대장", heading: "차량 관리 대장", landscape: true })} disabled={shown.length === 0} className="rounded-xl border border-black/15 px-3.5 py-2 text-sm font-bold disabled:opacity-40 dark:border-white/15">🖨 인쇄</button>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="차량·품목 검색" className="min-w-[10rem] flex-1 rounded-xl border border-black/15 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 sm:max-w-xs dark:border-white/15 dark:bg-zinc-900" />
       </div>
+
+      {view === "vehicle" && (lay.cats.length > 0 || canEdit) && (
+        <div className="mt-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="no-scrollbar flex min-w-0 flex-1 items-end gap-1 overflow-x-auto border-b border-black/15 dark:border-white/15" role="tablist" aria-label="차량 카테고리">
+              {[["", "전체"], ...lay.cats.map(c => [c, c]), ...(lay.cats.length > 0 && (arrange || vehicles.some(v => catOfV(v) === "")) ? [["__none", "미분류"]] : [])].map(([k, label]) => (
+                <button key={k || "__all"} type="button" role="tab" aria-selected={tabNow === k} onClick={() => setTab(k)} className={`shrink-0 rounded-t-lg border border-b-0 px-4 py-2 text-sm font-bold ${tabNow === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{label} <small className="opacity-70">{k === "" ? vehicles.length : k === "__none" ? vehicles.filter(v => catOfV(v) === "").length : vehicles.filter(v => catOfV(v) === k).length}대</small></button>
+              ))}
+            </div>
+            {canEdit && <button type="button" onClick={() => setArrange(a => !a)} aria-pressed={arrange} className={`shrink-0 rounded-lg border px-3 py-1.5 text-[13px] font-bold ${arrange ? "border-blue-600 bg-blue-600 text-white" : "border-blue-600 bg-white text-blue-700 dark:bg-zinc-900 dark:text-blue-300"}`}>{arrange ? "✓ 정리 끝내기" : "⚙ 순서·카테고리 정리"}</button>}
+          </div>
+          {canEdit && arrange && (
+            <div className="mt-2 rounded-xl bg-zinc-100 p-3 text-xs dark:bg-zinc-800">
+              <p className="mb-2 text-zinc-500">각 차량의 ▲▼로 순서를 바꾸고, 카테고리를 골라 묶어요. 아래에서 카테고리를 만들고 지울 수 있어요.</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {lay.cats.map((c, i) => (
+                  <span key={c} className="inline-flex items-center gap-1 rounded-full border border-black/15 bg-white py-0.5 pl-1.5 pr-1 font-semibold dark:border-white/15 dark:bg-zinc-900">
+                    <button type="button" onClick={() => moveCat(c, -1)} disabled={i === 0} aria-label={`${c} 앞으로`} className="px-0.5 disabled:opacity-30">◀</button>
+                    {c}
+                    <button type="button" onClick={() => moveCat(c, 1)} disabled={i === lay.cats.length - 1} aria-label={`${c} 뒤로`} className="px-0.5 disabled:opacity-30">▶</button>
+                    <button type="button" onClick={() => delCat(c)} aria-label={`${c} 카테고리 삭제`} className="px-1 text-red-600">✕</button>
+                  </span>
+                ))}
+                <input value={newCat} onChange={e => setNewCat(e.target.value.slice(0, 20))} onKeyDown={e => e.key === "Enter" && addCat()} placeholder="새 카테고리 이름" className="w-36 rounded-md border border-black/15 bg-white px-2 py-1 outline-none focus:border-blue-500 dark:border-white/15 dark:bg-zinc-900" />
+                <button type="button" onClick={addCat} className="rounded-md bg-blue-600 px-3 py-1 font-bold text-white">+ 추가</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {toast && <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-200" role="status">{toast}</p>}
 
@@ -335,31 +440,34 @@ export default function VehiclesAdmin({
           {/* 넓은 화면: 한 줄에 차량 한 대, 중요한 정보만 (자세한 내용은 「차량 정보 보기」) */}
           {shown.length > 0 && (
             <div className="hidden overflow-x-auto rounded-2xl border border-black/10 bg-white md:block dark:border-white/10 dark:bg-zinc-900">
-              <table className="w-full min-w-[46rem] text-left text-sm">
-                <thead className="bg-zinc-50 text-xs font-bold text-zinc-500 dark:bg-zinc-800/60">
+              <table className="w-full min-w-[46rem] text-left text-[15px]">
+                <thead className="bg-zinc-50 text-sm font-bold text-zinc-500 dark:bg-zinc-800/60">
                   <tr>
-                    {["차량 번호", "차종 · 연식", "키로수", "검사일", "보험 만기", "배차", "적재"].map(h => <th key={h} className="whitespace-nowrap px-3 py-2.5">{h}</th>)}
+                    {["차량 번호", "차종 · 연식", "키로수", "검사일", "보험 만기", "배차", "적재"].map(h => <th key={h} className="whitespace-nowrap px-3 py-3.5">{h}</th>)}
+                    {canEdit && arrange && <th className="whitespace-nowrap px-3 py-3.5">순서 · 카테고리</th>}
                     <th className="w-8" />
                   </tr>
                 </thead>
                 <tbody>
-                  {shown.map(v => {
+                  {shown.map((v, vi) => {
                     const isOpen = open.has(v.id) || (kw !== "" && (byVehicle.get(v.id) ?? []).length > 0);
                     const ib = inspectionBadge(v);
                     const ob = oilBadge(v);
                     return (
                       <Fragment key={v.id}>
+                        {groupHead(vi) && <tr className="border-t border-black/10 bg-blue-50/70 dark:border-white/10 dark:bg-blue-500/10"><td colSpan={9} className="px-3 py-2 text-blue-800 dark:text-blue-200">{groupTitle(v)}</td></tr>}
                         <tr onClick={() => toggle(v.id)} aria-expanded={isOpen} className="cursor-pointer border-t border-black/10 align-middle hover:bg-zinc-50 dark:border-white/10 dark:hover:bg-zinc-800/50">
-                          <td className="whitespace-nowrap px-3 py-2.5"><b className="text-lg font-extrabold tracking-wide">{v.name}</b>{v.nickname && <span className="ml-2 text-xs font-semibold text-zinc-500">{v.nickname}</span>}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5">{[v.model, v.year && `${v.year}년식`].filter(Boolean).join(" · ") || <span className="text-zinc-400">-</span>}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5">{v.mileage > 0 ? km(v.mileage) : <span className="text-zinc-400">-</span>}{ob && <div className="mt-0.5"><Pill b={{ text: "오일교환 필요", tone: ob.tone }} /></div>}</td>
-                          <td className="whitespace-nowrap px-3 py-2.5"><Pill b={ib} /></td>
-                          <td className="whitespace-nowrap px-3 py-2.5"><Pill b={insuranceBadge(v)} /></td>
-                          <td className="whitespace-nowrap px-3 py-2.5">{driverOf(v) ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200">{driverOf(v)!.name}</span> : <span className="text-zinc-400">-</span>}</td>
+                          <td className="whitespace-nowrap px-3 py-3.5"><b className="text-xl font-extrabold tracking-wide">{v.name}</b>{v.nickname && <span className="ml-2 text-sm font-semibold text-zinc-500">{v.nickname}</span>}{tabNow === "" && !grouped && catOfV(v) && <span className="ml-2 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{catOfV(v)}</span>}</td>
+                          <td className="whitespace-nowrap px-3 py-3.5">{[v.model, v.year && `${v.year}년식`].filter(Boolean).join(" · ") || <span className="text-zinc-400">-</span>}</td>
+                          <td className="whitespace-nowrap px-3 py-3.5">{v.mileage > 0 ? km(v.mileage) : <span className="text-zinc-400">-</span>}{ob && <div className="mt-0.5"><Pill b={{ text: "오일교환 필요", tone: ob.tone }} /></div>}</td>
+                          <td className="whitespace-nowrap px-3 py-3.5"><Pill b={ib} /></td>
+                          <td className="whitespace-nowrap px-3 py-3.5"><Pill b={insuranceBadge(v)} /></td>
+                          <td className="whitespace-nowrap px-3 py-3.5">{driverOf(v) ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200">{driverOf(v)!.name}</span> : <span className="text-zinc-400">-</span>}</td>
                           <td className="whitespace-nowrap px-3 py-2.5 text-xs font-semibold text-blue-700 dark:text-blue-300">{loadText(v)}</td>
+                          {canEdit && arrange && <td className="whitespace-nowrap px-3 py-3.5">{arrangeCtl(v)}</td>}
                           <td className="px-2 py-2.5 text-zinc-400" aria-hidden>{isOpen ? "▲" : "▼"}</td>
                         </tr>
-                        {isOpen && <tr className="border-t border-black/5 bg-zinc-50/60 dark:border-white/5 dark:bg-zinc-800/30"><td colSpan={8}>{detail(v)}</td></tr>}
+                        {isOpen && <tr className="border-t border-black/5 bg-zinc-50/60 dark:border-white/5 dark:bg-zinc-800/30"><td colSpan={9}>{detail(v)}</td></tr>}
                       </Fragment>
                     );
                   })}
@@ -370,26 +478,30 @@ export default function VehiclesAdmin({
 
           {/* 좁은 화면(휴대폰): 차량마다 카드, 중요한 정보만 */}
           <div className="space-y-3 md:hidden">
-            {shown.map(v => {
+            {shown.map((v, vi) => {
               const isOpen = open.has(v.id) || (kw !== "" && (byVehicle.get(v.id) ?? []).length > 0);
               const ob = oilBadge(v);
               return (
-                <section key={v.id} className="rounded-2xl border border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900">
+                <Fragment key={v.id}>
+                {groupHead(vi) && <h3 className="px-1 pt-2">{groupTitle(v)}</h3>}
+                <section className="rounded-2xl border border-black/10 bg-white dark:border-white/10 dark:bg-zinc-900">
                   <button type="button" onClick={() => toggle(v.id)} aria-expanded={isOpen} className="block w-full p-4 text-left">
                     <span className="flex items-center gap-2">
                       <b className="min-w-0 flex-1 truncate text-lg font-extrabold tracking-wide">{v.name}{v.nickname && <small className="ml-2 text-xs font-semibold text-zinc-500">{v.nickname}</small>}</b>
                       <Pill b={inspectionBadge(v)} />
                       <span className="text-zinc-400" aria-hidden>{isOpen ? "▲" : "▼"}</span>
                     </span>
-                    <span className="mt-1.5 block text-sm">{[v.model, v.year && `${v.year}년식`, v.mileage > 0 && km(v.mileage)].filter(Boolean).join(" · ") || <span className="text-zinc-400">차량 정보 없음</span>}{ob && <> <Pill b={{ text: "오일교환 필요", tone: ob.tone }} /></>}</span>
+                    <span className="mt-1.5 block text-sm">{tabNow === "" && !grouped && catOfV(v) && <span className="mr-1.5 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{catOfV(v)}</span>}{[v.model, v.year && `${v.year}년식`, v.mileage > 0 && km(v.mileage)].filter(Boolean).join(" · ") || <span className="text-zinc-400">차량 정보 없음</span>}{ob && <> <Pill b={{ text: "오일교환 필요", tone: ob.tone }} /></>}</span>
                     <span className="mt-1 flex flex-wrap items-center gap-x-3 text-xs">
                       <span className="flex items-center gap-1 text-zinc-500">보험 <Pill b={insuranceBadge(v)} /></span>
                       <span className={driverOf(v) ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-zinc-400"}>{driverOf(v) ? `배차 ${driverOf(v)!.name}` : "배차 안 됨"}</span>
                       <span className="font-semibold text-blue-700 dark:text-blue-300">{loadText(v)}</span>
                     </span>
                   </button>
+                  {canEdit && arrange && <div className="border-t border-black/10 px-4 py-2 dark:border-white/10">{arrangeCtl(v)}</div>}
                   {isOpen && <div className="border-t border-black/10 dark:border-white/10">{detail(v)}</div>}
                 </section>
+                </Fragment>
               );
             })}
           </div>
@@ -540,11 +652,11 @@ function VehicleForm({ v, members, busy, err, onClose, onSave, onRemovePhoto }: 
       <form onSubmit={e => { e.preventDefault(); if (!busy) onSave({ name, nickname, icon, memo, driverId, model, year, vin, ownership, mileage: Number(mileage || 0), oilDate, oilKm: Number(oilKm || 0), inspectionDate, insurer, policyNo, insuranceExpiry, premium: Number(premium || 0), insurancePhone, insuranceNote }, { files: fresh.map(f => f.file), note: pnote }); }}>
         <h2 className="text-lg font-bold">{v ? "차량 정보 수정" : "차량 등록"}</h2>
         <div className="mt-3 flex gap-1 border-b border-black/10 dark:border-white/10" role="tablist" aria-label="입력 구역">
-          <button key="basic" type="button" role="tab" aria-selected={tab === "basic"} onClick={() => setTab("basic")} className={`-mb-px flex-1 border-b-2 px-2 py-2 text-sm font-extrabold ${tab === "basic" ? "border-blue-600 text-blue-700 dark:text-blue-300" : "border-transparent text-zinc-500"}`}>기본 정보{true && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
-          <button key="care" type="button" role="tab" aria-selected={tab === "care"} onClick={() => setTab("care")} className={`-mb-px flex-1 border-b-2 px-2 py-2 text-sm font-extrabold ${tab === "care" ? "border-blue-600 text-blue-700 dark:text-blue-300" : "border-transparent text-zinc-500"}`}>정비·검사{!!(mileage || inspectionDate || oilDate || oilKm) && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
-          <button key="ins" type="button" role="tab" aria-selected={tab === "ins"} onClick={() => setTab("ins")} className={`-mb-px flex-1 border-b-2 px-2 py-2 text-sm font-extrabold ${tab === "ins" ? "border-blue-600 text-blue-700 dark:text-blue-300" : "border-transparent text-zinc-500"}`}>보험{!!(insurer || policyNo || insuranceExpiry || premium || insurancePhone || insuranceNote) && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
-          <button key="assign" type="button" role="tab" aria-selected={tab === "assign"} onClick={() => setTab("assign")} className={`-mb-px flex-1 border-b-2 px-2 py-2 text-sm font-extrabold ${tab === "assign" ? "border-blue-600 text-blue-700 dark:text-blue-300" : "border-transparent text-zinc-500"}`}>배차·비고{!!(driverId || memo) && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
-          <button key="photo" type="button" role="tab" aria-selected={tab === "photo"} onClick={() => setTab("photo")} className={`-mb-px flex-1 border-b-2 px-2 py-2 text-sm font-extrabold ${tab === "photo" ? "border-blue-600 text-blue-700 dark:text-blue-300" : "border-transparent text-zinc-500"}`}>사진{(fresh.length > 0 || existing.length > 0) && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
+          <button key="basic" type="button" role="tab" aria-selected={tab === "basic"} onClick={() => setTab("basic")} className={`flex-1 rounded-t-lg border border-b-0 px-2 py-2 text-sm font-extrabold ${tab === "basic" ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 text-zinc-500 dark:border-white/15"}`}>기본 정보{true && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
+          <button key="care" type="button" role="tab" aria-selected={tab === "care"} onClick={() => setTab("care")} className={`flex-1 rounded-t-lg border border-b-0 px-2 py-2 text-sm font-extrabold ${tab === "care" ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 text-zinc-500 dark:border-white/15"}`}>정비·검사{!!(mileage || inspectionDate || oilDate || oilKm) && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
+          <button key="ins" type="button" role="tab" aria-selected={tab === "ins"} onClick={() => setTab("ins")} className={`flex-1 rounded-t-lg border border-b-0 px-2 py-2 text-sm font-extrabold ${tab === "ins" ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 text-zinc-500 dark:border-white/15"}`}>보험{!!(insurer || policyNo || insuranceExpiry || premium || insurancePhone || insuranceNote) && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
+          <button key="assign" type="button" role="tab" aria-selected={tab === "assign"} onClick={() => setTab("assign")} className={`flex-1 rounded-t-lg border border-b-0 px-2 py-2 text-sm font-extrabold ${tab === "assign" ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 text-zinc-500 dark:border-white/15"}`}>배차·비고{!!(driverId || memo) && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
+          <button key="photo" type="button" role="tab" aria-selected={tab === "photo"} onClick={() => setTab("photo")} className={`flex-1 rounded-t-lg border border-b-0 px-2 py-2 text-sm font-extrabold ${tab === "photo" ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 text-zinc-500 dark:border-white/15"}`}>사진{(fresh.length > 0 || existing.length > 0) && <span className="ml-1 text-emerald-600" aria-hidden>•</span>}</button>
         </div>
 
         <div className={`mt-3 grid gap-x-3 gap-y-3 sm:grid-cols-2 ${tab === "basic" ? "" : "hidden"}`} role="tabpanel">
@@ -673,15 +785,38 @@ function PackageApply({ v, p, catalog, loaded, busy, err, onClose, onBack, onSav
       <p className="mt-1 text-sm text-zinc-500">{v.name}에 아래 품목을 적재해요. 이미 실린 품목은 빼고, 창고 재고가 모자란 연장도 빼고 적재돼요.</p>
       {already.length > 0 && <p className="mt-2 rounded-lg bg-zinc-100 px-3 py-2 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">이미 실려 있어서 제외한 품목 {already.length}개: {already.map(r => r.c?.name ?? "삭제된 품목").join(", ")}</p>}
       {rows.length === 0 && <p className="mt-3 rounded-xl bg-white p-6 text-center text-sm text-zinc-500 dark:bg-zinc-900">패키지의 모든 품목이 이미 실려 있어요.</p>}
-      {rows.length > 0 && <ul className="mt-3 divide-y divide-black/5 rounded-xl border border-black/10 dark:divide-white/10 dark:border-white/10">
-        {rows.map(r => (
-          <li key={r.i.key} className="flex items-center gap-2 px-3 py-2 text-sm">
-            <span className="min-w-0 flex-1 truncate font-semibold">{r.c?.name ?? "삭제된 품목"}</span>
-            <span className="shrink-0 text-xs text-zinc-500">{r.c?.kind === "연장" ? `재고 ${r.c.stock} · ` : ""}{r.i.qty}개</span>
-            {r.gone ? <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold dark:bg-zinc-700">품목 없음</span> : r.short ? <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-700 dark:bg-red-500/20 dark:text-red-300">재고 부족</span> : <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200">적재</span>}
-          </li>
-        ))}
-      </ul>}
+      {rows.length > 0 && (() => {
+        const bad = rows.filter(r => r.gone || r.short);
+        const groups = new Map<string, typeof rows>();
+        ok.forEach(r => { const g = r.c?.category || "미분류"; groups.set(g, [...(groups.get(g) ?? []), r]); });
+        return (
+          <div className="mt-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+              <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200">적재 {ok.length}개</span>
+              {rows.filter(r => r.short && !r.gone).length > 0 && <span className="rounded-full bg-red-100 px-2.5 py-1 text-red-700 dark:bg-red-500/20 dark:text-red-300">재고 부족 {rows.filter(r => r.short && !r.gone).length}개</span>}
+              {rows.filter(r => r.gone).length > 0 && <span className="rounded-full bg-zinc-200 px-2.5 py-1 dark:bg-zinc-700">품목 없음 {rows.filter(r => r.gone).length}개</span>}
+            </div>
+            {bad.length > 0 && (
+              <div className="rounded-xl border border-red-200 bg-red-50/70 p-2.5 dark:border-red-500/30 dark:bg-red-500/10">
+                <p className="mb-1.5 text-xs font-bold text-red-700 dark:text-red-300">적재하지 않는 품목</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {bad.map(r => <span key={r.i.key} className="rounded-md bg-white px-2 py-1 text-xs font-semibold dark:bg-zinc-900">{r.c?.name ?? "삭제된 품목"}<span className="ml-1 text-red-600 dark:text-red-300">{r.gone ? "없음" : `재고 ${r.c!.stock}/${r.i.qty}`}</span></span>)}
+                </div>
+              </div>
+            )}
+            <div className="max-h-[50vh] space-y-1.5 overflow-y-auto overscroll-contain pr-0.5">
+              {[...groups.entries()].map(([g, list]) => (
+                <details key={g} open={groups.size <= 3} className="rounded-xl border border-black/10 dark:border-white/10">
+                  <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm font-bold">{g}<span className="text-xs font-normal text-zinc-500">{list.length}개</span></summary>
+                  <div className="flex flex-wrap gap-1.5 border-t border-black/5 px-3 py-2 dark:border-white/10">
+                    {list.map(r => <span key={r.i.key} className="rounded-md bg-zinc-100 px-2 py-1 text-xs font-semibold dark:bg-zinc-800">{r.c!.name}{r.i.qty > 1 && <b className="ml-1 text-blue-700 dark:text-blue-300">×{r.i.qty}</b>}</span>)}
+                  </div>
+                </details>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
       {ok.length < rows.length && <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">{rows.length - ok.length}개 품목은 적재하지 않아요 (재고 부족·없는 품목).</p>}
       {err && <p className="mt-3 text-sm text-red-500" role="alert">{err}</p>}
       <div className="mt-5 flex gap-2">
@@ -741,11 +876,11 @@ function AssignForm({ v, catalog, busy, err, onClose, onSave, pkg }: { v: Vehicl
           ))}
         </div>
         {catCounts.length > 1 && (
-          <div className="no-scrollbar mt-2 flex gap-1.5 overflow-x-auto" role="group" aria-label="카테고리">
-            <button type="button" aria-pressed={catNow === "__all"} onClick={() => setCat("__all")} className={`shrink-0 rounded-full border px-3 py-1 text-xs font-bold ${catNow === "__all" ? chipOn : chipOff}`}>전체 <span className="opacity-70">{catCounts.reduce((n, [, c]) => n + c, 0)}</span></button>
+          <div className="no-scrollbar mt-2 flex items-end gap-1 overflow-x-auto border-b border-black/15 dark:border-white/15" role="tablist" aria-label="카테고리">
+            <button type="button" role="tab" aria-selected={catNow === "__all"} onClick={() => setCat("__all")} className={`shrink-0 rounded-t-lg border border-b-0 px-3 py-1.5 text-xs font-bold ${catNow === "__all" ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>전체 <span className="opacity-70">{catCounts.reduce((n, [, c]) => n + c, 0)}</span></button>
             {catCounts.map(([c, n]) => {
               const picked = catalog.filter(p => p.kind === kind && catOf(p) === c && sel.has(p.key)).length;
-              return <button key={c} type="button" aria-pressed={catNow === c} onClick={() => setCat(c)} className={`shrink-0 rounded-full border px-3 py-1 text-xs font-bold ${catNow === c ? chipOn : chipOff}`}>{c} <span className="opacity-70">{n}</span>{picked > 0 && <span className="ml-1 rounded-full bg-emerald-500 px-1.5 text-[10px] text-white">{picked}</span>}</button>;
+              return <button key={c} type="button" role="tab" aria-selected={catNow === c} onClick={() => setCat(c)} className={`shrink-0 rounded-t-lg border border-b-0 px-3 py-1.5 text-xs font-bold ${catNow === c ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-600 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>{c} <span className="opacity-70">{n}</span>{picked > 0 && <span className="ml-1 rounded-full bg-emerald-500 px-1.5 text-[10px] text-white">{picked}</span>}</button>;
             })}
           </div>
         )}

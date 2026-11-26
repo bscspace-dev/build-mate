@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { asIcon, asKind, EMPTY_SPEC, MAX_VEHICLE_PHOTOS } from './types';
 import { toEntries, type CycleEntry } from './attendance-cycle';
 import type { AnnualLeave } from './leave';
-import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo } from './types';
+import type { SitePost, Kind, MaterialRequest, Member, MemberPatch, Product, SurveyPayload, TrashedProduct, Vehicle, VehicleSpec, VehiclePhoto, LoadPackage, LoadPackageInput, VehicleItem, VehicleResult, Site, SiteInput, SiteExtension, Placement, PlacementNote, Slot, LeaveRequest, LeaveInput, Expense, ExpenseInput, InventoryEntry, InventoryEntryInput, AuditEntry, AuditInput, PricingSnapshot, InventoryExcluded, PurchaseInfo, VehicleLayout, PurchaseOption, VendorShipping } from './types';
 import { removeImage } from './images';
 import { applyTeamLocks, DEFAULT_TEAMS, type Team } from './roles';
 
@@ -583,14 +583,14 @@ export function renameProduct(key: string, name: string): Promise<number> {
 }
 
 /** 소모품 정보 고치기 (휴지통의 것도 가능). 없으면 null, 있으면 바꾸기 전 이미지 주소를 돌려준다. */
-export function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string }): Promise<{ prevImage: string } | null> {
+export function updateProduct(key: string, e: { name: string; sub: string; brand: string; price: number; kind?: Kind; image?: string; priceInclVat?: number | null }): Promise<{ prevImage: string } | null> {
   return withLock(async () => {
     const [products, trash] = await Promise.all([getProducts(), getTrash()]);
     let prevImage: string | null = null;
     const up = <T extends Product>(rows: T[]) => rows.map(r => {
       if (r.key !== key) return r;
       prevImage = r.image;
-      return { ...r, name: e.name, sub: e.sub, brand: e.brand, price: e.price, kind: e.kind ?? r.kind, priceInclVat: e.price === r.price ? r.priceInclVat : null, image: e.image ?? r.image };
+      return { ...r, name: e.name, sub: e.sub, brand: e.brand, price: e.price, kind: e.kind ?? r.kind, priceInclVat: e.priceInclVat !== undefined ? e.priceInclVat : e.price === r.price ? r.priceInclVat : null, image: e.image ?? r.image };
     });
     const np = up(products);
     const nt = up(trash);
@@ -1116,10 +1116,10 @@ export function removeLoadPackage(id: string): Promise<VehicleResult> {
 
 
 // ───────── 장비조사 (data/inventory.json) — 조사 수량 기록 + 팀별 고정 카테고리 (data/team-categories.json) ─────────
-export const getInventory = async (): Promise<InventoryEntry[]> => (await readList<InventoryEntry>('inventory.json')).map(e => ({ ...e, action: e.action === 'delete' ? 'delete' as const : e.action === 'buy' ? 'buy' as const : 'add' as const, qty: Number(e.qty) || 0, price: Number(e.price) || 0, shipping: Number(e.shipping) || 0, vendor: typeof e.vendor === 'string' ? e.vendor : '' }));
+export const getInventory = async (): Promise<InventoryEntry[]> => (await readList<InventoryEntry>('inventory.json')).map(e => ({ ...e, action: e.action === 'delete' ? 'delete' as const : e.action === 'buy' ? 'buy' as const : 'add' as const, qty: Number(e.qty) || 0, price: Number(e.price) || 0, shipping: Number(e.shipping) || 0, vendor: typeof e.vendor === 'string' ? e.vendor : '', unit: typeof e.unit === 'string' ? e.unit : '' }));
 export function addInventory(i: InventoryEntryInput): Promise<InventoryEntry> {
   return withLock(async () => {
-    const row: InventoryEntry = { id: crypto.randomBytes(6).toString('hex'), ...i, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', createdAt: new Date().toISOString() };
+    const row: InventoryEntry = { id: crypto.randomBytes(6).toString('hex'), ...i, shipping: i.shipping ?? 0, vendor: i.vendor ?? '', unit: i.unit ?? '', createdAt: new Date().toISOString() };
     await writeJson('inventory.json', [row, ...(await getInventory())]);
     return row;
   });
@@ -1134,12 +1134,12 @@ export function removeInventory(id: string): Promise<boolean> {
 }
 // ───────── 가격조사 — 품목별 구매 링크 (data/purchase-links.json) ─────────
 /** 예전에는 주소(문자열)만 저장했다 — 그 값도 그대로 읽는다 */
-const toInfo = (u: unknown): PurchaseInfo | null => (typeof u === 'string' ? (u ? { url: u, vendor: '' } : null) : u && typeof u === 'object' ? { url: typeof (u as PurchaseInfo).url === 'string' ? (u as PurchaseInfo).url : '', vendor: typeof (u as PurchaseInfo).vendor === 'string' ? (u as PurchaseInfo).vendor : '' } : null);
+const toInfo = (u: unknown): PurchaseInfo | null => { if (typeof u === 'string') return u ? { url: u, vendor: '', unit: '' } : null; if (!u || typeof u !== 'object') return null; const o = u as Partial<PurchaseInfo>; return { url: typeof o.url === 'string' ? o.url : '', vendor: typeof o.vendor === 'string' ? o.vendor : '', unit: typeof o.unit === 'string' ? o.unit : '' }; };
 export async function getPurchaseLinks(): Promise<Record<string, PurchaseInfo>> {
   try {
     const v = await readJson<unknown>('purchase-links.json');
     if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
-    return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, u]) => { const i = toInfo(u); return i && (i.url || i.vendor) ? [[k, i] as [string, PurchaseInfo]] : []; }));
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).flatMap(([k, u]) => { const i = toInfo(u); return i && (i.url || i.vendor || i.unit) ? [[k, i] as [string, PurchaseInfo]] : []; }));
   } catch {
     return {};
   }
@@ -1148,7 +1148,7 @@ export async function getPurchaseLinks(): Promise<Record<string, PurchaseInfo>> 
 export function setPurchaseLink(key: string, info: PurchaseInfo | null): Promise<void> {
   return withLock(async () => {
     const cur = await getPurchaseLinks();
-    if (info && (info.url || info.vendor)) cur[key] = info; else delete cur[key];
+    if (info && (info.url || info.vendor || info.unit)) cur[key] = info; else delete cur[key];
     await writeJson('purchase-links.json', cur);
   });
 }
@@ -1191,5 +1191,95 @@ export function removeAudit(ids: string[]): Promise<number> {
     const next = list.filter(e => !ids.includes(e.id));
     if (next.length !== list.length) await writeJson('audit.json', next);
     return list.length - next.length;
+  });
+}
+
+// ───────── 가격조사 — 자주 가는 구매처 (data/favorite-vendors.json) ─────────
+export async function getFavoriteVendors(): Promise<string[]> {
+  try {
+    const v = await readJson<unknown>('favorite-vendors.json');
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && !!x) : [];
+  } catch {
+    return [];
+  }
+}
+export function saveFavoriteVendors(list: string[]): Promise<void> {
+  return withLock(async () => {
+    await writeJson('favorite-vendors.json', list);
+  });
+}
+
+// ───────── 차량정보 — 차량 순서·카테고리 (data/vehicle-layout.json) ─────────
+const vStrs = (x: unknown) => (Array.isArray(x) ? x.filter((k): k is string => typeof k === 'string') : []);
+const toVehicleLayout = (v: { order?: unknown; cats?: unknown; catOf?: unknown } | null | undefined): VehicleLayout => ({
+  order: vStrs(v?.order),
+  cats: vStrs(v?.cats),
+  catOf: v?.catOf && typeof v.catOf === 'object' && !Array.isArray(v.catOf) ? (Object.fromEntries(Object.entries(v.catOf as Record<string, unknown>).filter(([, c]) => typeof c === 'string')) as Record<string, string>) : {},
+});
+export async function getVehicleLayout(): Promise<VehicleLayout> {
+  try {
+    return toVehicleLayout(await readJson<{ order?: unknown; cats?: unknown; catOf?: unknown }>('vehicle-layout.json'));
+  } catch {
+    return { order: [], cats: [], catOf: {} };
+  }
+}
+export function saveVehicleLayout(v: VehicleLayout): Promise<void> {
+  return withLock(async () => {
+    await writeJson('vehicle-layout.json', v);
+  });
+}
+
+// ───────── 가격조사 — 품목별 판매 옵션 (data/purchase-options.json) ─────────
+const toOptions = (v: unknown): Record<string, PurchaseOption[]> => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, PurchaseOption[]> = {};
+  for (const [k, arr] of Object.entries(v as Record<string, unknown>)) {
+    if (!Array.isArray(arr)) continue;
+    const list = arr.flatMap((o): PurchaseOption[] => {
+      if (!o || typeof o !== 'object') return [];
+      const x = o as Partial<PurchaseOption>;
+      if (typeof x.id !== 'string' || !x.id) return [];
+      return [{ id: x.id, unit: typeof x.unit === 'string' ? x.unit : '', vendor: typeof x.vendor === 'string' ? x.vendor : '', url: typeof x.url === 'string' ? x.url : '', price: typeof x.price === 'number' && x.price >= 0 ? x.price : 0, incl: typeof x.incl === 'number' ? x.incl : null }];
+    });
+    if (list.length) out[k] = list;
+  }
+  return out;
+};
+export async function getPurchaseOptions(): Promise<Record<string, PurchaseOption[]>> {
+  try {
+    return toOptions(await readJson<unknown>('purchase-options.json'));
+  } catch {
+    return {};
+  }
+}
+export function savePurchaseOptions(v: Record<string, PurchaseOption[]>): Promise<void> {
+  return withLock(async () => {
+    await writeJson('purchase-options.json', v);
+  });
+}
+
+// ───────── 가격조사 — 구매처별 배송 정책 (data/vendor-shipping.json) ─────────
+const toVendorShipping = (v: unknown): Record<string, VendorShipping> => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, VendorShipping> = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (!x || typeof x !== 'object') continue;
+    const o = x as Partial<VendorShipping>;
+    const fee = typeof o.fee === 'number' && o.fee >= 0 ? Math.round(o.fee) : 0;
+    const freeOver = typeof o.freeOver === 'number' && o.freeOver >= 0 ? Math.round(o.freeOver) : 0;
+    if (fee > 0 || freeOver > 0) out[k] = { fee, freeOver };
+  }
+  return out;
+};
+export async function getVendorShipping(): Promise<Record<string, VendorShipping>> {
+  try {
+    return toVendorShipping(await readJson<unknown>('vendor-shipping.json'));
+  } catch {
+    return {};
+  }
+}
+export function saveVendorShipping(v: Record<string, VendorShipping>): Promise<void> {
+  return withLock(async () => {
+    await writeJson('vendor-shipping.json', v);
   });
 }
