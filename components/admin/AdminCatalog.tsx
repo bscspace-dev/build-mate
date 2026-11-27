@@ -91,7 +91,7 @@ const markTime = (iso: string) => new Date(iso).toLocaleString("ko-KR", { timeZo
 function ProductCard({
   vendor, inv, p, deployed, selected, starred, onSelect, onStar, onAction, onMove, onRename, onShift, onStock, draft, onDraft, shiftable, trashMode, canDelete, canEdit, list, reorderable, dragging, onDragStart, onDragEnd, onDropOn,
 }: {
-  vendor?: { vendor: string; unit: string; url: string }; // 가격조사에서 등록한 구매처·판매단위·구매 링크
+  vendor?: { vendor: string; unit: string; url: string }; // 등록해 둔 구매처·판매단위·구매 링크
   inv?: InvMark; // 장비조사에서 추가·삭제한 기록
   dragging: boolean; // 지금 이 카드를 끌고 있는지
   onDragStart: ((k: string) => void) | null; // null = 끌어서 순서 바꾸기 불가
@@ -185,6 +185,7 @@ function ProductCard({
       <div className={list ? "flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1 py-2 pr-10" : "p-2 sm:p-3"}>
         <div className={`break-keep ${list ? "min-w-[11rem] flex-1 text-sm leading-snug" : "line-clamp-2 min-h-[2.6em] text-xs leading-snug sm:line-clamp-3 sm:min-h-[3.6em] sm:text-[13px]"} ${empty ? "text-red-800 dark:text-red-200" : ""}`}>
           {p.name}
+          {p.copyOf && <span className="ml-1.5 inline-block rounded-full bg-sky-100 px-1.5 py-0 align-middle text-[11px] font-bold text-sky-800 dark:bg-sky-500/20 dark:text-sky-200" title={`재고·가격·링크·사진은 원본(${p.copyOf})과 같아요`}>🔗 {p.copyOf} 연결</span>}
           {list && p.soldout && <span className="ml-1.5 rounded-md bg-red-600 px-1.5 py-0.5 text-[11px] text-white">품절</span>}
           {list && <small className="block text-[11px] text-zinc-500">{p.brand}{p.brand ? " · " : ""}{(p as Product).model}{(p as Product).model ? " · " : ""}{(p as Product).voltage ? `${(p as Product).voltage} · ` : ""}{(p as Product).compat ? `호환: ${(p as Product).compat} · ` : ""}{(p as Product).battery ? `${(p as Product).battery} · ` : ""}<b className="tabular-nums text-zinc-700 dark:text-zinc-300">{p.price > 0 ? `${p.price.toLocaleString("ko-KR")}원` : "가격 미등록"}</b>{vendor?.vendor && (vendor.url ? <a href={vendor.url} target="_blank" rel="noopener noreferrer" title="눌러서 구매 링크로 이동" className={`ml-1.5 rounded px-1.5 py-0.5 font-bold hover:underline ${vendorColor(vendor.vendor)}`}>{vendor.vendor} ↗</a> : <span className={`ml-1.5 rounded px-1.5 py-0.5 font-bold ${vendorColor(vendor.vendor)}`}>{vendor.vendor}</span>)}{vendor?.unit && <span className="ml-1">{vendor.unit}</span>}</small>}
         </div>
@@ -260,11 +261,9 @@ function ProductCard({
 }
 
 export default function AdminCatalog({
-  deployed: deployedMap, vendors = {}, invMarks = {}, invExcluded, canSetInvExclude = false, initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
+  deployed: deployedMap, vendors = {}, invMarks = {}, initialProducts, initialTrash, trades: initialTrades, categories, categoryTrades, canRegister, canEdit, canDelete,
 }: {
   vendors?: Record<string, { vendor: string; unit: string; url: string }>; // 품목 번호 → 구매처·판매단위·구매 링크
-  invExcluded?: { trades: string[]; categories: string[] }; // 장비조사에서 제외한 공정·카테고리
-  canSetInvExclude?: boolean; // 모든 권한이 있는 사람만 제외 설정을 바꿀 수 있다
   invMarks?: Record<string, InvMark>; // 품목 번호 → 장비조사에서 추가·삭제한 사람과 때
   deployed: Record<string, { icon: string; label: string; qty: number }[]>; // 연장 품목 번호 → 배정된 차량
   initialProducts: Product[];
@@ -323,6 +322,7 @@ export default function AdminCatalog({
   const [catTrades, setCatTrades] = useState(categoryTrades);
   const [newCatTrade, setNewCatTrade] = useState("");
   const [moveKeys, setMoveKeys] = useState<string[] | null>(null); // 카테고리 이동 창
+  const [moveMode, setMoveMode] = useState<"move" | "copy">("move"); // 같은 창에서 이동 / 복사(재고 공유)를 고른다
   const [moveErr, setMoveErr] = useState("");
   const [catOpen, setCatOpen] = useState(false); // 카테고리 관리 창
   const [addOpen, setAddOpen] = useState(false); // 품목 추가 창
@@ -330,27 +330,6 @@ export default function AdminCatalog({
   const [renaming, setRenaming] = useState<{ name: string; to: string } | null>(null);
   const [catErr, setCatErr] = useState("");
   const [catDel, setCatDel] = useState<string | null>(null); // 삭제 확인 중인 카테고리
-  // 장비조사 제외: 지금 고른 공정·카테고리를 장비조사 목록에서 빼거나 다시 넣는다 (누르면 바로 저장)
-  const [invEx, setInvEx] = useState(invExcluded ?? { trades: [], categories: [] });
-  const [invBusy, setInvBusy] = useState(false);
-  async function toggleInvEx(kind: "trade" | "category", name: string) {
-    if (invBusy) return;
-    const has = kind === "trade" ? invEx.trades.includes(name) : invEx.categories.includes(name);
-    const next = kind === "trade"
-      ? { ...invEx, trades: has ? invEx.trades.filter(x => x !== name) : [...invEx.trades, name] }
-      : { ...invEx, categories: has ? invEx.categories.filter(x => x !== name) : [...invEx.categories, name] };
-    setInvBusy(true);
-    try {
-      const r = await fetch("/api/admin/inventory", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ menu: "inventory", action: "excludeSave", excludedTrades: next.trades, excludedCategories: next.categories }) });
-      const j = (await r.json().catch(() => ({}))) as { error?: string };
-      if (!r.ok) throw new Error(j.error ?? "저장하지 못했어요.");
-      setInvEx(next);
-      setToast({ id: Date.now(), text: has ? `“${name}” ${kind === "trade" ? "공정" : "카테고리"}를 장비조사에 다시 넣었어요` : `“${name}” ${kind === "trade" ? "공정" : "카테고리"}를 장비조사에서 제외했어요` });
-    } catch (e) {
-      setToast({ id: Date.now(), text: e instanceof Error ? e.message : "서버에 연결할 수 없어요." });
-    }
-    setInvBusy(false);
-  }
   const [editP, setEditP] = useState<Product | TrashedProduct | null>(null); // 품목 수정 창
   const canSelect = canDelete || canEdit;
   const canManageCats = canRegister || canEdit || canDelete;
@@ -370,7 +349,7 @@ export default function AdminCatalog({
     counts.forEach((n, c) => { if (!m.has(c)) m.set(c, n); });
     return m;
   }, [base, catList, trashMode, trade, trades, catTrades]);
-  const activeCat = cat === "전체" || cats.has(cat) ? cat : "전체";
+  const activeCat = kind === "연장" ? "전체" : cat === "전체" || cats.has(cat) ? cat : "전체"; // 연장은 공정으로만 나눈다 (카테고리 구분 없음)
   const byCat = useMemo(() => base.filter(p => (activeCat === "전체" ? cats.has(p.category) : p.category === activeCat)), [base, activeCat, cats]);
   const subs = useMemo(() => (activeCat === "전체" ? [] : [...new Set(byCat.map(p => p.sub).filter(Boolean))]), [byCat, activeCat]);
   const activeSub = subs.includes(sub) ? sub : "";
@@ -471,7 +450,7 @@ export default function AdminCatalog({
         }));
       const d = new Date();
       const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-      downloadBlob(buildXlsx(sheets), `${trashMode ? "창고장비현황_휴지통" : "창고장비현황_" + kind}${withPhoto ? "_사진" : ""}_${stamp}.xlsx`);
+      downloadBlob(buildXlsx(sheets), `${trashMode ? "창고현황_휴지통" : "창고현황_" + kind}${withPhoto ? "_사진" : ""}_${stamp}.xlsx`);
       setExportOpen(false);
     } catch (err) {
       setToast({ id: Date.now(), text: err instanceof Error ? err.message : "엑셀 파일을 만들지 못했어요." });
@@ -487,8 +466,9 @@ export default function AdminCatalog({
       setTrash(prev => prev.filter(p => !set.has(p.key))); // 서버에서 데이터·이미지가 완전히 지워짐
     } else if (mode === "delete") {
       const now = new Date().toISOString();
-      setProducts(prev => prev.filter(p => !set.has(p.key)));
-      setTrash(prev => [...prev, ...products.filter(p => set.has(p.key)).map(p => ({ ...p, deletedAt: now }))]);
+      const masters = new Set(keys.filter(k => !k.includes("@"))); // 원본을 지우면 연결된 복사본도 함께 사라진다
+      setProducts(prev => prev.filter(p => !set.has(p.key) && !masters.has(p.key.split("@")[0])));
+      setTrash(prev => [...prev, ...products.filter(p => masters.has(p.key)).map(p => ({ ...p, deletedAt: now }))]);
     } else {
       setTrash(prev => prev.filter(p => !set.has(p.key)));
       setProducts(prev =>
@@ -730,7 +710,8 @@ export default function AdminCatalog({
       const r = await fetch("/api/admin/products", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "stockBulk", items }) });
       if (r.status === 401) { router.replace("/"); return; }
       if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "재고를 저장하지 못했어요.");
-      setProducts(rows => rows.map(p => (p.key in drafts ? { ...p, stock: drafts[p.key] } : p)));
+      const byBase = new Map(Object.entries(drafts).map(([k, v]) => [k.split("@")[0], v] as const));
+      setProducts(rows => rows.map(p => (byBase.has(p.key.split("@")[0]) ? { ...p, stock: byBase.get(p.key.split("@")[0])! } : p)));
       setDrafts({});
       setToast({ id: Date.now(), text: "재고 " + items.length + "개를 저장했어요" });
     } catch (err) {
@@ -741,13 +722,14 @@ export default function AdminCatalog({
   async function setStockOf(key: string, stock: number) {
     setDraftOf(key, null);
     const before = products.find(p => p.key === key)?.stock ?? 0;
-    setProducts(rows => rows.map(p => (p.key === key ? { ...p, stock } : p)));
+    const bk = key.split("@")[0]; // 복사본이어도 재고는 원본 하나: 같은 원본의 모든 줄이 같이 바뀐다
+    setProducts(rows => rows.map(p => (p.key.split("@")[0] === bk ? { ...p, stock } : p)));
     try {
       const r = await fetch("/api/admin/products", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "stock", key, stock }) });
       if (r.status === 401) { router.replace("/"); return; }
       if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "재고를 저장하지 못했어요.");
     } catch (err) {
-      setProducts(rows => rows.map(p => (p.key === key ? { ...p, stock: before } : p)));
+      setProducts(rows => rows.map(p => (p.key.split("@")[0] === bk ? { ...p, stock: before } : p)));
       setToast({ id: Date.now(), text: err instanceof Error ? err.message : "재고를 저장하지 못했어요." });
     }
   }
@@ -818,8 +800,8 @@ export default function AdminCatalog({
       const r = await fetch("/api/admin/products", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "stockBulk", items: stockUp.changes.map(c => ({ key: c.key, stock: c.to })) }) });
       if (r.status === 401) { router.replace("/"); return; }
       if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "재고를 저장하지 못했어요.");
-      const to = new Map(stockUp.changes.map(c => [c.key, c.to]));
-      setProducts(rows => rows.map(p => (to.has(p.key) ? { ...p, stock: to.get(p.key)! } : p)));
+      const to = new Map(stockUp.changes.map(c => [c.key.split("@")[0], c.to]));
+      setProducts(rows => rows.map(p => (to.has(p.key.split("@")[0]) ? { ...p, stock: to.get(p.key.split("@")[0])! } : p)));
       setToast({ id: Date.now(), text: "재고 " + stockUp.changes.length + "개를 엑셀 내용으로 바꿨어요" });
       setStockUp(null);
     } catch (err) {
@@ -858,8 +840,8 @@ export default function AdminCatalog({
       const r = await fetch("/api/admin/products", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "kind", keys: kindKeys, kind: to }) });
       if (r.status === 401) { router.replace("/"); return; }
       if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? "분류를 바꾸지 못했어요.");
-      const set = new Set(kindKeys);
-      const mv = <T extends { key: string; kind: Kind }>(rows: T[]) => rows.map(p => (set.has(p.key) ? { ...p, kind: to } : p));
+      const set = new Set(kindKeys.map(k => k.split("@")[0])); // 복사본은 원본의 분류를 바꾼다
+      const mv = <T extends { key: string; kind: Kind }>(rows: T[]) => rows.map(p => (set.has(p.key.split("@")[0]) ? { ...p, kind: to } : p));
       setProducts(mv); setTrash(mv);
       setSelected(prev => { const n = new Set(prev); kindKeys.forEach(k => n.delete(k)); return n; });
       setToast({ id: Date.now(), text: kindKeys.length + "개를 “" + to + "”(으)로 옮겼어요" });
@@ -869,7 +851,26 @@ export default function AdminCatalog({
     }
     setBusy(false);
   }
-  const doMove = (category: string) => { if (moveKeys) void moveTo(moveKeys, category); };
+  // 다른 공정에 복사(재고 공유): 원본은 그대로 두고 고른 카테고리에도 보이게 한다. 재고·가격·링크·사진은 원본 하나를 같이 쓴다
+  async function copyTo(allKeys: string[], category: string) {
+    if (busy) return;
+    setBusy(true); setMoveErr("");
+    try {
+      const r = await fetch("/api/admin/products", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "copy", keys: allKeys, category }) });
+      if (r.status === 401) { router.replace("/"); return; }
+      const j = (await r.json().catch(() => ({}))) as { error?: string; created?: { key: string; base: string }[]; skipped?: string[] };
+      if (!r.ok) throw new Error(j.error ?? "복사하지 못했어요.");
+      const made = (j.created ?? []).flatMap(c => { const m = products.find(p => p.key === c.base); return m ? [{ ...m, key: c.key, category, sub: headOf(category, catTrades, trades), copyOf: catTrades[m.category] ?? "" }] : []; });
+      setProducts(prev => [...prev, ...made]);
+      setSelected(new Set());
+      setToast({ id: Date.now(), text: made.length + "개를 “" + category + "”에도 연결했어요 (재고는 원본과 같아요)" + (j.skipped?.length ? " · 이미 있어 건너뜀 " + j.skipped.length + "개" : "") });
+      setMoveKeys(null);
+    } catch (e) {
+      setMoveErr(e instanceof Error ? e.message : "복사하지 못했어요.");
+    }
+    setBusy(false);
+  }
+  const doMove = (category: string) => { if (moveKeys) void (moveMode === "copy" ? copyTo(moveKeys, category) : moveTo(moveKeys, category)); };
 
   async function doConfirm() {
     if (!confirm) return;
@@ -971,7 +972,7 @@ export default function AdminCatalog({
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 px-4 pb-32">
       <header className="flex flex-wrap items-center gap-3 py-5">
-        <h1 className="mr-auto text-xl font-extrabold">창고장비현황</h1>
+        <h1 className="mr-auto text-xl font-extrabold">창고현황</h1>
         {canRegister && activeCat !== "전체" && ( // 카테고리를 고른 상태에서만 품목 추가
           <motion.button type="button" onClick={() => setAddOpen(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
             + 품목 추가
@@ -997,7 +998,7 @@ export default function AdminCatalog({
         )}
       </div>
 
-      <div className="mt-3 flex gap-2" role="tablist" aria-label="창고장비현황 분류">
+      <div className="mt-3 flex gap-2" role="tablist" aria-label="창고현황 분류">
         {KINDS.map(k => (
           <button key={k} type="button" role="tab" aria-selected={kind === k} onClick={() => { setKind(k); setCat("전체"); setSub(""); setPage(1); resetSel(); }} className={`flex-1 rounded-xl border px-4 py-2.5 text-sm font-extrabold sm:flex-none sm:px-8 ${kind === k ? "border-blue-600 bg-blue-600 text-white" : "border-black/15 bg-white text-zinc-700 dark:border-white/15 dark:bg-zinc-900 dark:text-zinc-300"}`}>
             {k}<small className="ml-1.5 opacity-70">{kindCounts[k] ?? 0}</small>
@@ -1054,30 +1055,6 @@ export default function AdminCatalog({
             </button>
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-          {canSetInvExclude && !trashMode && invEx.trades.length + invEx.categories.length > 0 && (
-            <details className="relative">
-              <summary className="cursor-pointer list-none rounded-xl bg-zinc-100 px-3 py-2 text-sm font-bold dark:bg-zinc-800">장비조사 제외 {invEx.trades.length + invEx.categories.length}</summary>
-              <div className="absolute right-0 z-20 mt-1 w-64 space-y-1 rounded-xl border border-black/10 bg-white p-2 shadow-xl dark:border-white/10 dark:bg-zinc-900">
-                <p className="px-1 text-[11px] text-zinc-500">장비조사에서 빠져 있는 항목이에요. 눌러서 다시 추가해요.</p>
-                {invEx.trades.map(t => (
-                  <button key={"t" + t} type="button" disabled={invBusy} onClick={() => void toggleInvEx("trade", t)} className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm font-semibold hover:bg-zinc-50 disabled:opacity-50 dark:hover:bg-zinc-800"><span>{t} <small className="font-normal text-zinc-500">공정</small></span><span className="text-xs font-bold text-blue-600">＋ 다시 추가</span></button>
-                ))}
-                {invEx.categories.map(c => (
-                  <button key={"c" + c} type="button" disabled={invBusy} onClick={() => void toggleInvEx("category", c)} className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm font-semibold hover:bg-zinc-50 disabled:opacity-50 dark:hover:bg-zinc-800"><span>{c} <small className="font-normal text-zinc-500">카테고리</small></span><span className="text-xs font-bold text-blue-600">＋ 다시 추가</span></button>
-                ))}
-              </div>
-            </details>
-          )}
-          {canSetInvExclude && !trashMode && trade !== "전체" && (
-            <button type="button" disabled={invBusy} onClick={() => void toggleInvEx("trade", trade)} title="이 공정을 장비조사 목록에서 뺍니다 (창고장비현황에는 영향 없음)" className={`rounded-xl px-3 py-2 text-sm font-bold disabled:opacity-50 ${invEx.trades.includes(trade) ? "bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-300" : "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"}`}>
-              {invEx.trades.includes(trade) ? `“${trade}” 공정 장비조사 제외됨 · 해제` : `“${trade}” 공정 장비조사에서 제외`}
-            </button>
-          )}
-          {canSetInvExclude && !trashMode && cat !== "전체" && (
-            <button type="button" disabled={invBusy} onClick={() => void toggleInvEx("category", cat)} title="이 카테고리를 장비조사 목록에서 뺍니다 (창고장비현황에는 영향 없음)" className={`rounded-xl px-3 py-2 text-sm font-bold disabled:opacity-50 ${invEx.categories.includes(cat) ? "bg-red-50 text-red-600 dark:bg-red-500/15 dark:text-red-300" : "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"}`}>
-              {invEx.categories.includes(cat) ? `“${cat}” 카테고리 장비조사 제외됨 · 해제` : `“${cat}” 카테고리 장비조사에서 제외`}
-            </button>
-          )}
           {canManageCats && !trashMode && (
             <button type="button" onClick={() => { setCatErr(""); setRenaming(null); setCatOpen(true); }} className="rounded-xl bg-blue-50 px-3 py-2 text-sm font-bold text-blue-600 dark:bg-blue-500/15 dark:text-blue-300">
               카테고리 관리
@@ -1101,7 +1078,7 @@ export default function AdminCatalog({
           {trades.map(t => tradeChip(t))}
           {(tradeCounts.get("미배정") ?? 0) > 0 && tradeChip("미배정")}
         </div>
-        {trade !== "전체" && (
+        {trade !== "전체" && kind !== "연장" && (
           <div className="flex flex-wrap items-end gap-1 border-b border-black/15 pt-1 dark:border-white/15" role="tablist" aria-label="카테고리">
             {catNames.length > 0 ? <>{chip("전체")}{catNames.map(c => chip(c))}</> : <span className="px-2 text-sm text-zinc-500">이 공정에는 카테고리가 없어요.</span>}
           </div>
@@ -1127,7 +1104,7 @@ export default function AdminCatalog({
               onDropOn={dropOn}
               canDelete={canDelete}
               canEdit={canEdit}
-              onMove={k => { setMoveErr(""); setMoveKeys([k]); }}
+              onMove={k => { setMoveErr(""); setMoveMode("move"); setMoveKeys([k]); }}
               onRename={x => setEditP(x)}
               onShift={shiftProduct}
               onStock={setStockOf}
@@ -1184,8 +1161,8 @@ export default function AdminCatalog({
               </motion.button>
             )}
             {canEdit && !trashMode && (
-              <motion.button type="button" onClick={() => { setMoveErr(""); setMoveKeys([...selected]); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
-                카테고리 이동
+              <motion.button type="button" onClick={() => { setMoveErr(""); setMoveMode("move"); setMoveKeys([...selected]); }} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">
+                카테고리 이동·복사
               </motion.button>
             )}
             {canDelete && (
@@ -1215,7 +1192,7 @@ export default function AdminCatalog({
         product={editP}
         onClose={() => setEditP(null)}
         onSaved={(key, e) => {
-          const up = <T extends { key: string; name: string; sub: string; brand: string; price: number; kind: Kind; image: string }>(rows: T[]) => rows.map(p => (p.key === key ? { ...p, name: e.name, sub: e.sub, brand: e.brand, price: e.price, kind: e.kind ?? p.kind, image: e.image ?? p.image, ...(e.model !== undefined ? { model: e.model } : {}), ...(e.battery !== undefined ? { battery: e.battery } : {}), ...(e.voltage !== undefined ? { voltage: e.voltage } : {}), ...(e.compat !== undefined ? { compat: e.compat } : {}), ...(e.tags !== undefined ? { tags: e.tags } : {}) } : p));
+          const up = <T extends { key: string; name: string; sub: string; brand: string; price: number; kind: Kind; image: string }>(rows: T[]) => rows.map(p => (p.key.split("@")[0] === key.split("@")[0] ? { ...p, name: e.name, sub: p.key === key && !key.includes("@") ? e.sub : p.sub, brand: e.brand, price: e.price, kind: e.kind ?? p.kind, image: e.image ?? p.image, ...(e.model !== undefined ? { model: e.model } : {}), ...(e.battery !== undefined ? { battery: e.battery } : {}), ...(e.voltage !== undefined ? { voltage: e.voltage } : {}), ...(e.compat !== undefined ? { compat: e.compat } : {}), ...(e.tags !== undefined ? { tags: e.tags } : {}) } : p));
           setProducts(up); setTrash(up);
           setToast({ id: Date.now(), text: "품목 정보를 수정했어요" });
           setEditP(null);
@@ -1242,7 +1219,25 @@ export default function AdminCatalog({
       <Modal open={moveKeys !== null} onClose={() => !busy && setMoveKeys(null)}>
         {moveKeys && (
           <>
-            <h2 className="text-lg font-bold">{moveKeys.length}개를 어느 카테고리로 옮길까요?</h2>
+            <h2 className="text-lg font-bold">{moveKeys.length}개를 어느 {moveKeys.every(k => products.find(p => p.key === k)?.kind === "연장") ? "공정으로" : "카테고리로"} {moveMode === "copy" ? "복사할까요?" : "옮길까요?"}</h2>
+            <div className="mt-2 flex gap-1.5" role="radiogroup" aria-label="이동 또는 복사">
+              {([["move", "이동"], ["copy", "복사 (재고 공유)"]] as const).map(([m, label]) => <button key={m} type="button" role="radio" aria-checked={moveMode === m} onClick={() => { setMoveMode(m); setMoveErr(""); }} className={`flex-1 rounded-xl py-2 text-sm font-extrabold ${moveMode === m ? "bg-blue-600 text-white" : "bg-zinc-100 dark:bg-zinc-800"}`}>{label}</button>)}
+            </div>
+            {moveMode === "copy" && <p className="mt-2 text-xs text-zinc-500">원본은 그대로 두고 고른 카테고리(공정)에도 보여요. 재고·가격·링크·사진은 원본 하나를 같이 써요.</p>}
+            {moveKeys.every(k => products.find(p => p.key === k)?.kind === "연장") ? (
+              <div className="mt-3 max-h-[50vh] space-y-1.5 overflow-y-auto pr-1">
+                {trades.map(g => {
+                  const first = catList.find(c => catTrades[c] === g); // 연장은 공정만 고르고, 카테고리는 그 공정의 첫 카테고리에 둔다
+                  if (!first) return null;
+                  return (
+                    <button key={g} type="button" disabled={busy} onClick={() => doMove(first)} className="flex w-full items-center rounded-xl border border-black/10 px-4 py-3 text-left text-[15px] hover:border-blue-500 disabled:opacity-50 dark:border-white/10">
+                      {g}
+                      <small className="ml-auto text-zinc-500">연장 {products.filter(p => p.kind === "연장" && catTrades[p.category] === g).length}개</small>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
             <div className="mt-3 max-h-[50vh] overflow-y-auto pr-1">
               {[...trades, ""].map(g => {
                 const inG = catList.filter(c => (g === "" ? !trades.includes(catTrades[c] ?? "") : catTrades[c] === g));
@@ -1263,6 +1258,7 @@ export default function AdminCatalog({
               })}
               {catList.length === 0 && <p className="py-4 text-center text-sm text-zinc-500">카테고리가 없어요. 먼저 카테고리를 만들어 주세요.</p>}
             </div>
+            )}
             {moveErr && <p className="mt-3 text-sm text-red-500" role="alert">{moveErr}</p>}
             <button type="button" disabled={busy} onClick={() => setMoveKeys(null)} className="mt-4 w-full rounded-xl bg-zinc-100 py-3 font-bold dark:bg-zinc-800">취소</button>
           </>
@@ -1276,6 +1272,8 @@ export default function AdminCatalog({
         defaultKind={kind}
         defaultCategory={cat !== "전체" && catList.includes(cat) ? cat : ""}
         headOfCat={c => headOf(c, catTrades, trades)}
+        tradeOf={c => catTrades[c] ?? ""}
+        toolOptions={trades.flatMap(t => { const first = catList.find(c => catTrades[c] === t); return first ? [{ trade: t, category: first }] : []; })}
         onAdded={p => {
           setProducts(prev => [...prev, p]);
           setView("catalog"); setKind(p.kind); setTrade("전체"); setQ(""); setSub(""); setSort("no"); setCat(p.category); setPage(1);

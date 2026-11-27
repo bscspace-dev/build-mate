@@ -131,7 +131,7 @@ type MemberRow = {
   must_change_password: boolean; id_changed: boolean; created_at: string;
 };
 const toMember = (r: MemberRow): Member => ({
-  id: r.id, name: r.name, role: r.role as RoleKey, extraRole: (r.extra_role ?? '') as RoleKey | '', payType: (r.pay_type ?? '') as PayType, trades: r.trades ?? [], categories: r.categories ?? [], handles: r.handles ?? '', phone: r.phone ?? '', address: r.address ?? '', addressDetail: r.address_detail ?? '', position: r.position ?? '', hireDate: r.hire_date ?? '', payAmount: r.pay_amount ?? 0, payHistory: r.pay_history ?? [], bank: r.bank ?? '', accountNo: r.account_no ?? '', accountHolder: r.account_holder ?? '', safetyDate: r.safety_date ?? '', license: r.license ?? '', resignDate: r.resign_date ?? '', history: r.employment_history ?? [], photo: r.photo ?? '', bankbook: r.bankbook ?? '', fieldRoles: (r.field_roles ?? []) as RoleKey[], officeStatus: (r.office_status ?? '') as '' | 'probation' | 'regular', menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
+  id: r.id, name: r.name.replace(/\u200b/g, ''), role: r.role as RoleKey, extraRole: (r.extra_role ?? '') as RoleKey | '', payType: (r.pay_type ?? '') as PayType, trades: r.trades ?? [], categories: r.categories ?? [], handles: r.handles ?? '', phone: r.phone ?? '', address: r.address ?? '', addressDetail: r.address_detail ?? '', position: r.position ?? '', hireDate: r.hire_date ?? '', payAmount: r.pay_amount ?? 0, payHistory: r.pay_history ?? [], bank: r.bank ?? '', accountNo: r.account_no ?? '', accountHolder: r.account_holder ?? '', safetyDate: r.safety_date ?? '', license: r.license ?? '', resignDate: r.resign_date ?? '', history: r.employment_history ?? [], photo: r.photo ?? '', bankbook: r.bankbook ?? '', fieldRoles: (r.field_roles ?? []) as RoleKey[], officeStatus: (r.office_status ?? '') as '' | 'probation' | 'regular', menus: (r.menus ?? []) as MenuKey[], actions: r.actions ?? {}, createdAt: new Date(r.created_at).toISOString(),
   loginId: r.login_id ?? undefined, passHash: r.pass_hash ?? undefined, mustChangePassword: r.must_change_password, idChanged: r.id_changed,
 });
 const toRow = (m: Member) => ({
@@ -192,29 +192,34 @@ export async function getMemberByLoginId(loginId: string): Promise<Member | null
   return row ? toMember(row) : null;
 }
 
-export async function insertMember(m: Member): Promise<{ member: Member } | Conflict> {
-  const { data, error } = await supabase().from('members').insert(toRow(m)).select('*').single();
-  if (error) {
+const ZW = '\u200b';
+export async function insertMember(m: Member, allowDupName = false): Promise<{ member: Member } | Conflict> {
+  for (let k = 0; k < (allowDupName ? 30 : 1); k++) {
+    const { data, error } = await supabase().from('members').insert({ ...toRow(m), name: m.name + ZW.repeat(k) }).select('*').single();
+    if (!error) return { member: toMember(data as MemberRow) };
     const c = conflictOf(error);
+    if (c && c.conflict === 'name' && allowDupName) continue; // 같은 이름이 있으면 보이지 않는 글자를 하나 더 붙여 다시
     if (c) return c;
     throw new Error(`Supabase 회원 등록 실패: ${error.message}`);
   }
-  return { member: toMember(data as MemberRow) };
+  return { conflict: 'name' };
 }
 
-export async function patchMember(id: string, patch: MemberPatch): Promise<{ member: Member } | Conflict | { notFound: true }> {
+export async function patchMember(id: string, patch: MemberPatch, allowDupName = false): Promise<{ member: Member } | Conflict | { notFound: true }> {
   const row = toPatchRow(patch);
   if (!Object.keys(row).length) {
     const cur = await getMember(id);
     return cur ? { member: cur } : { notFound: true };
   }
-  const { data, error } = await supabase().from('members').update(row).eq('id', id).select('*').maybeSingle();
-  if (error) {
+  for (let k = 0; k < (allowDupName && typeof row.name === 'string' ? 30 : 1); k++) {
+    const { data, error } = await supabase().from('members').update(k ? { ...row, name: (row.name as string) + ZW.repeat(k) } : row).eq('id', id).select('*').maybeSingle();
+    if (!error) return data ? { member: toMember(data as MemberRow) } : { notFound: true };
     const c = conflictOf(error);
+    if (c && c.conflict === 'name' && allowDupName && typeof row.name === 'string') continue;
     if (c) return c;
     throw new Error(`Supabase 회원 수정 실패: ${error.message}`);
   }
-  return data ? { member: toMember(data as MemberRow) } : { notFound: true };
+  return { conflict: 'name' };
 }
 
 export async function removeMember(id: string): Promise<boolean> {
@@ -1223,4 +1228,57 @@ export async function setInventoryHidden(who: string, keys: string[]): Promise<v
   const cur = await getInventoryHidden();
   if (keys.length) cur[who] = keys; else delete cur[who];
   must(await supabase().from('app_settings').upsert({ key: 'inventory_hidden', value: cur }, { onConflict: 'key' }), '숨긴 품목 저장');
+}
+
+// ───────── 공통 연결 복사 (app_settings: product_links) ─────────
+const toProductLinks = (v: unknown): import('./types').ProductLink[] => (Array.isArray(v) ? v.flatMap((x): import('./types').ProductLink[] => {
+  if (!x || typeof x !== 'object') return [];
+  const o = x as Record<string, unknown>;
+  if (typeof o.id !== 'string' || typeof o.key !== 'string' || typeof o.trade !== 'string' || typeof o.category !== 'string') return [];
+  return [{ id: o.id, key: o.key, trade: o.trade, category: o.category, at: typeof o.at === 'string' ? o.at : '', byName: typeof o.byName === 'string' ? o.byName : '' }];
+}) : []);
+export async function getProductLinks(): Promise<import('./types').ProductLink[]> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'product_links').maybeSingle(), '연결 복사 조회') as { value: unknown } | null;
+  return toProductLinks(row?.value);
+}
+export async function saveProductLinks(v: import('./types').ProductLink[]): Promise<void> {
+  must(await supabase().from('app_settings').upsert({ key: 'product_links', value: v }, { onConflict: 'key' }), '연결 복사 저장');
+}
+
+// ───────── 장비조사 즐겨찾기(별표) — 계정마다 따로 (app_settings: inventory_stars) ─────────
+export async function getInventoryStars(): Promise<Record<string, string[]>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'inventory_stars').maybeSingle(), '별표 조회') as { value: unknown } | null;
+  return toHiddenMap(row?.value);
+}
+export async function setInventoryStars(who: string, keys: string[]): Promise<void> {
+  const cur = await getInventoryStars();
+  if (keys.length) cur[who] = keys; else delete cur[who];
+  must(await supabase().from('app_settings').upsert({ key: 'inventory_stars', value: cur }, { onConflict: 'key' }), '별표 저장');
+}
+
+// ───────── 거래처 비고 (app_settings: supplier_notes) ─────────
+const toNoteMap = (v: unknown): Record<string, string> => {
+  const o: Record<string, string> = {};
+  if (v && typeof v === 'object' && !Array.isArray(v)) for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (typeof x === 'string' && x) o[k] = x;
+  return o;
+};
+export async function getSupplierNotes(): Promise<Record<string, string>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'supplier_notes').maybeSingle(), '거래처 비고 조회') as { value: unknown } | null;
+  return toNoteMap(row?.value);
+}
+export async function setSupplierNote(id: string, note: string): Promise<void> {
+  const cur = await getSupplierNotes();
+  if (note) cur[id] = note; else delete cur[id];
+  must(await supabase().from('app_settings').upsert({ key: 'supplier_notes', value: cur }, { onConflict: 'key' }), '거래처 비고 저장');
+}
+
+// ───────── 거래처 즐겨찾기(별표) — 계정마다 따로 (app_settings: supplier_stars) ─────────
+export async function getSupplierStars(): Promise<Record<string, string[]>> {
+  const row = must(await supabase().from('app_settings').select('value').eq('key', 'supplier_stars').maybeSingle(), '거래처 별표 조회') as { value: unknown } | null;
+  return toHiddenMap(row?.value);
+}
+export async function setSupplierStars(who: string, ids: string[]): Promise<void> {
+  const cur = await getSupplierStars();
+  if (ids.length) cur[who] = ids; else delete cur[who];
+  must(await supabase().from('app_settings').upsert({ key: 'supplier_stars', value: cur }, { onConflict: 'key' }), '거래처 별표 저장');
 }

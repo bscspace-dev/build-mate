@@ -190,7 +190,7 @@ export async function addMember(
       id: crypto.randomBytes(9).toString('base64url'), name, role, trades, categories, handles: clipHandles(input.handles), phone: clipPhone(input.phone), address: clipAddress(input.address), addressDetail: clipAddressDetail(input.addressDetail), position: clipPosition(input.position), hireDate: clipDate(input.hireDate), resignDate: clipDate(input.resignDate), history: [], photo: '', bankbook: '', payAmount: clipPay(input.payAmount), payHistory: clipPay(input.payAmount) > 0 ? [{ from: '', amount: clipPay(input.payAmount), at: new Date().toISOString() }] : [], bank: clipBank(input.bank), accountNo: clipAccountNo(input.accountNo), accountHolder: clipHolder(input.accountHolder), safetyDate: clipDate(input.safetyDate), license: clipLicense(input.license), fieldRoles: clipFieldRoles(input.fieldRoles), officeStatus: checkOfficeStatus(input.officeStatus), menus, actions, extraRole: extra, payType: pay, createdAt: new Date().toISOString(),
       mustChangePassword: false, idChanged: false,
     };
-    const r0 = await insertMember(bare);
+    const r0 = await insertMember(bare, true); // 거래처는 같은 이름이 여러 곳일 수 있다
     if ('conflict' in r0) return { error: conflictMessage(r0.conflict) };
     return { member: toPublic(r0.member), credentials: null };
   }

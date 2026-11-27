@@ -42,6 +42,10 @@ export function formatPhone(v: string): string {
     const x = d.slice(0, 8); // 대표번호 (1588-1234)
     return x.length <= 4 ? x : `${x.slice(0, 4)}-${x.slice(4)}`;
   }
+  if (/^050\d/.test(d)) {
+    const x = d.slice(0, 12); // 안심번호 (0507-1234-5678): 앞자리가 4자리라 11자리로 자르면 끝이 잘린다
+    return x.length <= 4 ? x : x.length <= 8 ? `${x.slice(0, 4)}-${x.slice(4)}` : `${x.slice(0, 4)}-${x.slice(4, x.length - 4)}-${x.slice(-4)}`;
+  }
   const x = d.slice(0, 11);
   return x.length <= 3 ? x : x.length <= 7 ? `${x.slice(0, 3)}-${x.slice(3)}` : `${x.slice(0, 3)}-${x.slice(3, x.length - 4)}-${x.slice(-4)}`;
 }

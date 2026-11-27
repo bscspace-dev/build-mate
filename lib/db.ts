@@ -49,8 +49,8 @@ export const getMembers = () => impl().getMembers();
 export const getActiveMembers = async () => (await impl().getMembers()).filter(m => !m.resignDate);
 export const getMember = (id: string) => impl().getMember(id);
 export const getMemberByLoginId = (loginId: string) => impl().getMemberByLoginId(loginId);
-export const insertMember: typeof file.insertMember = m => impl().insertMember(m);
-export const patchMember: typeof file.patchMember = (id, patch) => impl().patchMember(id, patch);
+export const insertMember: typeof file.insertMember = (m, dup) => impl().insertMember(m, dup);
+export const patchMember: typeof file.patchMember = (id, patch, dup) => impl().patchMember(id, patch, dup);
 export const removeMember = (id: string) => impl().removeMember(id);
 
 export const getTeams = () => impl().getTeams();
@@ -142,3 +142,11 @@ export const saveInventoryExcluded = (v: import('./types').InventoryExcluded) =>
 export const removeAudit = (ids: string[]) => impl().removeAudit(ids);
 export const getFavoriteVendors = () => impl().getFavoriteVendors();
 export const saveFavoriteVendors = (list: string[]) => impl().saveFavoriteVendors(list);
+export const getProductLinks = () => impl().getProductLinks();
+export const saveProductLinks = (v: import('./types').ProductLink[]) => impl().saveProductLinks(v);
+export const getInventoryStars = () => impl().getInventoryStars();
+export const setInventoryStars = (who: string, keys: string[]) => impl().setInventoryStars(who, keys);
+export const getSupplierNotes = () => impl().getSupplierNotes();
+export const setSupplierNote = (id: string, note: string) => impl().setSupplierNote(id, note);
+export const getSupplierStars = () => impl().getSupplierStars();
+export const setSupplierStars = (who: string, ids: string[]) => impl().setSupplierStars(who, ids);

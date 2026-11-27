@@ -98,12 +98,11 @@ export const teamGroup = (teams: readonly Team[], key: RoleKey): GroupKey | null
 export const teamsIn = (teams: readonly Team[], g: GroupKey): Team[] => teams.filter(t => t.group === g);
 
 export const MENUS = [
-  { key: 'catalog', label: '창고장비현황', parent: '운영관리', href: '/admin', grantable: true, desc: '연장·상비품·자재를 보고, 필요 없는 품목을 삭제·복원해요' },
+  { key: 'catalog', label: '창고현황', parent: '운영관리', href: '/admin', grantable: true, desc: '연장·상비품·자재를 보고, 필요 없는 품목을 삭제·복원해요' },
   { key: 'suppliers', label: '거래처관리', parent: '현장관리', href: '/admin/suppliers', grantable: true, desc: '거래처 목록(취급품목·연락처·주소)을 보고, 거래처를 등록·수정·삭제해요' },
   { key: 'sites', label: '현장정보', parent: '현장관리', href: '/admin/sites', grantable: true, desc: '자재 요청에서 고를 현장을 등록·수정·삭제해요' },
   { key: 'placements', label: '현장배치', parent: '현장관리', href: '/admin/placements', grantable: true, desc: '날짜별로 현장작업자를 현장에 배치해요 (작업자는 "내 배치"에서 다음날 현장을 확인)' },
   { key: 'inventory', label: '장비조사', parent: '운영관리', href: '/admin/inventory', grantable: true, desc: '팀이 맡은 카테고리의 창고장비를 목록으로 조사해 수량을 등록·삭제해요 (부여하면 내 팀 카테고리만 보여요)' },
-  { key: 'pricing', label: '가격조사', parent: '운영관리', href: '/admin/pricing', grantable: true, desc: '장비조사와 같은 목록에서 품목의 금액·수량을 조사하고 합계를 확인해요 (부여하면 내 팀 공정만 보여요)' },
   { key: 'vehicles', label: '차량정보', parent: '운영관리', href: '/admin/vehicles', grantable: true, desc: '차량마다 배치된 연장과 나간 상비품 수량을 보고 관리해요' },
   { key: 'history', label: '변경이력', parent: '인사관리', href: '/admin/history', grantable: true, desc: '모든 메뉴의 추가·수정·삭제를 누가 언제 했는지 모아서 확인해요' },
   { key: 'expenses', label: '경비관리', parent: '인사관리', href: '/admin/expenses', grantable: true, desc: '영수증·세금계산서를 올리거나 구매가 필요한 비품을 요청하면, 담당자가 구매하고 경리가 엑셀로 정리해요' },
@@ -151,8 +150,8 @@ export const GRANTABLE_MENUS: MenuKey[] = MENUS.filter(m => m.grantable).map(m =
 // 팀 기본 메뉴는 최고 관리자·개발팀만 갖는다. 그 밖의 팀(새로 만든 팀 포함)은 기본 메뉴가 없어서,
 // 최고 관리자·개발팀이 회원별로 부여한 메뉴만 보인다 (부여가 없으면 내 정보만 쓴다).
 const TEAM_MENUS: Record<string, MenuKey[]> = {
-  super: ['catalog', 'vehicles', 'inventory', 'pricing', 'history', 'suppliers', 'sites', 'placements', 'expenses', 'attendance', 'leave', 'requests', 'members', 'staff', 'payroll'],
-  dev: ['catalog', 'vehicles', 'inventory', 'pricing', 'history', 'suppliers', 'sites', 'placements', 'expenses', 'attendance', 'leave', 'requests', 'members', 'staff', 'payroll'],
+  super: ['catalog', 'vehicles', 'inventory', 'history', 'suppliers', 'sites', 'placements', 'expenses', 'attendance', 'leave', 'requests', 'members', 'staff', 'payroll'],
+  dev: ['catalog', 'vehicles', 'inventory', 'history', 'suppliers', 'sites', 'placements', 'expenses', 'attendance', 'leave', 'requests', 'members', 'staff', 'payroll'],
 };
 
 /** 팀 기본 메뉴라도 동작을 줄여야 하는 팀: 여기 없으면 그 메뉴의 모든 동작이 허용된다. (현장 팀은 거래처를 보고 등록만 한다) */
@@ -248,7 +247,6 @@ export const MENU_ACTIONS: Record<MenuKey, ActionKey[]> = {
   staff: ['view'], // 회원정보는 보기만 — 부여 / 부여 안 함으로 나눈다
   payroll: ['view'], // 월급관리도 보기만 — 부여 / 부여 안 함
   inventory: ['view', 'edit'], // 장비조사: 부여 안 함 / 일부(view = 내 공정 목록 사용: 보기·추가·수정·삭제 모두) / 모든(+ edit = 조사 제외 설정·모든 공정)
-  pricing: ['view'], // 가격조사도 부여 / 부여 안 함 — 부여받으면 내 팀 공정 안에서 금액·수량 등록·수정·삭제
   history: ['view'], // 변경이력은 보기만 — 부여 / 부여 안 함
   survey: [],
 };

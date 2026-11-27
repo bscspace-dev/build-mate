@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import SuppliersView, { type SupplierLite } from "@/components/admin/SuppliersView";
 import { actorCan, getActor } from "@/lib/auth";
-import { getMembers, getTeams } from "@/lib/db";
+import { getMembers, getSupplierNotes, getSupplierStars, getTeams } from "@/lib/db";
 import { sideOf, teamGroup } from "@/lib/roles";
 
 export const metadata = { title: "거래처관리 · 빌드메이트" };
@@ -19,10 +19,10 @@ export default function SuppliersPage() {
 async function Loader() {
   const actor = await getActor("suppliers");
   if (!actor) redirect("/"); // '거래처' 메뉴를 쓸 수 없으면 메인으로
-  const [members, teams] = await Promise.all([getMembers(), getTeams()]);
+  const [members, teams, notes, starsAll] = await Promise.all([getMembers(), getTeams(), getSupplierNotes().catch(() => ({} as Record<string, string>)), getSupplierStars().catch(() => ({} as Record<string, string[]>))]);
   const list: SupplierLite[] = members
     .filter(m => { const g = teamGroup(teams, m.role); return g !== null && sideOf(g) === "coop"; })
-    .map(m => ({ id: m.id, name: m.name, handles: m.handles, phone: m.phone, address: m.address }))
+    .map(m => ({ id: m.id, name: m.name, handles: m.handles, phone: m.phone, address: m.address, note: notes[m.id] ?? "" }))
     .sort((a, b) => a.name.localeCompare(b.name, "ko"));
-  return <SuppliersView suppliers={list} canRegister={actorCan(actor, "suppliers", "register")} canEdit={actorCan(actor, "suppliers", "edit")} canDelete={actorCan(actor, "suppliers", "delete")} />;
+  return <SuppliersView suppliers={list} stars={starsAll[actor.kind === "member" ? actor.member.id : "root"] ?? []} canRegister={actorCan(actor, "suppliers", "register")} canEdit={actorCan(actor, "suppliers", "edit")} canDelete={actorCan(actor, "suppliers", "delete")} />;
 }

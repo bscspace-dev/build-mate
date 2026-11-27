@@ -1,4 +1,4 @@
-// 같은 구매처는 같은 색으로 보여 준다 (이름에서 색을 정한다). 가격조사와 창고장비현황이 같이 쓴다.
+// 같은 구매처는 같은 색으로 보여 준다 (이름에서 색을 정한다). 창고현황이 쓴다.
 export const VENDOR_COLORS = [
   'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200',
   'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200',

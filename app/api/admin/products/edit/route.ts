@@ -1,6 +1,6 @@
 import { audited } from '@/lib/audit';
 import { actorCan, getActor } from '@/lib/auth';
-import { setProductBattery, setProductCompat, setProductModel, setProductTags, setProductVoltage, updateProduct } from '@/lib/db';
+import { getProducts, setProductBattery, setProductCompat, setProductModel, setProductTags, setProductVoltage, updateProduct } from '@/lib/db';
 import { asKind, KINDS } from '@/lib/types';
 import { normTags } from '@/lib/tags';
 import { json, limited, sameOrigin } from '@/lib/guard';
@@ -28,9 +28,10 @@ async function handlePOST(req: Request) {
   const form = await req.formData().catch(() => null);
   if (!form) return json({ error: 'bad request' }, 400);
 
-  const key = text(form.get('key'), 64);
+  const rawKey = text(form.get('key'), 64);
+  const key = rawKey.split('@')[0]; // 연결 복사본이면 원본을 고친다
   const name = text(form.get('name'), 100);
-  const sub = text(form.get('sub'), 100);
+  let sub = text(form.get('sub'), 100);
   const brand = text(form.get('brand'), 50);
   const price = whole(form.get('price'), 99_999_999);
   const rawKind = form.get('kind');
@@ -46,6 +47,7 @@ async function handlePOST(req: Request) {
     if (photo.size > MAX_IMAGE) return json({ error: '사진이 너무 커요. 3MB 이하로 올려 주세요.' }, 413);
   }
 
+  if (rawKey !== key) sub = (await getProducts()).find(p => p.key === key)?.sub ?? sub; // 복사본의 세부분류는 그 공정에서만 쓰는 값이라 원본에는 쓰지 않는다
   const image = hasPhoto ? await saveImage(key, new Uint8Array(await photo.arrayBuffer()), photo.type) : undefined;
   let r: { prevImage: string } | null;
   try {

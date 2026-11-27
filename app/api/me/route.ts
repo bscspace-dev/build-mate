@@ -21,7 +21,7 @@ export async function GET() {
       myVehicles: (await getVehicles()).filter(v => v.driverId === member.id).length, // 배차된 차량 수
     });
   }
-  if (await hasRootSession()) return json({ kind: 'root', name: '최고 관리자(내장)', roleLabel: '최고 관리자', menus: ['catalog', 'vehicles', 'inventory', 'pricing', 'history', 'suppliers', 'sites', 'placements', 'expenses', 'attendance', 'leave', 'requests', 'members', 'staff', 'payroll'], menuOrder: await getMenuOrder() });
+  if (await hasRootSession()) return json({ kind: 'root', name: '최고 관리자(내장)', roleLabel: '최고 관리자', menus: ['catalog', 'vehicles', 'inventory', 'history', 'suppliers', 'sites', 'placements', 'expenses', 'attendance', 'leave', 'requests', 'members', 'staff', 'payroll'], menuOrder: await getMenuOrder() });
   return json({ error: '로그인이 필요해요.' }, 401);
 }
 

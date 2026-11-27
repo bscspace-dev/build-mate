@@ -31,8 +31,10 @@ export async function shrink(file: File, maxSide = MAX_SIDE): Promise<Blob> {
 
 // 새 품목 등록: 사진 + 정보
 export default function AddProduct({
-  open, onClose, categories, defaultCategory, defaultKind, headOfCat, onAdded,
+  open, onClose, categories, defaultCategory, defaultKind, headOfCat, tradeOf, toolOptions, onAdded,
 }: {
+  tradeOf?: (category: string) => string; // 카테고리가 속한 공정
+  toolOptions?: { trade: string; category: string }[]; // 연장은 공정만 고른다: 공정마다 첫 카테고리에 둔다
   headOfCat: (category: string) => string; // 카테고리의 "공정>카테고리"
   open: boolean;
   onClose: () => void;
@@ -48,7 +50,9 @@ export default function AddProduct({
   const [kind, setKind] = useState<Kind>(defaultKind);
   const [category, setCategory] = useState(defaultCategory);
   const [sub, setSub] = useState<string | null>(null); // null = 직접 고치지 않음 (고른 카테고리의 공정>카테고리가 자동으로 들어간다)
-  const subShown = sub ?? (category ? headOfCat(category) : "");
+  const toolMode = kind === "연장" && !!toolOptions && !!tradeOf;
+  const effCat = toolMode ? (toolOptions!.find(o => o.trade === tradeOf!(category))?.category ?? "") : category; // 연장이면 고른 카테고리가 속한 공정의 첫 카테고리
+  const subShown = sub ?? (effCat ? headOfCat(effCat) : "");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
   const [tags, setTags] = useState(""); // 연장 태그 (쉼표로 구분)
@@ -95,7 +99,7 @@ export default function AddProduct({
     if (busy) return;
     if (!photo) return setErr("사진을 올려 주세요.");
     if (!name.trim()) return setErr("품목 이름을 적어 주세요.");
-    if (!category) return setErr("카테고리를 골라 주세요.");
+    if (!effCat) return setErr(toolMode ? "공정을 골라 주세요." : "카테고리를 골라 주세요.");
     setBusy(true);
     setErr("");
     try {
@@ -104,7 +108,7 @@ export default function AddProduct({
       fd.set("photo", new File([blob], blob.type === "image/webp" ? "photo.webp" : "photo.jpg", { type: blob.type }));
       fd.set("name", name);
       fd.set("kind", kind);
-      fd.set("category", category);
+      fd.set("category", effCat);
       fd.set("sub", subShown);
       fd.set("brand", brand);
       if (kind === "연장") { fd.set("model", model); fd.set("voltage", voltage); fd.set("battery", battery); fd.set("compat", compat); fd.set("tags", tags); }
@@ -151,11 +155,18 @@ export default function AddProduct({
           ))}
         </div>
 
-        <label htmlFor="np-cat" className="mt-4 block text-sm font-bold">카테고리</label>
+        <label htmlFor="np-cat" className="mt-4 block text-sm font-bold">{toolMode ? "공정" : "카테고리"}</label>
+        {toolMode ? (
+          <select id="np-cat" value={effCat} onChange={e => setCategory(e.target.value)} className={inputCls}>
+            <option value="">공정을 골라 주세요</option>
+            {toolOptions!.map(o => <option key={o.trade} value={o.category}>{o.trade}</option>)}
+          </select>
+        ) : (
         <select id="np-cat" value={category} onChange={e => setCategory(e.target.value)} className={inputCls}>
           <option value="">카테고리를 골라 주세요</option>
           {categories.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <div>

@@ -17,6 +17,7 @@ export type Product = {
   compat?: string; // 연장 호환성 (자유 입력, 예: 밀워키 M18 배터리 호환) — app_settings 에 따로 저장되어 화면에서 합쳐진다
   voltage?: string; // 연장 전압 (자유 입력, 예: 18V) — app_settings 에 따로 저장되어 화면에서 합쳐진다
   battery?: string; // 연장 배터리 포함 여부 ('포함' | '미포함' | 없음) — app_settings 에 따로 저장되어 화면에서 합쳐진다
+  copyOf?: string; // 공통 연결 복사본이면 원본이 있는 공정 (재고·가격·링크·사진은 원본 하나) — 키는 `원본키@연결id`
   model?: string; // 제품명(모델명) — 연장에서 쓴다 (app_settings 에 따로 저장되어 화면에서 합쳐진다)
   price: number;
   priceInclVat: number | null;
@@ -283,3 +284,6 @@ export type VendorShipping = { fee: number; freeOver: number };
 
 /** 장비조사에서 체크해 저장해 두는 선택 목록: 가격조사에서 불러와 그 품목만 모아 본다 */
 export type ItemSet = { id: string; name: string; keys: string[]; at: string; byName: string };
+
+/** 공통 연결 복사: 원본 품목(key)을 다른 공정·카테고리 목록에도 보이게 한다. 재고·가격·링크·사진은 원본 하나만 갖는다. 복사본의 키는 `${key}@${id}` */
+export type ProductLink = { id: string; key: string; trade: string; category: string; at: string; byName: string };

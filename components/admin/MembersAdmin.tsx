@@ -454,7 +454,7 @@ export default function MembersAdmin({
   function modeOf(k: MenuKey): Mode {
     if (!menus.includes(k)) return "none";
     if (k === "sites" && sitesUpgradable) return "all"; // 팀 기본(보기만) / 전체 권한 부여 두 가지
-    if (MENU_ACTIONS[k].length === 0 || k === "members" || k === "staff" || k === "suppliers" || k === "catalog") return "all"; // 회원등록·회원정보·거래처관리·장비운용은 부여 / 부여 안 함 두 가지뿐
+    if (MENU_ACTIONS[k].length === 0 || k === "members" || k === "staff" || k === "catalog") return "all"; // 회원등록·회원정보·장비운용은 부여 / 부여 안 함 두 가지뿐
     return partialOpen[k] || (actions[k] ?? []).length < MENU_ACTIONS[k].length ? "partial" : "all";
   }
   function setMode(k: MenuKey, m: Mode) {
@@ -462,7 +462,7 @@ export default function MembersAdmin({
     setMenus(p => (p.includes(k) ? p : [...p, k]));
     if (MENU_ACTIONS[k].length === 0) return;
     setPartialOpen(p => ({ ...p, [k]: m === "partial" }));
-    setActions(p => ({ ...p, [k]: m === "all" ? [...MENU_ACTIONS[k]] : ["view", "register"].filter(a => MENU_ACTIONS[k].includes(a as ActionKey)) as ActionKey[] })); // 일부 권한은 보기·등록으로 정해져 있다
+    setActions(p => ({ ...p, [k]: m === "all" ? [...MENU_ACTIONS[k]] : (k === "suppliers" ? ["view"] : ["view", "register"]).filter(a => MENU_ACTIONS[k].includes(a as ActionKey)) as ActionKey[] })); // 일부 권한은 보기·등록으로 정해져 있다 (거래처관리는 보기만: 편집하기는 모든 권한일 때만)
   }
   function resetForm() {
     setName("");
@@ -881,7 +881,7 @@ export default function MembersAdmin({
 </div>
 <div className="mt-4">
 <label htmlFor="mphone" className="block text-sm font-bold">연락처 <span className="font-normal text-zinc-500">{scope === "coop" ? "(선택)" : "(필수)"}</span></label>
-          <input id="mphone" type="tel" value={phone} onChange={e => setPhone(formatPhone(e.target.value))} maxLength={13} placeholder="예: 010-1234-5678" autoComplete="off" className={inputCls} />
+          <input id="mphone" type="tel" value={phone} onChange={e => setPhone(formatPhone(e.target.value))} maxLength={14} placeholder="예: 010-1234-5678" autoComplete="off" className={inputCls} />
 </div>
 <div className="mt-4 sm:col-span-2">
 <label htmlFor="maddr" className="block text-sm font-bold">주소 <span className="font-normal text-zinc-500">(선택)</span></label>
@@ -1086,7 +1086,7 @@ export default function MembersAdmin({
                   }
                   const k = mn.key;
                   const mode = modeOf(k);
-                  const opts: [Mode, string][] = k === "sites" && sitesUpgradable ? [["none", "보기만 (팀 기본)"], ["all", "전체 권한 부여"]] : MENU_ACTIONS[k].length > 1 && k !== "members" && k !== "suppliers" && k !== "catalog" ? [["none", "부여 안 함"], ["partial", "일부 권한"], ["all", "모든 권한"]] : [["none", "부여 안 함"], ["all", k === "staff" || k === "members" || k === "payroll" || k === "suppliers" || k === "catalog" ? "부여" : "사용"]];
+                  const opts: [Mode, string][] = k === "sites" && sitesUpgradable ? [["none", "보기만 (팀 기본)"], ["all", "전체 권한 부여"]] : MENU_ACTIONS[k].length > 1 && k !== "members" && k !== "catalog" ? [["none", "부여 안 함"], ["partial", "일부 권한"], ["all", "모든 권한"]] : [["none", "부여 안 함"], ["all", k === "staff" || k === "members" || k === "payroll" || k === "catalog" ? "부여" : "사용"]];
                   return (
                     <div key={k} className="py-2">
                       <div className="flex flex-wrap items-center gap-2">

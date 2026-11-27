@@ -147,22 +147,22 @@ export async function getMemberByLoginId(loginId: string): Promise<Member | null
 }
 
 // 이름·아이디 중복 검사는 저장 직전에 잠금 안에서 한다 (동시에 만들어도 겹치지 않는다).
-export function insertMember(m: Member): Promise<{ member: Member } | Conflict> {
+export function insertMember(m: Member, allowDupName = false): Promise<{ member: Member } | Conflict> {
   return withLock(async () => {
     const list = await loadMembers();
-    if (list.some(x => sameName(x.name, m.name))) return { conflict: 'name' as const };
+    if (!allowDupName && list.some(x => sameName(x.name, m.name))) return { conflict: 'name' as const };
     if (m.loginId && list.some(x => x.loginId === m.loginId)) return { conflict: 'loginId' as const };
     await writeJson('members.json', [...list, m]);
     return { member: m };
   });
 }
 
-export function patchMember(id: string, patch: MemberPatch): Promise<{ member: Member } | Conflict | { notFound: true }> {
+export function patchMember(id: string, patch: MemberPatch, allowDupName = false): Promise<{ member: Member } | Conflict | { notFound: true }> {
   return withLock(async () => {
     const list = await loadMembers();
     const i = list.findIndex(m => m.id === id);
     if (i < 0) return { notFound: true as const };
-    if (patch.name !== undefined && list.some(x => x.id !== id && sameName(x.name, patch.name as string))) return { conflict: 'name' as const };
+    if (!allowDupName && patch.name !== undefined && list.some(x => x.id !== id && sameName(x.name, patch.name as string))) return { conflict: 'name' as const };
     if (patch.loginId && list.some(x => x.id !== id && x.loginId === patch.loginId)) return { conflict: 'loginId' as const };
     const member: Member = { ...list[i], ...patch };
     list[i] = member;
@@ -1413,5 +1413,60 @@ export function setInventoryHidden(who: string, keys: string[]): Promise<void> {
     const cur = await getInventoryHidden();
     if (keys.length) cur[who] = keys; else delete cur[who];
     await writeJson('inventory-hidden.json', cur);
+  });
+}
+
+// ───────── 공통 연결 복사 (data/product-links.json) ─────────
+const toProductLinks = (v: unknown): import('./types').ProductLink[] => (Array.isArray(v) ? v.flatMap((x): import('./types').ProductLink[] => {
+  if (!x || typeof x !== 'object') return [];
+  const o = x as Record<string, unknown>;
+  if (typeof o.id !== 'string' || typeof o.key !== 'string' || typeof o.trade !== 'string' || typeof o.category !== 'string') return [];
+  return [{ id: o.id, key: o.key, trade: o.trade, category: o.category, at: typeof o.at === 'string' ? o.at : '', byName: typeof o.byName === 'string' ? o.byName : '' }];
+}) : []);
+export async function getProductLinks(): Promise<import('./types').ProductLink[]> {
+  try { return toProductLinks(await readJson<unknown>('product-links.json')); } catch { return []; }
+}
+export function saveProductLinks(v: import('./types').ProductLink[]): Promise<void> {
+  return withLock(async () => { await writeJson('product-links.json', v); });
+}
+
+// ───────── 장비조사 즐겨찾기(별표) — 계정마다 따로 (data/inventory-stars.json) ─────────
+export async function getInventoryStars(): Promise<Record<string, string[]>> {
+  try { return toHiddenMap(await readJson<unknown>('inventory-stars.json')); } catch { return {}; }
+}
+export function setInventoryStars(who: string, keys: string[]): Promise<void> {
+  return withLock(async () => {
+    const cur = await getInventoryStars();
+    if (keys.length) cur[who] = keys; else delete cur[who];
+    await writeJson('inventory-stars.json', cur);
+  });
+}
+
+// ───────── 거래처 비고 (data/supplier-notes.json: 거래처 id → 비고) ─────────
+const toNoteMap = (v: unknown): Record<string, string> => {
+  const o: Record<string, string> = {};
+  if (v && typeof v === 'object' && !Array.isArray(v)) for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (typeof x === 'string' && x) o[k] = x;
+  return o;
+};
+export async function getSupplierNotes(): Promise<Record<string, string>> {
+  try { return toNoteMap(await readJson<unknown>('supplier-notes.json')); } catch { return {}; }
+}
+export function setSupplierNote(id: string, note: string): Promise<void> {
+  return withLock(async () => {
+    const cur = await getSupplierNotes();
+    if (note) cur[id] = note; else delete cur[id];
+    await writeJson('supplier-notes.json', cur);
+  });
+}
+
+// ───────── 거래처 즐겨찾기(별표) — 계정마다 따로 (data/supplier-stars.json) ─────────
+export async function getSupplierStars(): Promise<Record<string, string[]>> {
+  try { return toHiddenMap(await readJson<unknown>('supplier-stars.json')); } catch { return {}; }
+}
+export function setSupplierStars(who: string, ids: string[]): Promise<void> {
+  return withLock(async () => {
+    const cur = await getSupplierStars();
+    if (ids.length) cur[who] = ids; else delete cur[who];
+    await writeJson('supplier-stars.json', cur);
   });
 }
